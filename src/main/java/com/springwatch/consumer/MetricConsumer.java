@@ -23,7 +23,7 @@ public class MetricConsumer {
     public void onMetric(String message) {
         try {
             MetricEvent event = objectMapper.readValue(message, MetricEvent.class);
-            log.debug("[spring-watch: MetricConsumer 收到指标 - app={}, metric={}, value={}]",
+            log.trace("[spring-watch: MetricConsumer 收到指标 - app={}, metric={}, value={}]",
                     event.getAppName(), event.getMetricName(), event.getValue());
 
             Point point = Point.measurement("springboot_metrics")

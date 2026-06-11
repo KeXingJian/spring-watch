@@ -13,29 +13,26 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class OtelConfigGenerator {
 
-    @Value("${spring-watch.agent.otlp-endpoint:http://localhost:4317}")
-    private String otlpEndpoint;
+    @Value("${spring-watch.agent.prometheus-host:0.0.0.0}")
+    private String prometheusHost;
 
-    @Value("${spring-watch.agent.otlp-protocol:grpc}")
-    private String otlpProtocol;
-
-    public Map<String, String> generateOtelConfig(String appName) {
-        log.info("[spring-watch: 生成OTel Agent配置 - app={}, otlpEndpoint={}, protocol={}, 模式=OTLP推送]",
-                appName, otlpEndpoint, otlpProtocol);
+    public Map<String, String> generateOtelConfig(String appName, int metricsPort) {
+        log.info("[spring-watch: 生成OTel Agent配置 - app={}, metricsPort={}, 模式=Agent暴露Prometheus端点]",
+                appName, metricsPort);
 
         Map<String, String> config = new LinkedHashMap<>();
         config.put("OTEL_SERVICE_NAME", appName);
         config.put("OTEL_RESOURCE_ATTRIBUTES", "service.name=" + appName + ",service.namespace=spring-watch");
-        config.put("OTEL_METRICS_EXPORTER", "otlp");
-        config.put("OTEL_LOGS_EXPORTER", "otlp");
-        config.put("OTEL_TRACES_EXPORTER", "otlp");
-        config.put("OTEL_EXPORTER_OTLP_ENDPOINT", otlpEndpoint);
-        config.put("OTEL_EXPORTER_OTLP_PROTOCOL", otlpProtocol);
+        config.put("OTEL_METRICS_EXPORTER", "prometheus");
+        config.put("OTEL_LOGS_EXPORTER", "none");
+        config.put("OTEL_TRACES_EXPORTER", "none");
+        config.put("OTEL_EXPORTER_PROMETHEUS_HOST", prometheusHost);
+        config.put("OTEL_EXPORTER_PROMETHEUS_PORT", String.valueOf(metricsPort));
         return config;
     }
 
-    public String generateOtelAgentCommand(String agentJarPath, String appName) {
-        Map<String, String> config = generateOtelConfig(appName);
+    public String generateOtelAgentCommand(String agentJarPath, String appName, int metricsPort) {
+        Map<String, String> config = generateOtelConfig(appName, metricsPort);
         StringBuilder sb = new StringBuilder();
         sb.append("-javaagent:").append(agentJarPath);
         for (Map.Entry<String, String> entry : config.entrySet()) {

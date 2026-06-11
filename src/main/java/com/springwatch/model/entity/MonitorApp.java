@@ -24,6 +24,10 @@ public class MonitorApp {
     @Column(length = 200)
     private String endpoint;
 
+    @Column(name = "metrics_port")
+    @Builder.Default
+    private Integer metricsPort = 9464;
+
     @Column(length = 32)
     @Builder.Default
     private String appType = "springboot";

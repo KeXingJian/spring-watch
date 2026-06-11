@@ -1,6 +1,6 @@
 package com.springwatch.integration;
 
-import com.springwatch.collector.HttpProbe;
+import com.springwatch.collector.AgentMetricsCollector;
 import com.springwatch.model.dto.ApiResponse;
 import com.springwatch.model.dto.AppRegisterRequest;
 import com.springwatch.model.entity.MonitorApp;
@@ -12,9 +12,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
-import org.springframework.test.context.TestConstructor;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.ResponseEntity;
+import org.springframework.test.context.TestConstructor;
 import org.springframework.web.client.RestClient;
 
 import java.util.List;
@@ -30,7 +30,7 @@ class MonitorTargetIntegrationTest {
     private int port;
 
     private final MonitorAppRepository monitorAppRepository;
-    private final HttpProbe httpProbe;
+    private final AgentMetricsCollector agentMetricsCollector;
 
     private RestClient restClient;
 
@@ -43,22 +43,19 @@ class MonitorTargetIntegrationTest {
 
     @AfterEach
     void tearDown() {
-        //monitorAppRepository.deleteAll();
     }
 
     private AppRegisterRequest buildMockTestRequest() {
         return AppRegisterRequest.builder()
                 .appName("mock-test")
                 .endpoint("http://localhost:8081")
+                .metricsPort(9464)
                 .appType("springboot")
                 .scrapeInterval(15)
                 .labels("env=docker,group=integration")
                 .build();
     }
 
-    /**
-     * 通过API注册mock-test监控目标，验证注册响应及数据库持久化
-     */
     @Test
     void registerMockTestAsMonitoringTarget() {
         AppRegisterRequest request = buildMockTestRequest();
@@ -71,26 +68,26 @@ class MonitorTargetIntegrationTest {
 
         ApiResponse<MonitorApp> body = response.getBody();
         MonitorApp app = body != null ? body.getData() : null;
-        log.info("[spring-watch: 集成测试 - 注册mock-test监控目标] status={}, id={}, appName={}, endpoint={}",
+        log.info("[spring-watch: 集成测试 - 注册mock-test监控目标] status={}, id={}, appName={}, endpoint={}, metricsPort={}",
                 response.getStatusCode().value(),
                 app != null ? app.getId() : null,
                 app != null ? app.getAppName() : null,
-                app != null ? app.getEndpoint() : null);
+                app != null ? app.getEndpoint() : null,
+                app != null ? app.getMetricsPort() : null);
 
         MonitorApp persisted = monitorAppRepository.findByAppName("mock-test").orElse(null);
-        log.info("[spring-watch: 集成测试 - 数据库持久化检查] id={}, endpoint={}",
+        log.info("[spring-watch: 集成测试 - 数据库持久化检查] id={}, endpoint={}, metricsPort={}",
                 persisted != null ? persisted.getId() : null,
-                persisted != null ? persisted.getEndpoint() : null);
+                persisted != null ? persisted.getEndpoint() : null,
+                persisted != null ? persisted.getMetricsPort() : null);
     }
 
-    /**
-     * 查询所有活跃监控目标，验证返回列表及状态过滤
-     */
     @Test
     void listActiveMonitoringTargets() {
         monitorAppRepository.save(MonitorApp.builder()
                 .appName("mock-test")
                 .endpoint("http://localhost:8081")
+                .metricsPort(9464)
                 .appType("springboot")
                 .scrapeInterval(15)
                 .labels("env=docker,group=integration")
@@ -113,14 +110,12 @@ class MonitorTargetIntegrationTest {
         }
     }
 
-    /**
-     * 为指定应用生成OTel Agent采集配置
-     */
     @Test
     void generateOtelConfigForMockTest() {
         MonitorApp saved = monitorAppRepository.save(MonitorApp.builder()
                 .appName("mock-test")
                 .endpoint("http://localhost:8081")
+                .metricsPort(9464)
                 .appType("springboot")
                 .scrapeInterval(15)
                 .status("active")
@@ -137,21 +132,13 @@ class MonitorTargetIntegrationTest {
                 response.getStatusCode().value(), config);
     }
 
-    /**
-     * 对mock-test执行HTTP探活，验证探测器工作正常
-     */
     @Test
-    void probeMockTestHttpEndpoint() {
-        MonitorApp app = MonitorApp.builder()
-                .appName("mock-test")
-                .endpoint("http://localhost:8081")
-                .status("active")
-                .build();
+    void pullAgentMetricsForMockTest() {
+        AgentMetricsCollector.MonitorTarget target = new AgentMetricsCollector.MonitorTarget(
+                "mock-test", "http://localhost:8081", 9464);
 
-        httpProbe.probe(app);
+        agentMetricsCollector.collect(target);
 
-        log.info("[spring-watch: 集成测试 - mock-test HTTP探测完成]");
+        log.info("[spring-watch: 集成测试 - mock-test Agent拉取完成]");
     }
-
-
 }

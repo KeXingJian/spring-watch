@@ -5,8 +5,7 @@ spring-watch:
   collector:
     interval: 15000
   agent:
-    otlp-endpoint: http://localhost:4317
-    otlp-protocol: grpc
+    prometheus-host: 0.0.0.0
 
 spring:
   application:

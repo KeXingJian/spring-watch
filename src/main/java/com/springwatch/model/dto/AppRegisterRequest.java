@@ -19,6 +19,9 @@ public class AppRegisterRequest {
     private String endpoint;
 
     @Builder.Default
+    private Integer metricsPort = 9464;
+
+    @Builder.Default
     private String appType = "springboot";
 
     @Builder.Default
