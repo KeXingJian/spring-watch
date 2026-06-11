@@ -1,12 +1,12 @@
 package com.springwatch.consumer;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.springwatch.model.event.HeartbeatEvent;
 import com.springwatch.repository.MonitorAppRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.ObjectMapper;
 
 import java.time.Instant;
 

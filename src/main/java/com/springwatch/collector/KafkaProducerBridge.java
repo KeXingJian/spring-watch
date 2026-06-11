@@ -1,7 +1,6 @@
 package com.springwatch.collector;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.springwatch.model.event.HeartbeatEvent;
 import com.springwatch.model.event.LogEvent;
 import com.springwatch.model.event.MetricEvent;
@@ -9,6 +8,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.ObjectMapper;
 
 @Slf4j
 @Component
@@ -44,7 +44,7 @@ public class KafkaProducerBridge {
                                     topic, key, ex.getMessage());
                         }
                     });
-        } catch (JsonProcessingException e) {
+        } catch (Exception e) {
             log.error("[spring-watch: JSON序列化失败 - topic={}, key={}]", topic, key, e);
         }
     }
