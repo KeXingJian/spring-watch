@@ -21,6 +21,8 @@ public class AlertConsumer {
     public void onMetric(String message) {
         try {
             MetricEvent event = objectMapper.readValue(message, MetricEvent.class);
+            log.debug("[spring-watch: AlertConsumer 收到指标 - app={}, metric={}, value={}]",
+                    event.getAppName(), event.getMetricName(), event.getValue());
             alertEvaluator.evaluate(event);
         } catch (Exception e) {
             log.error("[spring-watch: AlertConsumer 处理失败 - error={}]", e.getMessage(), e);

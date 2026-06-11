@@ -28,32 +28,40 @@ public class MonitorAppController {
 
     @GetMapping
     public ApiResponse<List<MonitorApp>> list() {
-        return ApiResponse.ok(monitorAppService.listAll());
+        List<MonitorApp> apps = monitorAppService.listAll();
+        log.info("[spring-watch: API查询应用列表 - count={}]", apps.size());
+        return ApiResponse.ok(apps);
     }
 
     @GetMapping("/active")
     public ApiResponse<List<MonitorApp>> listActive() {
-        return ApiResponse.ok(monitorAppService.listActive());
+        List<MonitorApp> apps = monitorAppService.listActive();
+        log.info("[spring-watch: API查询active应用 - count={}]", apps.size());
+        return ApiResponse.ok(apps);
     }
 
     @GetMapping("/{id}")
     public ApiResponse<MonitorApp> getById(@PathVariable Long id) {
+        log.info("[spring-watch: API查询应用详情 - id={}]", id);
         return ApiResponse.ok(monitorAppService.getById(id));
     }
 
     @PutMapping("/{id}")
     public ApiResponse<MonitorApp> update(@PathVariable Long id, @RequestBody AppRegisterRequest request) {
+        log.info("[spring-watch: API更新应用 - id={}, appName={}]", id, request.getAppName());
         return ApiResponse.ok(monitorAppService.update(id, request));
     }
 
     @DeleteMapping("/{id}")
     public ApiResponse<Void> delete(@PathVariable Long id) {
+        log.info("[spring-watch: API删除应用 - id={}]", id);
         monitorAppService.delete(id);
         return ApiResponse.ok(null);
     }
 
     @GetMapping("/{id}/otel-config")
     public ApiResponse<Map<String, Object>> generateOtelConfig(@PathVariable Long id) {
+        log.info("[spring-watch: API生成OTel配置 - id={}]", id);
         return ApiResponse.ok(monitorAppService.generateOtelConfig(id));
     }
 }

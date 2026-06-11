@@ -35,6 +35,7 @@ public class AppLogRepository {
             ps.setString(7, (String) log.get("traceId"));
             ps.setTimestamp(8, Timestamp.from((Instant) log.get("logTime")));
         });
+        log.info("[spring-watch: AppLogRepository 批量写入日志完成 - count={}]", logs.size());
     }
 
     public List<Map<String, Object>> queryLogs(String appName, String level, Instant startTime, Instant endTime, int limit) {

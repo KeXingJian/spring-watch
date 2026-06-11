@@ -14,6 +14,7 @@ public class LogFlushScheduler {
 
     @Scheduled(fixedDelay = 5000)
     public void flushLogs() {
+        log.debug("[spring-watch: LogFlushScheduler 触发日志刷盘]");
         logConsumer.flush();
     }
 }

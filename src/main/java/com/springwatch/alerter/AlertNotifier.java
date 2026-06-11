@@ -30,10 +30,14 @@ public class AlertNotifier {
                 .alertLevel(alertLevel)
                 .alertMessage(message)
                 .build();
-        alertHistoryRepository.save(history);
+        AlertHistory saved = alertHistoryRepository.save(history);
+        log.info("[spring-watch: 告警历史持久化完成 - historyId={}, rule={}, app={}, level={}]",
+                saved.getId(), rule.getRuleName(), event.getAppName(), alertLevel);
 
         if (rule.getNotifyChannels() != null && !rule.getNotifyChannels().isBlank()) {
             sendWebhook(rule, message, event);
+        } else {
+            log.debug("[spring-watch: 告警无通知渠道 - rule={}, 仅持久化历史]", rule.getRuleName());
         }
     }
 
@@ -54,7 +58,7 @@ public class AlertNotifier {
     }
 
     private void sendWebhook(AlertRule rule, String message, MetricEvent event) {
-        log.info("[spring-watch: Webhook通知 - rule={}, channels={}]",
-                rule.getRuleName(), rule.getNotifyChannels());
+        log.info("[spring-watch: Webhook通知 - rule={}, channels={}, app={}]",
+                rule.getRuleName(), rule.getNotifyChannels(), event.getAppName());
     }
 }

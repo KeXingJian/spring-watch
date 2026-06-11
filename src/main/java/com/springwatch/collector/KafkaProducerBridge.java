@@ -42,6 +42,11 @@ public class KafkaProducerBridge {
                         if (ex != null) {
                             log.warn("[spring-watch: Kafka发送失败 - topic={}, key={}, error={}]",
                                     topic, key, ex.getMessage());
+                        } else {
+                            log.debug("[spring-watch: Kafka发送成功 - topic={}, key={}, partition={}, offset={}]",
+                                    topic, key,
+                                    result.getRecordMetadata().partition(),
+                                    result.getRecordMetadata().offset());
                         }
                     });
         } catch (Exception e) {

@@ -48,21 +48,29 @@ public class MonitorAppService {
     }
 
     public List<MonitorApp> listAll() {
-        return monitorAppRepository.findAll();
+        List<MonitorApp> apps = monitorAppRepository.findAll();
+        log.debug("[spring-watch: 查询全部应用 - count={}]", apps.size());
+        return apps;
     }
 
     public List<MonitorApp> listActive() {
-        return monitorAppRepository.findByStatus("active");
+        List<MonitorApp> apps = monitorAppRepository.findByStatus("active");
+        log.debug("[spring-watch: 查询active应用 - count={}]", apps.size());
+        return apps;
     }
 
     public MonitorApp getById(Long id) {
-        return monitorAppRepository.findById(id)
+        MonitorApp app = monitorAppRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("应用不存在: " + id));
+        log.debug("[spring-watch: 查询应用详情 - id={}, app={}]", id, app.getAppName());
+        return app;
     }
 
     public MonitorApp getByAppName(String appName) {
-        return monitorAppRepository.findByAppName(appName)
+        MonitorApp app = monitorAppRepository.findByAppName(appName)
                 .orElseThrow(() -> new IllegalArgumentException("应用不存在: " + appName));
+        log.debug("[spring-watch: 查询应用详情 - appName={}]", appName);
+        return app;
     }
 
     @Transactional
@@ -110,6 +118,8 @@ public class MonitorAppService {
         result.put("environmentVariables", envVars);
         result.put("javaAgentCommand", otelConfigGenerator.generatePrometheusAgentCommand(
                 "opentelemetry-javaagent.jar", app.getAppName(), metricsPort));
+        log.info("[spring-watch: 生成OTel采集配置完成 - app={}, metricsPort={}, envVars={}]",
+                app.getAppName(), metricsPort, envVars.size());
         return result;
     }
 }

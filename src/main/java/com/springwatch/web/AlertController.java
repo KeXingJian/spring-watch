@@ -31,6 +31,7 @@ public class AlertController {
                 ? ((Number) body.get("durationSeconds")).intValue() : 60;
         String notifyChannels = (String) body.get("notifyChannels");
 
+        log.info("[spring-watch: API创建告警规则 - app={}, rule={}, type={}]", appName, ruleName, ruleType);
         return ApiResponse.ok(alertRuleService.createRule(
                 appName, ruleName, ruleType, expression, thresholdValue, durationSeconds, notifyChannels));
     }
@@ -38,7 +39,9 @@ public class AlertController {
     @GetMapping("/rules")
     public ApiResponse<List<AlertRule>> listRules(
             @RequestParam(required = false) String app) {
-        return ApiResponse.ok(alertRuleService.listRules(app));
+        List<AlertRule> rules = alertRuleService.listRules(app);
+        log.info("[spring-watch: API查询告警规则 - app={}, count={}]", app, rules.size());
+        return ApiResponse.ok(rules);
     }
 
     @PutMapping("/rules/{id}")
@@ -48,11 +51,13 @@ public class AlertController {
                 ? ((Number) body.get("thresholdValue")).doubleValue() : null;
         String notifyChannels = (String) body.get("notifyChannels");
         String status = (String) body.get("status");
+        log.info("[spring-watch: API更新告警规则 - id={}, status={}]", id, status);
         return ApiResponse.ok(alertRuleService.updateRule(id, expression, thresholdValue, notifyChannels, status));
     }
 
     @DeleteMapping("/rules/{id}")
     public ApiResponse<Void> deleteRule(@PathVariable Long id) {
+        log.info("[spring-watch: API删除告警规则 - id={}]", id);
         alertRuleService.deleteRule(id);
         return ApiResponse.ok(null);
     }
@@ -60,6 +65,8 @@ public class AlertController {
     @GetMapping("/history")
     public ApiResponse<List<AlertHistory>> listHistory(
             @RequestParam(required = false) String app) {
-        return ApiResponse.ok(alertRuleService.listAlertHistory(app));
+        List<AlertHistory> history = alertRuleService.listAlertHistory(app);
+        log.info("[spring-watch: API查询告警历史 - app={}, count={}]", app, history.size());
+        return ApiResponse.ok(history);
     }
 }

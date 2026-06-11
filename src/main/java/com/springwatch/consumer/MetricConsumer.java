@@ -41,6 +41,8 @@ public class MetricConsumer {
             }
 
             writeApi.writePoint(point);
+            log.debug("[spring-watch: MetricConsumer 写入InfluxDB完成 - app={}, metric={}, value={}]",
+                    event.getAppName(), event.getMetricName(), event.getValue());
         } catch (Exception e) {
             log.error("[spring-watch: MetricConsumer 处理失败 - error={}]", e.getMessage(), e);
         }

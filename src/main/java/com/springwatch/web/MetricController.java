@@ -26,6 +26,7 @@ public class MetricController {
             @RequestParam(defaultValue = "now()") String stop) {
         Instant startTime = parseInstant(start, true);
         Instant stopTime = parseInstant(stop, false);
+        log.info("[spring-watch: API查询指标 - app={}, metric={}, range={}~{}]", app, metric, startTime, stopTime);
         return ApiResponse.ok(metricQueryService.queryMetrics(app, metric, startTime, stopTime));
     }
 

@@ -64,6 +64,8 @@ public class MetricQueryService {
                 results.add(row);
             }
         }
+        log.info("[spring-watch: InfluxDB查询完成 - app={}, metric={}, records={}]",
+                appName, metricName, results.size());
         return results;
     }
 }

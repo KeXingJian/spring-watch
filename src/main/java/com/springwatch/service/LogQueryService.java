@@ -20,6 +20,8 @@ public class LogQueryService {
                                                 Instant startTime, Instant endTime, int limit) {
         log.info("[spring-watch: 日志查询 - app={}, level={}, range={}~{}, limit={}]",
                 appName, level, startTime, endTime, limit);
-        return appLogRepository.queryLogs(appName, level, startTime, endTime, limit);
+        List<Map<String, Object>> rows = appLogRepository.queryLogs(appName, level, startTime, endTime, limit);
+        log.info("[spring-watch: 日志查询完成 - app={}, level={}, rows={}]", appName, level, rows.size());
+        return rows;
     }
 }

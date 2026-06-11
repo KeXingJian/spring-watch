@@ -22,9 +22,10 @@ public class CollectorScheduler {
     public void scheduleCollection() {
         List<MonitorApp> activeApps = monitorAppRepository.findByStatus("active");
         if (activeApps.isEmpty()) {
+            log.debug("[spring-watch: CollectorScheduler 定时采集 - 无active应用, 跳过本轮]");
             return;
         }
-        log.debug("[spring-watch: CollectorScheduler 定时采集 - 应用数={}]", activeApps.size());
+        log.info("[spring-watch: CollectorScheduler 定时采集开始 - 应用数={}]", activeApps.size());
 
         for (MonitorApp app : activeApps) {
             String mode = app.getCollectMode();

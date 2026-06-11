@@ -25,8 +25,11 @@ public class AlertEvaluator {
     public void evaluate(MetricEvent event) {
         List<AlertRule> rules = alertRuleRepository.findByAppAppNameAndStatus(event.getAppName(), "enabled");
         if (rules.isEmpty()) {
+            log.debug("[spring-watch: 告警评估跳过 - app={} 无启用规则]", event.getAppName());
             return;
         }
+        log.debug("[spring-watch: 告警评估开始 - app={}, metric={}, value={}, 待评估规则数={}]",
+                event.getAppName(), event.getMetricName(), event.getValue(), rules.size());
 
         for (AlertRule rule : rules) {
             if (!"metric".equals(rule.getRuleType())) {
@@ -39,6 +42,9 @@ public class AlertEvaluator {
                             event.getAppName(), rule.getRuleName(), event.getMetricName(), event.getValue());
                     alertNotifier.notify(rule, event);
                     alertWindowManager.recordFire(rule.getId(), event.getTimestamp());
+                } else {
+                    log.debug("[spring-watch: 告警抑制 - app={}, rule={} 已在窗口期内触发]",
+                            event.getAppName(), rule.getRuleName());
                 }
             }
         }

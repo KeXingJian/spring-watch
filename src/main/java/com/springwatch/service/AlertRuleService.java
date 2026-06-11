@@ -49,19 +49,27 @@ public class AlertRuleService {
     }
 
     public List<AlertRule> listRules(String appName) {
+        List<AlertRule> rules;
         if (appName != null) {
-            return alertRuleRepository.findByAppAppNameAndStatus(appName, "enabled");
+            rules = alertRuleRepository.findByAppAppNameAndStatus(appName, "enabled");
+        } else {
+            rules = alertRuleRepository.findByStatus("enabled");
         }
-        return alertRuleRepository.findByStatus("enabled");
+        log.debug("[spring-watch: 查询告警规则 - app={}, count={}]", appName, rules.size());
+        return rules;
     }
 
     public List<AlertRule> listAllRules() {
-        return alertRuleRepository.findAll();
+        List<AlertRule> rules = alertRuleRepository.findAll();
+        log.debug("[spring-watch: 查询全部告警规则 - count={}]", rules.size());
+        return rules;
     }
 
     public AlertRule getById(Long id) {
-        return alertRuleRepository.findById(id)
+        AlertRule rule = alertRuleRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("规则不存在: " + id));
+        log.debug("[spring-watch: 查询告警规则详情 - id={}, rule={}]", id, rule.getRuleName());
+        return rule;
     }
 
     @Transactional
@@ -92,9 +100,13 @@ public class AlertRuleService {
     }
 
     public List<AlertHistory> listAlertHistory(String appName) {
+        List<AlertHistory> history;
         if (appName != null) {
-            return alertHistoryRepository.findByAppAppNameOrderByCreatedAtDesc(appName);
+            history = alertHistoryRepository.findByAppAppNameOrderByCreatedAtDesc(appName);
+        } else {
+            history = alertHistoryRepository.findAll();
         }
-        return alertHistoryRepository.findAll();
+        log.debug("[spring-watch: 查询告警历史 - app={}, count={}]", appName, history.size());
+        return history;
     }
 }

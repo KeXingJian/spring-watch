@@ -31,6 +31,8 @@ public class LogController {
             @RequestParam(defaultValue = "100") int limit) {
         Instant startTime = start != null ? Instant.parse(start) : Instant.now().minusSeconds(3600);
         Instant endTime = end != null ? Instant.parse(end) : Instant.now();
+        log.info("[spring-watch: API查询日志 - app={}, level={}, range={}~{}, limit={}]",
+                app, level, startTime, endTime, limit);
         return ApiResponse.ok(logQueryService.queryLogs(app, level, startTime, endTime, limit));
     }
 

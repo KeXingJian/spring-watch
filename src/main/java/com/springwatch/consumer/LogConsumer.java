@@ -55,9 +55,11 @@ public class LogConsumer {
         if (buffer.isEmpty()) {
             return;
         }
-        log.info("[spring-watch: LogConsumer 批量写入 - count={}]", buffer.size());
+        int count = buffer.size();
+        log.info("[spring-watch: LogConsumer 批量写入 - count={}]", count);
         List<Map<String, Object>> batch = new ArrayList<>(buffer);
         buffer.clear();
         appLogRepository.batchInsert(batch);
+        log.info("[spring-watch: LogConsumer 批量写入完成 - count={}]", count);
     }
 }
