@@ -17,17 +17,11 @@ spring:
 
   jpa:
     hibernate:
-      ddl-auto: update
+      ddl-auto: none
     show-sql: false
-    defer-datasource-initialization: true
     properties:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
-
-  sql:
-    init:
-      mode: always
-      schema-locations: classpath:schema.sql
 
   kafka:
     bootstrap-servers: localhost:9092

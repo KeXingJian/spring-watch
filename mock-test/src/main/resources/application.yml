@@ -1,0 +1,10 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: mock-test
+
+logging:
+  pattern:
+    console: "%d{HH:mm:ss.SSS} [%thread] [%5level] traceId=%mdc{trace_id:-} spanId=%mdc{span_id:-} %logger{36} - %msg%n"

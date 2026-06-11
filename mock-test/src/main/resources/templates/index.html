@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>电商模拟系统 - HertzBeat 监控测试</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif; margin: 0; padding: 0; background: #f0f2f5; min-height: 100vh; }
+        .container { max-width: 1300px; margin: 0 auto; padding: 20px; }
+        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; border-radius: 12px; margin-bottom: 20px; }
+        .header h1 { margin: 0 0 8px 0; font-size: 1.8rem; }
+        .header p { margin: 0; opacity: 0.9; font-size: 0.95rem; }
+        .header .tag { display: inline-block; background: rgba(255,255,255,0.2); padding: 4px 12px; border-radius: 20px; font-size: 0.8rem; margin-top: 10px; }
+
+        .dashboard { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 15px; margin-bottom: 20px; }
+        .stat-card { background: white; border-radius: 10px; padding: 20px; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+        .stat-card .number { font-size: 2rem; font-weight: 700; color: #667eea; }
+        .stat-card .label { color: #888; font-size: 0.85rem; margin-top: 4px; }
+
+        .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 20px; }
+        .card { background: white; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); overflow: hidden; }
+        .card-header { padding: 16px 20px; font-weight: 700; font-size: 1rem; color: white; display: flex; align-items: center; gap: 8px; }
+        .card-body { padding: 16px 20px; }
+        .card-desc { color: #666; font-size: 0.82rem; margin-bottom: 14px; line-height: 1.5; }
+
+        .btn { display: flex; align-items: center; width: 100%; padding: 9px 12px; margin-bottom: 7px; border: 1px solid #e8e8e8; border-radius: 6px; background: #fafafa; color: #333; font-size: 0.85rem; cursor: pointer; text-align: left; transition: all 0.15s; }
+        .btn:hover { background: #f0f0f0; border-color: #d0d0d0; }
+        .btn:active { transform: scale(0.995); }
+        .btn .method { font-size: 0.65rem; font-weight: 700; padding: 2px 6px; border-radius: 3px; margin-right: 8px; flex-shrink: 0; }
+        .m-get { background: #e3f2fd; color: #1565c0; }
+        .m-post { background: #e8f5e9; color: #2e7d32; }
+        .m-put { background: #fff3e0; color: #ef6c00; }
+        .m-del { background: #ffebee; color: #c62828; }
+        .btn-text { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .btn-desc { font-size: 0.72rem; color: #999; margin-top: 1px; }
+
+        .input-group { display: flex; gap: 6px; margin-bottom: 7px; }
+        .input-group input, .input-group select { flex: 1; padding: 7px 10px; border: 1px solid #e0e0e0; border-radius: 6px; font-size: 0.82rem; }
+        .input-group input:focus { outline: none; border-color: #667eea; }
+        .small-btn { padding: 7px 12px; border: none; border-radius: 6px; background: #667eea; color: white; font-size: 0.78rem; cursor: pointer; }
+        .small-btn:hover { background: #5a6fd6; }
+
+        .result-box { background: white; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); margin-top: 20px; overflow: hidden; }
+        .result-header { padding: 14px 20px; border-bottom: 1px solid #f0f0f0; display: flex; justify-content: space-between; align-items: center; }
+        .result-header h3 { margin: 0; font-size: 0.95rem; }
+        .badge { font-size: 0.78rem; padding: 4px 12px; border-radius: 20px; font-weight: 600; }
+        .bdg-wait { background: #fff8e1; color: #f9a825; }
+        .bdg-ok { background: #e8f5e9; color: #2e7d32; }
+        .bdg-err { background: #ffebee; color: #c62828; }
+        .result-meta { background: #fafafa; padding: 10px 20px; border-bottom: 1px solid #f0f0f0; font-size: 0.8rem; color: #555; }
+        .result-meta span { margin-right: 18px; }
+        .result-meta .label { color: #999; }
+        pre { margin: 0; padding: 16px 20px; background: #1e1e2e; color: #cdd6f4; font-family: 'Consolas', 'Monaco', 'Courier New', monospace; font-size: 0.8rem; line-height: 1.5; overflow-x: auto; max-height: 450px; overflow-y: auto; }
+        .footer { text-align: center; color: #999; margin-top: 25px; font-size: 0.78rem; padding-bottom: 20px; }
+
+        .theme-blue .card-header { background: linear-gradient(135deg, #42a5f5, #1e88e5); }
+        .theme-green .card-header { background: linear-gradient(135deg, #66bb6a, #43a047); }
+        .theme-orange .card-header { background: linear-gradient(135deg, #ffa726, #fb8c00); }
+        .theme-purple .card-header { background: linear-gradient(135deg, #ab47bc, #8e24aa); }
+        .theme-red .card-header { background: linear-gradient(135deg, #ef5350, #e53935); }
+        .theme-teal .card-header { background: linear-gradient(135deg, #26a69a, #00897b); }
+        .theme-gray .card-header { background: linear-gradient(135deg, #78909c, #546e7a); }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>&#127978; 电商模拟系统</h1>
+            <p>模拟真实电商业务场景，提供用户、商品、订单、购物车等完整 API。用于 HertzBeat 监控平台的功能验证与联调测试。</p>
+            <div class="tag">Spring Boot 3.2.5 · Java 21 · 端口 8081</div>
+        </div>
+
+        <div class="dashboard">
+            <div class="stat-card"><div class="number" id="statUsers">3</div><div class="label">注册用户</div></div>
+            <div class="stat-card"><div class="number" id="statProducts">5</div><div class="label">商品数量</div></div>
+            <div class="stat-card"><div class="number" id="statOrders">3</div><div class="label">订单数量</div></div>
+            <div class="stat-card"><div class="number" id="statAmount">40,896</div><div class="label">订单总额</div></div>
+        </div>
+
+        <div class="grid">
+            <!-- 用户管理 -->
+            <div class="card theme-blue">
+                <div class="card-header">&#128100; 用户管理</div>
+                <div class="card-body">
+                    <div class="card-desc">模拟电商平台的用户体系，包含用户注册、查询、列表等功能。预置 3 个用户：张三、李四、王五。</div>
+                    <button class="btn" onclick="callApi('GET','/api/users')">
+                        <span class="method m-get">GET</span><span class="btn-text">/api/users</span>
+                        <div class="btn-desc">分页查询用户列表</div>
+                    </button>
+                    <div class="input-group">
+                        <input type="text" id="userId" placeholder="用户 ID，如 1">
+                        <button class="small-btn" onclick="callApi('GET','/api/users/' + document.getElementById('userId').value)">查询用户</button>
+                    </div>
+                    <button class="btn" onclick="callApi('POST','/api/users', {username:'testuser', realName:'测试用户', phone:'13900139000'})">
+                        <span class="method m-post">POST</span><span class="btn-text">/api/users</span>
+                        <div class="btn-desc">创建新用户（示例数据）</div>
+                    </button>
+                </div>
+            </div>
+
+            <!-- 商品管理 -->
+            <div class="card theme-green">
+                <div class="card-header">&#128230; 商品管理</div>
+                <div class="card-body">
+                    <div class="card-desc">模拟商品库，预置 iPhone、MacBook、AirPods、iPad、小米 14 等商品。支持按分类筛选。</div>
+                    <button class="btn" onclick="callApi('GET','/api/products')">
+                        <span class="method m-get">GET</span><span class="btn-text">/api/products</span>
+                        <div class="btn-desc">查询所有商品列表</div>
+                    </button>
+                    <div class="input-group">
+                        <select id="prodCategory">
+                            <option value="">全部分类</option>
+                            <option value="手机">手机</option>
+                            <option value="笔记本">笔记本</option>
+                            <option value="耳机">耳机</option>
+                            <option value="平板">平板</option>
+                        </select>
+                        <button class="small-btn" onclick="const c=document.getElementById('prodCategory').value; callApi('GET', c ? '/api/products?category=' + encodeURIComponent(c) : '/api/products')">筛选</button>
+                    </div>
+                    <div class="input-group">
+                        <input type="text" id="productId" placeholder="商品 ID，如 1">
+                        <button class="small-btn" onclick="callApi('GET','/api/products/' + document.getElementById('productId').value)">查询商品</button>
+                    </div>
+                    <button class="btn" onclick="callApi('POST','/api/products', {name:'华为Mate 60', category:'手机', price:6999.00, stock:80})">
+                        <span class="method m-post">POST</span><span class="btn-text">/api/products</span>
+                        <div class="btn-desc">创建新商品（示例数据）</div>
+                    </button>
+                </div>
+            </div>
+
+            <!-- 订单管理 -->
+            <div class="card theme-orange">
+                <div class="card-header">&#128179; 订单管理</div>
+                <div class="card-body">
+                    <div class="card-desc">完整的订单生命周期：创建 → 支付 → 发货 → 完成。也支持取消和按状态筛选。预置 3 个订单。</div>
+                    <button class="btn" onclick="callApi('GET','/api/orders')">
+                        <span class="method m-get">GET</span><span class="btn-text">/api/orders</span>
+                        <div class="btn-desc">查询所有订单</div>
+                    </button>
+                    <div class="input-group">
+                        <select id="orderStatus">
+                            <option value="">全部状态</option>
+                            <option value="created">待支付</option>
+                            <option value="paid">已支付</option>
+                            <option value="shipped">已发货</option>
+                            <option value="completed">已完成</option>
+                            <option value="cancelled">已取消</option>
+                        </select>
+                        <button class="small-btn" onclick="const s=document.getElementById('orderStatus').value; callApi('GET', s ? '/api/orders?status=' + s : '/api/orders')">筛选</button>
+                    </div>
+                    <div class="input-group">
+                        <input type="text" id="orderId" placeholder="订单 ID，如 1">
+                        <button class="small-btn" onclick="callApi('GET','/api/orders/' + document.getElementById('orderId').value)">查询订单</button>
+                    </div>
+                    <button class="btn" onclick="callApi('POST','/api/orders', {userId:1, items:[{productId:1, quantity:1}, {productId:3, quantity:2}]})">
+                        <span class="method m-post">POST</span><span class="btn-text">/api/orders</span>
+                        <div class="btn-desc">创建新订单（用户1：iPhone + AirPods*2）</div>
+                    </button>
+                    <button class="btn" onclick="callApi('PUT','/api/orders/' + (document.getElementById('orderId').value||1) + '/pay')">
+                        <span class="method m-put">PUT</span><span class="btn-text">/api/orders/{id}/pay</span>
+                        <div class="btn-desc">订单支付（仅 created 状态可支付）</div>
+                    </button>
+                    <button class="btn" onclick="callApi('PUT','/api/orders/' + (document.getElementById('orderId').value||1) + '/ship')">
+                        <span class="method m-put">PUT</span><span class="btn-text">/api/orders/{id}/ship</span>
+                        <div class="btn-desc">订单发货（仅 paid 状态可发货）</div>
+                    </button>
+                    <button class="btn" onclick="callApi('PUT','/api/orders/' + (document.getElementById('orderId').value||1) + '/complete')">
+                        <span class="method m-put">PUT</span><span class="btn-text">/api/orders/{id}/complete</span>
+                        <div class="btn-desc">订单完成（仅 shipped 状态可完成）</div>
+                    </button>
+                    <button class="btn" onclick="callApi('PUT','/api/orders/' + (document.getElementById('orderId').value||1) + '/cancel')">
+                        <span class="method m-put">PUT</span><span class="btn-text">/api/orders/{id}/cancel</span>
+                        <div class="btn-desc">取消订单（已结束订单不可取消）</div>
+                    </button>
+                </div>
+            </div>
+
+            <!-- 购物车 -->
+            <div class="card theme-purple">
+                <div class="card-header">&#128722; 购物车</div>
+                <div class="card-body">
+                    <div class="card-desc">模拟用户加购行为，按用户 ID 隔离购物车数据。支持添加商品和查询购物车。</div>
+                    <button class="btn" onclick="callApi('POST','/api/cart', {userId:1, productId:2, quantity:1})">
+                        <span class="method m-post">POST</span><span class="btn-text">/api/cart</span>
+                        <div class="btn-desc">加入购物车（用户1 + MacBook Pro）</div>
+                    </button>
+                    <button class="btn" onclick="callApi('POST','/api/cart', {userId:1, productId:4, quantity:2})">
+                        <span class="method m-post">POST</span><span class="btn-text">/api/cart</span>
+                        <div class="btn-desc">加入购物车（用户1 + iPad Air*2）</div>
+                    </button>
+                    <div class="input-group">
+                        <input type="text" id="cartUserId" value="1" placeholder="用户 ID">
+                        <button class="small-btn" onclick="callApi('GET','/api/cart/' + document.getElementById('cartUserId').value)">查看购物车</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 数据看板 -->
+            <div class="card theme-teal">
+                <div class="card-header">&#128202; 数据看板</div>
+                <div class="card-body">
+                    <div class="card-desc">聚合统计接口，返回用户总数、商品总数、订单状态分布、低库存预警等关键业务指标。</div>
+                    <button class="btn" onclick="callApi('GET','/api/dashboard')">
+                        <span class="method m-get">GET</span><span class="btn-text">/api/dashboard</span>
+                        <div class="btn-desc">业务数据总览（用户数/商品数/订单金额/状态分布）</div>
+                    </button>
+                </div>
+            </div>
+
+            <!-- 监控端点 -->
+            <div class="card theme-gray">
+                <div class="card-header">&#128225; 监控采集端点（供 HertzBeat）</div>
+                <div class="card-body">
+                    <div class="card-desc">这些端点用于 HertzBeat 监控平台采集指标数据，模拟真实 Spring Boot 服务的监控能力。</div>
+                    <button class="btn" onclick="callApi('GET','/actuator/health')">
+                        <span class="method m-get">GET</span><span class="btn-text">/actuator/health</span>
+                        <div class="btn-desc">Spring Boot 健康检查</div>
+                    </button>
+                    <button class="btn" onclick="callApi('GET','/metrics')">
+                        <span class="method m-get">GET</span><span class="btn-text">/metrics</span>
+                        <div class="btn-desc">Prometheus 格式指标</div>
+                    </button>
+                </div>
+            </div>
+
+            <!-- 测试工具 -->
+            <div class="card theme-red">
+                <div class="card-header">&#9889; 测试辅助工具</div>
+                <div class="card-body">
+                    <div class="card-desc">用于验证 HertzBeat 告警规则：响应超时阈值、非 200 状态码告警、服务可用性探测等。</div>
+                    <button class="btn" onclick="callApi('GET','/api/ping')">
+                        <span class="method m-get">GET</span><span class="btn-text">/api/ping</span>
+                        <div class="btn-desc">可用性探测（pong + 时间戳）</div>
+                    </button>
+                    <div class="input-group">
+                        <input type="number" id="delayMs" value="2000" placeholder="延迟毫秒数">
+                        <button class="small-btn" onclick="callApi('GET','/api/delay/' + document.getElementById('delayMs').value)">测试延迟</button>
+                    </div>
+                    <div class="input-group">
+                        <input type="number" id="errCode" value="500" placeholder="HTTP 状态码">
+                        <button class="small-btn" onclick="callApi('GET','/api/error/' + document.getElementById('errCode').value)">模拟错误</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="result-box">
+            <div class="result-header">
+                <h3>&#128196; API 响应结果</h3>
+                <span id="respStatus" class="badge bdg-wait">等待请求...</span>
+            </div>
+            <div class="result-meta">
+                <span><span class="label">方法:</span> <strong id="reqMethod">-</strong></span>
+                <span><span class="label">URL:</span> <strong id="reqUrl">-</strong></span>
+                <span><span class="label">耗时:</span> <strong id="reqTime">-</strong></span>
+            </div>
+            <pre id="respBody">点击上方按钮发起请求，接口响应数据将显示在此处。</pre>
+        </div>
+
+        <div class="footer">
+            Mock E-Commerce Service v1.0.0 · 专为 HertzBeat 监控测试设计
+        </div>
+    </div>
+
+    <script>
+        async function callApi(method, url, body = null) {
+            const start = performance.now();
+            const statusEl = document.getElementById('respStatus');
+            const methodEl = document.getElementById('reqMethod');
+            const urlEl = document.getElementById('reqUrl');
+            const timeEl = document.getElementById('reqTime');
+            const bodyEl = document.getElementById('respBody');
+
+            statusEl.textContent = '请求中...';
+            statusEl.className = 'badge bdg-wait';
+            methodEl.textContent = method;
+            urlEl.textContent = url;
+            timeEl.textContent = '-';
+            bodyEl.textContent = '正在发送请求...';
+
+            const opt = { method: method, headers: {} };
+            if (body && (method === 'POST' || method === 'PUT')) {
+                opt.headers['Content-Type'] = 'application/json';
+                opt.body = JSON.stringify(body);
+            }
+
+            try {
+                const resp = await fetch(url, opt);
+                const ms = Math.round(performance.now() - start);
+                timeEl.textContent = ms + 'ms';
+
+                let text;
+                const ct = resp.headers.get('content-type') || '';
+                if (ct.includes('application/json')) {
+                    text = JSON.stringify(await resp.json(), null, 2);
+                } else {
+                    text = await resp.text();
+                }
+
+                statusEl.textContent = `HTTP ${resp.status} ${resp.statusText}`;
+                statusEl.className = resp.ok ? 'badge bdg-ok' : 'badge bdg-err';
+                bodyEl.textContent = text;
+            } catch (err) {
+                const ms = Math.round(performance.now() - start);
+                timeEl.textContent = ms + 'ms';
+                statusEl.textContent = '请求失败';
+                statusEl.className = 'badge bdg-err';
+                bodyEl.textContent = '错误: ' + err.message + '\n\n请确认服务已启动在 http://localhost:8081';
+            }
+        }
+    </script>
+</body>
+</html>

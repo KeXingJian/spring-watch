@@ -50,4 +50,3 @@ docker-compose.override.yml
 .DS_Store
 Thumbs.db
 .data
-mock-test
