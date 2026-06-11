@@ -36,10 +36,6 @@ public class CollectorScheduler {
                 switch (mode) {
                     case "prometheus" -> prometheusScraper.scrape(scraper);
                     case "http_probe" -> httpProbe.probe(app);
-                    case "both" -> {
-                        prometheusScraper.scrape(scraper);
-                        httpProbe.probe(app);
-                    }
                     default -> {
                         prometheusScraper.scrape(scraper);
                         httpProbe.probe(app);

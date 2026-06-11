@@ -54,4 +54,4 @@ influxdb:
 
 logging:
   level:
-    com.springwatch: INFO
+    com.springwatch: debug
