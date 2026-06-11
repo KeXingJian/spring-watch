@@ -4,6 +4,9 @@ server:
 spring-watch:
   collector:
     interval: 15000
+  agent:
+    otlp-endpoint: http://localhost:4317
+    otlp-protocol: grpc
 
 spring:
   application:

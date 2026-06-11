@@ -9,5 +9,4 @@ public interface AlertHistoryRepository extends JpaRepository<AlertHistory, Long
 
     List<AlertHistory> findByAppAppNameOrderByCreatedAtDesc(String appName);
 
-    List<AlertHistory> findByAlertLevelOrderByCreatedAtDesc(String alertLevel);
 }

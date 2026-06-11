@@ -1,6 +1,7 @@
 package com.springwatch.collector;
 
 import com.springwatch.model.entity.MonitorApp;
+import com.springwatch.model.event.HeartbeatEvent;
 import com.springwatch.model.event.MetricEvent;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -44,15 +45,29 @@ public class HttpProbe {
                     .build();
             kafkaProducerBridge.sendMetric(event);
 
-            MetricEvent availabilityEvent = MetricEvent.builder()
-                    .appName(app.getAppName())
-                    .metricName("http_availability")
-                    .method("GET " + probeUrl)
-                    .value(statusCode < 400 ? 1.0 : 0.0)
-                    .timestamp(Instant.now())
-                    .tags(java.util.Map.of("statusCode", String.valueOf(statusCode)))
-                    .build();
-            kafkaProducerBridge.sendMetric(availabilityEvent);
+            if (statusCode < 400) {
+                MetricEvent availabilityEvent = MetricEvent.builder()
+                        .appName(app.getAppName())
+                        .metricName("http_availability")
+                        .method("GET " + probeUrl)
+                        .value(1.0)
+                        .timestamp(Instant.now())
+                        .tags(java.util.Map.of("statusCode", String.valueOf(statusCode)))
+                        .build();
+                kafkaProducerBridge.sendMetric(availabilityEvent);
+
+                sendHeartbeat(app);
+            } else {
+                MetricEvent availabilityEvent = MetricEvent.builder()
+                        .appName(app.getAppName())
+                        .metricName("http_availability")
+                        .method("GET " + probeUrl)
+                        .value(0.0)
+                        .timestamp(Instant.now())
+                        .tags(java.util.Map.of("statusCode", String.valueOf(statusCode)))
+                        .build();
+                kafkaProducerBridge.sendMetric(availabilityEvent);
+            }
 
         } catch (Exception e) {
             long costMs = (System.nanoTime() - start) / 1_000_000;
@@ -68,6 +83,29 @@ public class HttpProbe {
                     .tags(java.util.Map.of("status", "error", "error", e.getMessage()))
                     .build();
             kafkaProducerBridge.sendMetric(event);
+        }
+    }
+
+    private void sendHeartbeat(MonitorApp app) {
+        String ip = parseHost(app.getEndpoint());
+        HeartbeatEvent heartbeat = HeartbeatEvent.builder()
+                .appName(app.getAppName())
+                .ip(ip)
+                .agentVersion("probe-v1")
+                .timestamp(Instant.now())
+                .build();
+        kafkaProducerBridge.sendHeartbeat(heartbeat);
+    }
+
+    private String parseHost(String endpoint) {
+        if (endpoint == null || endpoint.isBlank()) {
+            return "unknown";
+        }
+        try {
+            URI uri = URI.create(endpoint);
+            return uri.getHost() != null ? uri.getHost() : "unknown";
+        } catch (Exception e) {
+            return "unknown";
         }
     }
 }

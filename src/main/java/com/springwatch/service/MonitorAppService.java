@@ -31,10 +31,8 @@ public class MonitorAppService {
         MonitorApp app = MonitorApp.builder()
                 .appName(request.getAppName())
                 .endpoint(request.getEndpoint())
-                .collectMode(request.getCollectMode())
                 .appType(request.getAppType())
                 .scrapeInterval(request.getScrapeInterval())
-                .metricsPort(request.getMetricsPort())
                 .labels(request.getLabels())
                 .status("active")
                 .createdAt(Instant.now())
@@ -42,8 +40,8 @@ public class MonitorAppService {
                 .build();
 
         MonitorApp saved = monitorAppRepository.save(app);
-        log.info("[spring-watch: 注册应用 - app={}, collectMode={}, endpoint={}, metricsPort={}]",
-                saved.getAppName(), saved.getCollectMode(), saved.getEndpoint(), saved.getMetricsPort());
+        log.info("[spring-watch: 注册应用 - app={}, endpoint={}]",
+                saved.getAppName(), saved.getEndpoint());
         return saved;
     }
 
@@ -79,14 +77,8 @@ public class MonitorAppService {
         if (request.getEndpoint() != null) {
             app.setEndpoint(request.getEndpoint());
         }
-        if (request.getCollectMode() != null) {
-            app.setCollectMode(request.getCollectMode());
-        }
         if (request.getScrapeInterval() != null) {
             app.setScrapeInterval(request.getScrapeInterval());
-        }
-        if (request.getMetricsPort() != null) {
-            app.setMetricsPort(request.getMetricsPort());
         }
         if (request.getLabels() != null) {
             app.setLabels(request.getLabels());
@@ -105,21 +97,17 @@ public class MonitorAppService {
 
     public Map<String, Object> generateOtelConfig(Long id) {
         MonitorApp app = getById(id);
-        Integer metricsPort = app.getMetricsPort() != null ? app.getMetricsPort() : 9464;
 
-        Map<String, String> envVars = otelConfigGenerator.generatePrometheusConfig(
-                app.getAppName(), metricsPort);
+        Map<String, String> envVars = otelConfigGenerator.generateOtelConfig(app.getAppName());
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("appName", app.getAppName());
-        result.put("collectMode", app.getCollectMode());
         result.put("endpoint", app.getEndpoint());
-        result.put("metricsPort", metricsPort);
         result.put("environmentVariables", envVars);
-        result.put("javaAgentCommand", otelConfigGenerator.generatePrometheusAgentCommand(
-                "opentelemetry-javaagent.jar", app.getAppName(), metricsPort));
-        log.info("[spring-watch: 生成OTel采集配置完成 - app={}, metricsPort={}, envVars={}]",
-                app.getAppName(), metricsPort, envVars.size());
+        result.put("javaAgentCommand", otelConfigGenerator.generateOtelAgentCommand(
+                "opentelemetry-javaagent.jar", app.getAppName()));
+        log.info("[spring-watch: 生成OTel Agent配置完成 - app={}, envVars={}]",
+                app.getAppName(), envVars.size());
         return result;
     }
 }

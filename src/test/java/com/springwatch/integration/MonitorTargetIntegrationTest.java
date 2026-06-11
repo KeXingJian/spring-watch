@@ -50,10 +50,8 @@ class MonitorTargetIntegrationTest {
         return AppRegisterRequest.builder()
                 .appName("mock-test")
                 .endpoint("http://localhost:8081")
-                .collectMode("prometheus")
                 .appType("springboot")
                 .scrapeInterval(15)
-                .metricsPort(9464)
                 .labels("env=docker,group=integration")
                 .build();
     }
@@ -73,18 +71,16 @@ class MonitorTargetIntegrationTest {
 
         ApiResponse<MonitorApp> body = response.getBody();
         MonitorApp app = body != null ? body.getData() : null;
-        log.info("[spring-watch: 集成测试 - 注册mock-test监控目标] status={}, id={}, appName={}, endpoint={}, metricsPort={}",
+        log.info("[spring-watch: 集成测试 - 注册mock-test监控目标] status={}, id={}, appName={}, endpoint={}",
                 response.getStatusCode().value(),
                 app != null ? app.getId() : null,
                 app != null ? app.getAppName() : null,
-                app != null ? app.getEndpoint() : null,
-                app != null ? app.getMetricsPort() : null);
+                app != null ? app.getEndpoint() : null);
 
         MonitorApp persisted = monitorAppRepository.findByAppName("mock-test").orElse(null);
-        log.info("[spring-watch: 集成测试 - 数据库持久化检查] id={}, endpoint={}, metricsPort={}",
+        log.info("[spring-watch: 集成测试 - 数据库持久化检查] id={}, endpoint={}",
                 persisted != null ? persisted.getId() : null,
-                persisted != null ? persisted.getEndpoint() : null,
-                persisted != null ? persisted.getMetricsPort() : null);
+                persisted != null ? persisted.getEndpoint() : null);
     }
 
     /**
@@ -95,9 +91,7 @@ class MonitorTargetIntegrationTest {
         monitorAppRepository.save(MonitorApp.builder()
                 .appName("mock-test")
                 .endpoint("http://localhost:8081")
-                .collectMode("prometheus")
                 .appType("springboot")
-                .metricsPort(9464)
                 .scrapeInterval(15)
                 .labels("env=docker,group=integration")
                 .status("active")
@@ -120,16 +114,14 @@ class MonitorTargetIntegrationTest {
     }
 
     /**
-     * 为指定应用生成OTel采集配置
+     * 为指定应用生成OTel Agent采集配置
      */
     @Test
     void generateOtelConfigForMockTest() {
         MonitorApp saved = monitorAppRepository.save(MonitorApp.builder()
                 .appName("mock-test")
                 .endpoint("http://localhost:8081")
-                .collectMode("prometheus")
                 .appType("springboot")
-                .metricsPort(9464)
                 .scrapeInterval(15)
                 .status("active")
                 .build());
@@ -141,7 +133,7 @@ class MonitorTargetIntegrationTest {
 
         ApiResponse<Map<String, Object>> body = response.getBody();
         Map<String, Object> config = body != null ? body.getData() : null;
-        log.info("[spring-watch: 集成测试 - 生成OTel配置] status={}, config={}",
+        log.info("[spring-watch: 集成测试 - 生成OTel Agent配置] status={}, config={}",
                 response.getStatusCode().value(), config);
     }
 
@@ -153,7 +145,6 @@ class MonitorTargetIntegrationTest {
         MonitorApp app = MonitorApp.builder()
                 .appName("mock-test")
                 .endpoint("http://localhost:8081")
-                .collectMode("prometheus")
                 .status("active")
                 .build();
 

@@ -19,17 +19,11 @@ public class AppRegisterRequest {
     private String endpoint;
 
     @Builder.Default
-    private String collectMode = "prometheus";
-
-    @Builder.Default
     private String appType = "springboot";
 
     @Builder.Default
     @Positive
     private Integer scrapeInterval = 15;
-
-    @Builder.Default
-    private Integer metricsPort = 9464;
 
     private String labels;
 }

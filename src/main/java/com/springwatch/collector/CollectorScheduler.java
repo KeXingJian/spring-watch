@@ -15,35 +15,22 @@ import java.util.List;
 public class CollectorScheduler {
 
     private final MonitorAppRepository monitorAppRepository;
-    private final PrometheusScraper prometheusScraper;
     private final HttpProbe httpProbe;
 
     @Scheduled(fixedDelayString = "${spring-watch.collector.interval:15000}")
-    public void scheduleCollection() {
+    public void scheduleProbe() {
         List<MonitorApp> activeApps = monitorAppRepository.findByStatus("active");
         if (activeApps.isEmpty()) {
-            log.debug("[spring-watch: CollectorScheduler 定时采集 - 无active应用, 跳过本轮]");
+            log.debug("[spring-watch: CollectorScheduler 探活 - 无active应用, 跳过本轮]");
             return;
         }
-        log.info("[spring-watch: CollectorScheduler 定时采集开始 - 应用数={}]", activeApps.size());
+        log.info("[spring-watch: CollectorScheduler 探活开始 - 应用数={}]", activeApps.size());
 
         for (MonitorApp app : activeApps) {
-            String mode = app.getCollectMode();
-            PrometheusScraper.MonitorAppScraper scraper = new PrometheusScraper.MonitorAppScraper(
-                    app.getAppName(), app.getEndpoint(), app.getMetricsPort());
-
             try {
-                switch (mode) {
-                    case "prometheus" -> prometheusScraper.scrape(scraper);
-                    case "http_probe" -> httpProbe.probe(app);
-                    default -> {
-                        prometheusScraper.scrape(scraper);
-                        httpProbe.probe(app);
-                    }
-                }
+                httpProbe.probe(app);
             } catch (Exception e) {
-                log.warn("[spring-watch: 采集异常 - app={}, mode={}, error={}]",
-                        app.getAppName(), mode, e.getMessage());
+                log.warn("[spring-watch: 探活异常 - app={}, error={}]", app.getAppName(), e.getMessage());
             }
         }
     }

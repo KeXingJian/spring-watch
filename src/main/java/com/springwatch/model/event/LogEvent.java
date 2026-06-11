@@ -1,16 +1,14 @@
 package com.springwatch.model.event;
 
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Getter;
-import lombok.NoArgsConstructor;
+import lombok.*;
 
 import java.time.Instant;
 
-@Getter
+
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
+@Data
 public class LogEvent {
 
     private String appName;
@@ -22,8 +20,5 @@ public class LogEvent {
     private String traceId;
     private Instant timestamp;
 
-    public String toLogString() {
-        return String.format("[LogEvent: app=%s, level=%s, logger=%s, time=%s]",
-                appName, level, logger, timestamp);
-    }
+
 }
