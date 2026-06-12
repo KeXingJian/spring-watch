@@ -4,6 +4,16 @@ server:
 spring:
   application:
     name: mock-test
+  datasource:
+    url: jdbc:h2:mem:mocktest;DB_CLOSE_DELAY=-1
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:schema.sql
+      data-locations: classpath:data.sql
 
 logging:
   pattern:

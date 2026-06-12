@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+
+    <property name="APP_NAME" value="mock-test"/>
+
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} [%thread] [%5level] traceId=%mdc{trace_id:-} spanId=%mdc{span_id:-} %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <appender name="INMEM" class="com.mock.test.logging.InMemoryLogBufferAppender">
+        <maxSize>1000</maxSize>
+    </appender>
+
+    <logger name="com.mock.test" level="INFO" additivity="false">
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="INMEM"/>
+    </logger>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+    </root>
+
+</configuration>

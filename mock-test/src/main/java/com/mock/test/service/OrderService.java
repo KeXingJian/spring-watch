@@ -3,6 +3,7 @@ package com.mock.test.service;
 import com.mock.test.dao.OrderDao;
 import com.mock.test.dao.ProductDao;
 import com.mock.test.dao.UserDao;
+import com.mock.test.metrics.BusinessMetrics;
 import io.opentelemetry.instrumentation.annotations.WithSpan;
 import org.springframework.stereotype.Service;
 
@@ -14,11 +15,13 @@ public class OrderService {
     private final OrderDao orderDao;
     private final UserDao userDao;
     private final ProductDao productDao;
+    private final BusinessMetrics businessMetrics;
 
-    public OrderService(OrderDao orderDao, UserDao userDao, ProductDao productDao) {
+    public OrderService(OrderDao orderDao, UserDao userDao, ProductDao productDao, BusinessMetrics businessMetrics) {
         this.orderDao = orderDao;
         this.userDao = userDao;
         this.productDao = productDao;
+        this.businessMetrics = businessMetrics;
     }
 
     @WithSpan
@@ -70,7 +73,9 @@ public class OrderService {
         }
         if (orderItems.isEmpty()) return Map.of("error", "订单商品不能为空");
 
-        return orderDao.save(userId, (String) user.get("username"), total, "created", orderItems);
+        Map<String, Object> saved = orderDao.save(userId, (String) user.get("username"), total, "created", orderItems);
+        businessMetrics.recordOrderCreated("created", total);
+        return saved;
     }
 
     @WithSpan
@@ -78,7 +83,11 @@ public class OrderService {
         Map<String, Object> o = orderDao.findById(id);
         if (o == null) return null;
         if (!"created".equals(o.get("status"))) return Map.of("error", "订单状态不允许支付: " + o.get("status"));
-        return orderDao.updateStatus(id, "paid");
+        Map<String, Object> updated = orderDao.updateStatus(id, "paid");
+        if (updated != null) {
+            businessMetrics.recordOrderPaid(((Number) updated.get("totalAmount")).doubleValue());
+        }
+        return updated;
     }
 
     @WithSpan

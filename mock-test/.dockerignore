@@ -1,0 +1,12 @@
+target/*
+!target/mock-test-1.0.0.jar
+!target/opentelemetry-javaagent.jar
+.idea/
+*.iml
+.vscode/
+.git/
+.gitignore
+.mvn/
+mvnw
+mvnw.cmd
+*.log

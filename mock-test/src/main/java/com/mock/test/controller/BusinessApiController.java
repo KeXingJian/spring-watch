@@ -4,6 +4,8 @@ import com.mock.test.service.CartService;
 import com.mock.test.service.OrderService;
 import com.mock.test.service.ProductService;
 import com.mock.test.service.UserService;
+import com.mock.test.service.UserStatsService;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -13,19 +15,23 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api")
+@Slf4j
 public class BusinessApiController {
 
     private final UserService userService;
     private final ProductService productService;
     private final OrderService orderService;
     private final CartService cartService;
+    private final UserStatsService userStatsService;
 
     public BusinessApiController(UserService userService, ProductService productService,
-                                 OrderService orderService, CartService cartService) {
+                                 OrderService orderService, CartService cartService,
+                                 UserStatsService userStatsService) {
         this.userService = userService;
         this.productService = productService;
         this.orderService = orderService;
         this.cartService = cartService;
+        this.userStatsService = userStatsService;
     }
 
     private Map<String, Object> ok(Object data) {
@@ -156,26 +162,26 @@ public class BusinessApiController {
 
     @GetMapping("/dashboard")
     public Map<String, Object> dashboard() {
-        Map<String, Object> data = new LinkedHashMap<>();
-        data.put("totalUsers", userService.count());
-        data.put("totalProducts", productService.count());
-        data.put("totalOrders", orderService.count());
-        data.put("totalAmount", orderService.sumTotalAmount());
-        data.put("orderStatus", orderService.countByStatus());
-        data.put("lowStockProducts", productService.findLowStock(100));
-        data.put("serverTime", LocalDateTime.now().toString());
-        return ok(data);
+        return ok(userStatsService.summary());
+    }
+
+    @GetMapping("/users/{id}/stats")
+    public Map<String, Object> userStats(@PathVariable Long id) {
+        return ok(userStatsService.userOrderSummary(id));
     }
 
     @GetMapping("/delay/{millis}")
     public Map<String, Object> simulateDelay(@PathVariable long millis) {
         long start = System.currentTimeMillis();
+        log.info("simulateDelay called, requested={}ms", millis);
         try {
             Thread.sleep(Math.min(millis, 30000));
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
-        return ok(Map.of("requestedDelay", millis, "actualDelay", System.currentTimeMillis() - start));
+        long actual = System.currentTimeMillis() - start;
+        log.info("simulateDelay completed, actual={}ms", actual);
+        return ok(Map.of("requestedDelay", millis, "actualDelay", actual));
     }
 
     @GetMapping("/error/{code}")
@@ -185,6 +191,7 @@ public class BusinessApiController {
 
     @GetMapping("/ping")
     public Map<String, Object> ping() {
+        log.info("ping called at {}", LocalDateTime.now());
         return ok(Map.of("message", "pong", "time", LocalDateTime.now().toString()));
     }
 }

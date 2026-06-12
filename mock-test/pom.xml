@@ -7,7 +7,7 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>4.0.1</version>
+        <version>3.4.1</version>
         <relativePath/>
     </parent>
 
@@ -18,7 +18,7 @@
     <description>Mock APIs for monitoring testing</description>
 
     <properties>
-        <java.version>25</java.version>
+        <java.version>21</java.version>
         <otel.javaagent.version>2.12.0</otel.javaagent.version>
     </properties>
 
@@ -28,10 +28,20 @@
             <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
 
-
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-thymeleaf</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-jdbc</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <scope>runtime</scope>
         </dependency>
 
         <dependency>
@@ -43,12 +53,10 @@
         <dependency>
             <groupId>io.opentelemetry.instrumentation</groupId>
             <artifactId>opentelemetry-instrumentation-annotations</artifactId>
-            <version>2.12.0</version>
+            <version>${otel.javaagent.version}</version>
         </dependency>
 
     </dependencies>
-
-
 
     <build>
         <plugins>
