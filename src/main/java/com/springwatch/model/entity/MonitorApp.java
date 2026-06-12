@@ -43,6 +43,8 @@ public class MonitorApp {
 
     private Instant lastHeartbeat;
 
+    private Instant lastLogPullTime;
+
     @Column(updatable = false)
     private Instant createdAt;
 

@@ -88,19 +88,24 @@ public class AgentMetricsCollector {
 
     ParsedMetric parsePrometheusLine(String line) {
         try {
+            int lastSpace = line.lastIndexOf(' ');
+            if (lastSpace < 0 || lastSpace >= line.length() - 1) {
+                return null;
+            }
+            String valueStr = line.substring(lastSpace + 1).trim();
+            double value = Double.parseDouble(valueStr);
+
+            String metricAndTags = line.substring(0, lastSpace);
+            int braceStart = metricAndTags.indexOf('{');
+            int braceEnd = metricAndTags.lastIndexOf('}');
+
             String metricName;
             Map<String, String> tags = new HashMap<>();
-            double value;
-
-            int braceStart = line.indexOf('{');
-            int braceEnd = line.indexOf('}');
 
             if (braceStart > 0 && braceEnd > braceStart) {
-                metricName = line.substring(0, braceStart);
-                String tagsStr = line.substring(braceStart + 1, braceEnd);
-                String[] pairs = tagsStr.split(",");
-                for (String pair : pairs) {
-                    pair = pair.trim();
+                metricName = metricAndTags.substring(0, braceStart);
+                String tagsStr = metricAndTags.substring(braceStart + 1, braceEnd);
+                for (String pair : tagsStr.split(",")) {
                     int eqIdx = pair.indexOf('=');
                     if (eqIdx > 0) {
                         String key = pair.substring(0, eqIdx).trim();
@@ -111,16 +116,8 @@ public class AgentMetricsCollector {
                         tags.put(key, val);
                     }
                 }
-                String valueStr = line.substring(braceEnd + 1).trim();
-                String[] parts = valueStr.split("\\s+");
-                value = Double.parseDouble(parts[0]);
             } else {
-                String[] parts = line.trim().split("\\s+");
-                if (parts.length < 2) {
-                    return null;
-                }
-                metricName = parts[0];
-                value = Double.parseDouble(parts[1]);
+                metricName = metricAndTags;
             }
 
             return new ParsedMetric(metricName, tags, value);

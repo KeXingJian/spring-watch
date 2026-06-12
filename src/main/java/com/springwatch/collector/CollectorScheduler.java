@@ -20,17 +20,19 @@ public class CollectorScheduler {
 
     private final MonitorAppRepository monitorAppRepository;
     private final AgentMetricsCollector agentMetricsCollector;
+    private final AgentLogCollector agentLogCollector;
     private final KafkaProducerBridge kafkaProducerBridge;
 
     @Scheduled(fixedDelayString = "${spring-watch.collector.interval:15000}")
-    public void pullAgentMetrics() {
+    public void pullAgentData() {
         List<MonitorApp> activeApps = monitorAppRepository.findAll();
         if (activeApps.isEmpty()) {
-            log.debug("[spring-watch: Agent拉取调度 - 无active应用, 跳过本轮]");
+            log.debug("[spring-watch: Agent拉取调度 - 无应用, 跳过本轮]");
             return;
         }
         log.info("[spring-watch: Agent拉取调度开始 - 应用数={}]", activeApps.size());
 
+        Instant now = Instant.now();
         for (MonitorApp app : activeApps) {
             try {
                 Integer metricsPort = app.getMetricsPort() != null ? app.getMetricsPort() : 9464;
@@ -40,6 +42,23 @@ public class CollectorScheduler {
                 if (isReachable(target)) {
                     agentMetricsCollector.collect(target);
                     sendHeartbeat(app);
+
+                    Instant since = app.getLastLogPullTime() != null
+                            ? app.getLastLogPullTime()
+                            : now.minusSeconds(3600);
+                    Instant latest = agentLogCollector.collect(app.getAppName(), app.getEndpoint(), since);
+                    if (latest.isAfter(since)) {
+                        app.setLastLogPullTime(latest);
+                        app.setUpdatedAt(now);
+                        monitorAppRepository.save(app);
+                    }
+
+                    if (!"active".equals(app.getStatus())) {
+                        app.setStatus("active");
+                        app.setUpdatedAt(now);
+                        monitorAppRepository.save(app);
+                        log.info("[spring-watch: Agent复活 - app={}]", app.getAppName());
+                    }
                 } else {
                     markInactive(app, "agent端口不可达");
                 }
