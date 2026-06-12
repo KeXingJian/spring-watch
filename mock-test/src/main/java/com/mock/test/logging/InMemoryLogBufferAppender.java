@@ -24,7 +24,7 @@ public class InMemoryLogBufferAppender extends AppenderBase<ILoggingEvent> {
 
     @Override
     protected void append(ILoggingEvent event) {
-        String appName = event.getLoggerContextVO().getProperty("APP_NAME");
+        String appName = event.getLoggerContextVO().getPropertyMap().get("APP_NAME");
         if (appName == null) {
             appName = "mock-test";
         }

@@ -1,8 +1,14 @@
-FROM eclipse-temurin:21-jre-jammy
+FROM maven:3.9-eclipse-temurin-21 AS builder
+WORKDIR /build
+COPY pom.xml ./
+RUN mvn -B -q dependency:go-offline
+COPY src ./src
+RUN mvn -B -q clean package -DskipTests
 
+FROM eclipse-temurin:21-jre-jammy
 WORKDIR /app
-COPY target/mock-test-1.0.0.jar app.jar
-COPY target/opentelemetry-javaagent.jar /app/opentelemetry-javaagent.jar
+COPY --from=builder /build/target/mock-test-1.0.0.jar app.jar
+COPY --from=builder /build/target/opentelemetry-javaagent.jar /app/opentelemetry-javaagent.jar
 COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
