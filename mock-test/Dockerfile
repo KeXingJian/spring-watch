@@ -1,9 +1,14 @@
+# syntax=docker/dockerfile:1.4
 FROM maven:3.9-eclipse-temurin-21 AS builder
 WORKDIR /build
+
+# 配置阿里云 Maven 镜像
+RUN mkdir -p /root/.m2 && printf '<?xml version="1.0" encoding="UTF-8"?>\n<settings>\n  <mirrors>\n    <mirror>\n      <id>aliyunmaven</id>\n      <name>Aliyun Maven</name>\n      <url>https://maven.aliyun.com/repository/public</url>\n      <mirrorOf>central</mirrorOf>\n    </mirror>\n  </mirrors>\n</settings>\n' > /root/.m2/settings.xml
+
+
 COPY pom.xml ./
-RUN mvn -B -q dependency:go-offline
 COPY src ./src
-RUN mvn -B -q clean package -DskipTests
+RUN mvn -s /root/.m2/settings.xml clean package -DskipTests
 
 FROM eclipse-temurin:21-jre-jammy
 WORKDIR /app

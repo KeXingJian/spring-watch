@@ -4,6 +4,7 @@ import com.mock.test.dao.OrderDao;
 import com.mock.test.dao.ProductDao;
 import com.mock.test.dao.UserDao;
 import com.mock.test.metrics.BusinessMetrics;
+import com.springwatch.SpringWatch;
 import io.opentelemetry.instrumentation.annotations.WithSpan;
 import org.springframework.stereotype.Service;
 
@@ -25,6 +26,7 @@ public class OrderService {
     }
 
     @WithSpan
+    @SpringWatch("order.listOrders")
     public Map<String, Object> listOrders(int page, int size, String status) {
         List<Map<String, Object>> list;
         if (status != null && !status.isBlank()) {
