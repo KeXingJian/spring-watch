@@ -65,6 +65,18 @@ public class MonitorAppController {
         return ApiResponse.ok(null);
     }
 
+    @PostMapping("/{id}/pause")
+    public ApiResponse<MonitorApp> pause(@PathVariable Long id) {
+        log.info("[spring-watch: API暂停应用 - id={}]", id);
+        return ApiResponse.ok(monitorAppService.pause(id));
+    }
+
+    @PostMapping("/{id}/resume")
+    public ApiResponse<MonitorApp> resume(@PathVariable Long id) {
+        log.info("[spring-watch: API恢复应用 - id={}]", id);
+        return ApiResponse.ok(monitorAppService.resume(id));
+    }
+
     @GetMapping("/{id}/otel-config")
     public ApiResponse<Map<String, Object>> generateOtelConfig(@PathVariable Long id) {
         log.info("[spring-watch: API生成OTel配置 - id={}]", id);

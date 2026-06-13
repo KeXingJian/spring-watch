@@ -28,5 +28,10 @@ public class AppRegisterRequest {
     @Positive
     private Integer scrapeInterval = 15;
 
+    @Builder.Default
+    private String scheduleType = "INTERVAL";
+
+    private String cronExpression;
+
     private String labels;
 }

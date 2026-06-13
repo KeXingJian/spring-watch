@@ -38,6 +38,13 @@ public class MonitorApp {
     @Builder.Default
     private Integer scrapeInterval = 15;
 
+    @Column(name = "schedule_type", length = 16)
+    @Builder.Default
+    private String scheduleType = "INTERVAL";
+
+    @Column(name = "cron_expression", length = 64)
+    private String cronExpression;
+
     private String labels;
 
     @Column(length = 16)
@@ -55,8 +62,9 @@ public class MonitorApp {
 
     @PrePersist
     public void prePersist() {
-        createdAt = Instant.now();
-        updatedAt = Instant.now();
+        Instant now = Instant.now();
+        if (createdAt == null) createdAt = now;
+        updatedAt = now;
     }
 
     @PreUpdate

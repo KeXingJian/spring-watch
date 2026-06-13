@@ -1,6 +1,7 @@
 package com.springwatch.service;
 
 import com.springwatch.collector.OtelConfigGenerator;
+import com.springwatch.collector.schedule.CollectScheduleRegistry;
 import com.springwatch.model.dto.AppRegisterRequest;
 import com.springwatch.model.entity.MonitorApp;
 import com.springwatch.repository.MonitorAppRepository;
@@ -22,6 +23,7 @@ public class MonitorAppService {
 
     private final MonitorAppRepository monitorAppRepository;
     private final OtelConfigGenerator otelConfigGenerator;
+    private final CollectScheduleRegistry collectScheduleRegistry;
 
     @Transactional
     public MonitorApp register(AppRegisterRequest request) {
@@ -37,6 +39,8 @@ public class MonitorAppService {
                 .metricsPort(request.getMetricsPort())
                 .appType(request.getAppType())
                 .scrapeInterval(request.getScrapeInterval())
+                .scheduleType(request.getScheduleType())
+                .cronExpression(request.getCronExpression())
                 .labels(request.getLabels())
                 .status("active")
                 .createdAt(Instant.now())
@@ -44,8 +48,13 @@ public class MonitorAppService {
                 .build();
 
         MonitorApp saved = monitorAppRepository.save(app);
-        log.info("[spring-watch: 注册应用 - appid={}, app={}, endpoint={}, metricsPort={}]",
-                saved.getAppid(), saved.getAppName(), saved.getEndpoint(), saved.getMetricsPort());
+        log.info("[spring-watch: 注册应用落库完成 - id={}, appid={}, app={}, scheduleType={}, scrapeInterval={}s, cron={}]",
+                saved.getId(), saved.getAppid(), saved.getAppName(),
+                saved.getScheduleType(), saved.getScrapeInterval(), saved.getCronExpression());
+        collectScheduleRegistry.upsert(saved);
+        log.info("[spring-watch: 注册应用完成 - appid={}, app={}, endpoint={}, scheduleType={}, scrapeInterval={}s, cron={}]",
+                saved.getAppid(), saved.getAppName(), saved.getEndpoint(),
+                saved.getScheduleType(), saved.getScrapeInterval(), saved.getCronExpression());
         return saved;
     }
 
@@ -97,21 +106,71 @@ public class MonitorAppService {
         if (request.getScrapeInterval() != null) {
             app.setScrapeInterval(request.getScrapeInterval());
         }
+        if (request.getScheduleType() != null && !request.getScheduleType().isBlank()) {
+            app.setScheduleType(request.getScheduleType());
+        }
+        if (request.getCronExpression() != null) {
+            app.setCronExpression(request.getCronExpression().isBlank() ? null : request.getCronExpression());
+        }
         if (request.getLabels() != null) {
             app.setLabels(request.getLabels());
         }
         app.setUpdatedAt(Instant.now());
-        log.info("[spring-watch: 更新应用 - id={}, appid={}, app={}]",
-                id, app.getAppid(), app.getAppName());
-        return monitorAppRepository.save(app);
+        MonitorApp saved = monitorAppRepository.save(app);
+        log.info("[spring-watch: 更新应用落库完成 - id={}, appid={}, app={}, scheduleType={}, scrapeInterval={}s, cron={}]",
+                id, saved.getAppid(), saved.getAppName(),
+                saved.getScheduleType(), saved.getScrapeInterval(), saved.getCronExpression());
+        collectScheduleRegistry.upsert(saved);
+        log.info("[spring-watch: 更新应用完成 - id={}, appid={}, app={}, scheduleType={}, scrapeInterval={}s, cron={}]",
+                id, saved.getAppid(), saved.getAppName(),
+                saved.getScheduleType(), saved.getScrapeInterval(), saved.getCronExpression());
+        return saved;
     }
 
     @Transactional
     public void delete(Long id) {
         MonitorApp app = getById(id);
-        log.info("[spring-watch: 删除应用 - id={}, appid={}, app={}]",
-                id, app.getAppid(), app.getAppName());
+        Long appid = app.getAppid();
+        String appName = app.getAppName();
+        log.info("[spring-watch: 删除应用开始 - id={}, appid={}, app={}]", id, appid, appName);
         monitorAppRepository.delete(app);
+        log.info("[spring-watch: 删除应用落库完成 - id={}, appid={}, app={}]", id, appid, appName);
+        collectScheduleRegistry.cancel(appid);
+        log.info("[spring-watch: 删除应用完成 - id={}, appid={}, app={}, 调度任务已取消]", id, appid, appName);
+    }
+
+    @Transactional
+    public MonitorApp pause(Long id) {
+        MonitorApp app = getById(id);
+        String prev = app.getStatus();
+        if (com.springwatch.model.entity.MonitorStatus.isPaused(prev)) {
+            log.info("[spring-watch: 暂停幂等 - id={}, appid={}, app={}, 已在paused]",
+                    id, app.getAppid(), app.getAppName());
+            return app;
+        }
+        app.setStatus(com.springwatch.model.entity.MonitorStatus.PAUSED);
+        app.setUpdatedAt(Instant.now());
+        MonitorApp saved = monitorAppRepository.save(app);
+        log.info("[spring-watch: 暂停应用 - id={}, appid={}, app={}, {} -> paused, 调度任务保持运行, 本轮及之后拉取跳过]",
+                id, saved.getAppid(), saved.getAppName(), prev);
+        return saved;
+    }
+
+    @Transactional
+    public MonitorApp resume(Long id) {
+        MonitorApp app = getById(id);
+        String prev = app.getStatus();
+        if (com.springwatch.model.entity.MonitorStatus.isActive(prev)) {
+            log.info("[spring-watch: 恢复幂等 - id={}, appid={}, app={}, 已在active]",
+                    id, app.getAppid(), app.getAppName());
+            return app;
+        }
+        app.setStatus(com.springwatch.model.entity.MonitorStatus.ACTIVE);
+        app.setUpdatedAt(Instant.now());
+        MonitorApp saved = monitorAppRepository.save(app);
+        log.info("[spring-watch: 恢复应用 - id={}, appid={}, app={}, {} -> active, 下一次拉取即生效]",
+                id, saved.getAppid(), saved.getAppName(), prev);
+        return saved;
     }
 
     public Map<String, Object> generateOtelConfig(Long id) {

@@ -3,7 +3,13 @@ server:
 
 spring-watch:
   collector:
-    interval: 15000
+    interval: 30000
+    pool-size: 32
+    per-host-concurrent: 4
+    jitter-percent: 10
+    retry:
+      drainer-count: 2
+      max-attempts: 5
   agent:
     prometheus-host: 0.0.0.0
 
@@ -43,10 +49,6 @@ spring:
       host: localhost
       port: 6379
 
-  test:
-    constructor:
-      autowire:
-        mode: all
 
 influxdb:
   url: http://localhost:8086
