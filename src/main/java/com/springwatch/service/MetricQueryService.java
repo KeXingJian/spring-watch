@@ -22,7 +22,7 @@ public class MetricQueryService {
 
     private final InfluxDBClient influxDBClient;
 
-    @Value("${influxdb.bucket}")
+    @Value("${influxdb.metrics-bucket}")
     private String bucket;
 
     @Value("${influxdb.org}")

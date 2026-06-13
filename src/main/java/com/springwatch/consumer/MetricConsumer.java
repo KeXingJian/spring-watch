@@ -4,6 +4,7 @@ package com.springwatch.consumer;
 import com.influxdb.client.WriteApi;
 import com.influxdb.client.domain.WritePrecision;
 import com.influxdb.client.write.Point;
+import com.influxdb.client.write.WriteParameters;
 import com.springwatch.model.event.MetricEvent;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -18,6 +19,7 @@ public class MetricConsumer {
 
     private final WriteApi writeApi;
     private final ObjectMapper objectMapper;
+    private final WriteParameters metricsWriteParameters;
 
     @KafkaListener(topics = "monitor-metrics", groupId = "spring-watch-metric-consumer")
     public void onMetric(String message) {
@@ -40,7 +42,7 @@ public class MetricConsumer {
                 event.getTags().forEach(point::addTag);
             }
 
-            writeApi.writePoint(point);
+            writeApi.writePoint(point,metricsWriteParameters);
             log.trace("[spring-watch: MetricConsumer 写入InfluxDB完成 - app={}, metric={}, value={}]",
                     event.getAppName(), event.getMetricName(), event.getValue());
         } catch (Exception e) {

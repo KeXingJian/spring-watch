@@ -52,7 +52,8 @@ influxdb:
   url: http://localhost:8086
   token: sw-token-2024
   org: spring-watch
-  bucket: metrics
+  metrics-bucket: metrics
+  log-bucket: logs
 
 logging:
   level:

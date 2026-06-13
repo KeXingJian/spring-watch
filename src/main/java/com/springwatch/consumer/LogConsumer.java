@@ -1,19 +1,19 @@
 package com.springwatch.consumer;
 
 
+import com.influxdb.client.WriteApi;
+import com.influxdb.client.domain.WritePrecision;
+import com.influxdb.client.write.Point;
+import com.influxdb.client.write.WriteParameters;
 import com.springwatch.model.event.LogEvent;
-import com.springwatch.repository.AppLogRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.ObjectMapper;
 
 import java.time.Instant;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
 
 @Slf4j
 @Component
@@ -21,45 +21,37 @@ import java.util.Map;
 public class LogConsumer {
 
     private final ObjectMapper objectMapper;
-    private final AppLogRepository appLogRepository;
+    private final WriteApi writeApi;
+    private final WriteParameters logWriteParameters;
 
-    private final List<Map<String, Object>> buffer = new ArrayList<>();
 
     @KafkaListener(topics = "monitor-logs", groupId = "spring-watch-log-consumer")
-    public synchronized void onLog(String message) {
+    public void onLog(String message) {
         try {
             LogEvent event = objectMapper.readValue(message, LogEvent.class);
-            log.debug("[spring-watch: LogConsumer 收到日志 - app={}, level={}, logger={}]",
+            log.trace("[spring-watch: LogConsumer 收到日志 - app={}, level={}, logger={}]",
                     event.getAppName(), event.getLevel(), event.getLogger());
 
-            Map<String, Object> row = new HashMap<>();
-            row.put("appName", event.getAppName());
-            row.put("level", event.getLevel());
-            row.put("logger", event.getLogger());
-            row.put("threadName", event.getThreadName());
-            row.put("message", event.getMessage());
-            row.put("throwable", event.getThrowable());
-            row.put("traceId", event.getTraceId());
-            row.put("logTime", event.getTimestamp() != null ? event.getTimestamp() : Instant.now());
+            Point point = Point.measurement("app_log")
+                    .addTag("app", event.getAppName() != null ? event.getAppName() : "unknown")
+                    .addTag("level", event.getLevel() != null ? event.getLevel() : "INFO")
+                    .addTag("logger", event.getLogger() != null ? event.getLogger() : "unknown")
+                    .addTag("threadName", event.getThreadName() != null ? event.getThreadName() : "unknown")
+                    .addField("message", event.getMessage() != null ? event.getMessage() : "")
+                    .time(event.getTimestamp() != null ? event.getTimestamp() : Instant.now(), WritePrecision.NS);
 
-            buffer.add(row);
-            if (buffer.size() >= 500) {
-                flush();
+            if (event.getThrowable() != null) {
+                point.addField("throwable", event.getThrowable());
             }
+            if (event.getTraceId() != null) {
+                point.addField("traceId", event.getTraceId());
+            }
+
+            writeApi.writePoint(point, logWriteParameters);
+            log.trace("[spring-watch: LogConsumer 写入InfluxDB完成 - app={}, level={}]",
+                    event.getAppName(), event.getLevel());
         } catch (Exception e) {
             log.error("[spring-watch: LogConsumer 处理失败 - error={}]", e.getMessage(), e);
         }
-    }
-
-    public synchronized void flush() {
-        if (buffer.isEmpty()) {
-            return;
-        }
-        int count = buffer.size();
-        log.info("[spring-watch: LogConsumer 批量写入 - count={}]", count);
-        List<Map<String, Object>> batch = new ArrayList<>(buffer);
-        buffer.clear();
-        appLogRepository.batchInsert(batch);
-        log.info("[spring-watch: LogConsumer 批量写入完成 - count={}]", count);
     }
 }
