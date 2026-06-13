@@ -18,6 +18,9 @@ public class MonitorApp {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @Column(nullable = false, unique = true, updatable = false)
+    private Long appid;
+
     @Column(nullable = false, unique = true, length = 128)
     private String appName;
 

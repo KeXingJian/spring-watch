@@ -11,13 +11,13 @@ import java.time.Instant;
 @Data
 public class HeartbeatEvent {
 
-    private String appName;
+    private Long appid;
     private String ip;
     private String agentVersion;
     private Instant timestamp;
 
     public String toLogString() {
-        return String.format("[HeartbeatEvent: app=%s, ip=%s, agentVersion=%s, time=%s]",
-                appName, ip, agentVersion, timestamp);
+        return String.format("[HeartbeatEvent: appid=%s, ip=%s, agentVersion=%s, time=%s]",
+                appid, ip, agentVersion, timestamp);
     }
 }

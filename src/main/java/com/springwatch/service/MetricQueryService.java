@@ -28,21 +28,21 @@ public class MetricQueryService {
     @Value("${influxdb.org}")
     private String influxOrg;
 
-    public List<Map<String, Object>> queryMetrics(String appName, String metricName,
+    public List<Map<String, Object>> queryMetrics(Long appid, String metricName,
                                                    Instant start, Instant stop) {
         StringBuilder flux = new StringBuilder();
         flux.append("from(bucket: \"").append(bucket).append("\")\n");
         flux.append("  |> range(start: ").append(start).append(", stop: ").append(stop).append(")\n");
         flux.append("  |> filter(fn: (r) => r[\"_measurement\"] == \"springboot_metrics\")\n");
-        if (appName != null) {
-            flux.append("  |> filter(fn: (r) => r[\"app\"] == \"").append(appName).append("\")\n");
+        if (appid != null) {
+            flux.append("  |> filter(fn: (r) => r[\"appid\"] == \"").append(appid).append("\")\n");
         }
         if (metricName != null) {
             flux.append("  |> filter(fn: (r) => r[\"metric\"] == \"").append(metricName).append("\")\n");
         }
 
-        log.info("[spring-watch: InfluxDB查询 - app={}, metric={}, range={}~{}]",
-                appName, metricName, start, stop);
+        log.info("[spring-watch: InfluxDB查询 - appid={}, metric={}, range={}~{}]",
+                appid, metricName, start, stop);
 
         QueryApi queryApi = influxDBClient.getQueryApi();
         List<FluxTable> tables = queryApi.query(flux.toString(), influxOrg);
@@ -64,8 +64,8 @@ public class MetricQueryService {
                 results.add(row);
             }
         }
-        log.info("[spring-watch: InfluxDB查询完成 - app={}, metric={}, records={}]",
-                appName, metricName, results.size());
+        log.info("[spring-watch: InfluxDB查询完成 - appid={}, metric={}, records={}]",
+                appid, metricName, results.size());
         return results;
     }
 }

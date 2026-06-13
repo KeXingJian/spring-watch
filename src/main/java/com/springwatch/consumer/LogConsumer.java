@@ -29,11 +29,11 @@ public class LogConsumer {
     public void onLog(String message) {
         try {
             LogEvent event = objectMapper.readValue(message, LogEvent.class);
-            log.trace("[spring-watch: LogConsumer 收到日志 - app={}, level={}, logger={}]",
-                    event.getAppName(), event.getLevel(), event.getLogger());
+            log.trace("[spring-watch: LogConsumer 收到日志 - appid={}, level={}, logger={}]",
+                    event.getAppid(), event.getLevel(), event.getLogger());
 
             Point point = Point.measurement("app_log")
-                    .addTag("app", event.getAppName() != null ? event.getAppName() : "unknown")
+                    .addTag("appid", String.valueOf(event.getAppid()))
                     .addTag("level", event.getLevel() != null ? event.getLevel() : "INFO")
                     .addTag("logger", event.getLogger() != null ? event.getLogger() : "unknown")
                     .addTag("threadName", event.getThreadName() != null ? event.getThreadName() : "unknown")
@@ -48,8 +48,8 @@ public class LogConsumer {
             }
 
             writeApi.writePoint(point, logWriteParameters);
-            log.trace("[spring-watch: LogConsumer 写入InfluxDB完成 - app={}, level={}]",
-                    event.getAppName(), event.getLevel());
+            log.trace("[spring-watch: LogConsumer 写入InfluxDB完成 - appid={}, level={}]",
+                    event.getAppid(), event.getLevel());
         } catch (Exception e) {
             log.error("[spring-watch: LogConsumer 处理失败 - error={}]", e.getMessage(), e);
         }

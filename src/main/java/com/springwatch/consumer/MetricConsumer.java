@@ -25,11 +25,11 @@ public class MetricConsumer {
     public void onMetric(String message) {
         try {
             MetricEvent event = objectMapper.readValue(message, MetricEvent.class);
-            log.trace("[spring-watch: MetricConsumer 收到指标 - app={}, metric={}, value={}]",
-                    event.getAppName(), event.getMetricName(), event.getValue());
+            log.trace("[spring-watch: MetricConsumer 收到指标 - appid={}, metric={}, value={}]",
+                    event.getAppid(), event.getMetricName(), event.getValue());
 
             Point point = Point.measurement("springboot_metrics")
-                    .addTag("app", event.getAppName())
+                    .addTag("appid", String.valueOf(event.getAppid()))
                     .addTag("metric", event.getMetricName())
                     .addTag("method", event.getMethod() != null ? event.getMethod() : "unknown")
                     .addField("value", event.getValue())
@@ -43,8 +43,8 @@ public class MetricConsumer {
             }
 
             writeApi.writePoint(point,metricsWriteParameters);
-            log.trace("[spring-watch: MetricConsumer 写入InfluxDB完成 - app={}, metric={}, value={}]",
-                    event.getAppName(), event.getMetricName(), event.getValue());
+            log.trace("[spring-watch: MetricConsumer 写入InfluxDB完成 - appid={}, metric={}, value={}]",
+                    event.getAppid(), event.getMetricName(), event.getValue());
         } catch (Exception e) {
             log.error("[spring-watch: MetricConsumer 处理失败 - error={}]", e.getMessage(), e);
         }

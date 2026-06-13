@@ -7,7 +7,7 @@ import java.util.List;
 
 public interface AlertRuleRepository extends JpaRepository<AlertRule, Long> {
 
-    List<AlertRule> findByAppAppNameAndStatus(String appName, String status);
+    List<AlertRule> findByAppAppidAndStatus(Long appid, String status);
 
     List<AlertRule> findByStatus(String status);
 }

@@ -20,14 +20,14 @@ public class MetricController {
 
     @GetMapping("/query")
     public ApiResponse<List<Map<String, Object>>> query(
-            @RequestParam(required = false) String app,
+            @RequestParam(required = false) Long appid,
             @RequestParam(required = false) String metric,
             @RequestParam(defaultValue = "-1h") String start,
             @RequestParam(defaultValue = "now()") String stop) {
         Instant startTime = parseInstant(start, true);
         Instant stopTime = parseInstant(stop, false);
-        log.info("[spring-watch: API查询指标 - app={}, metric={}, range={}~{}]", app, metric, startTime, stopTime);
-        return ApiResponse.ok(metricQueryService.queryMetrics(app, metric, startTime, stopTime));
+        log.info("[spring-watch: API查询指标 - appid={}, metric={}, range={}~{}]", appid, metric, startTime, stopTime);
+        return ApiResponse.ok(metricQueryService.queryMetrics(appid, metric, startTime, stopTime));
     }
 
     private Instant parseInstant(String value, boolean isStart) {

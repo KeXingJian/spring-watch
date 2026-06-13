@@ -22,7 +22,7 @@ public class AgentLogCollector {
     private final KafkaProducerBridge kafkaProducerBridge;
     private final ObjectMapper objectMapper;
 
-    public Instant collect(String appName, String endpoint, Instant since) {
+    public Instant collect(Long appid, String appName, String endpoint, Instant since) {
         String url = buildUrl(endpoint, since);
         long start = System.nanoTime();
 
@@ -49,6 +49,9 @@ public class AgentLogCollector {
                 Instant latest = since;
                 int sent = 0;
                 for (LogEvent event : logs) {
+                    if (event.getAppid() == null) {
+                        event.setAppid(appid);
+                    }
                     if (event.getTimestamp() == null) {
                         event.setTimestamp(Instant.now());
                     }
@@ -58,18 +61,18 @@ public class AgentLogCollector {
                         latest = event.getTimestamp();
                     }
                 }
-                log.info("[spring-watch: Agent日志拉取 - app={}, since={}, count={}, latest={}, cost={}ms]",
-                        appName, since, sent, latest, costMs);
+                log.info("[spring-watch: Agent日志拉取 - appid={}, app={}, since={}, count={}, latest={}, cost={}ms]",
+                        appid, appName, since, sent, latest, costMs);
                 return latest;
             } else {
-                log.warn("[spring-watch: Agent日志拉取非200 - app={}, url={}, status={}, cost={}ms]",
-                        appName, url, statusCode, costMs);
+                log.warn("[spring-watch: Agent日志拉取非200 - appid={}, app={}, url={}, status={}, cost={}ms]",
+                        appid, appName, url, statusCode, costMs);
                 conn.disconnect();
             }
         } catch (Exception e) {
             long costMs = (System.nanoTime() - start) / 1_000_000;
-            log.warn("[spring-watch: Agent日志拉取失败 - app={}, url={}, error={}, cost={}ms]",
-                    appName, url, e.getMessage(), costMs);
+            log.warn("[spring-watch: Agent日志拉取失败 - appid={}, app={}, url={}, error={}, cost={}ms]",
+                    appid, appName, url, e.getMessage(), costMs);
         }
         return since;
     }

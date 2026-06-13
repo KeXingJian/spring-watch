@@ -23,13 +23,13 @@ public class AlertEvaluator {
     private static final Pattern EXPRESSION_PATTERN = Pattern.compile("(\\w[\\w.]*)\\s*(>|<|>=|<=|==|!=)\\s*([\\d.]+)");
 
     public void evaluate(MetricEvent event) {
-        List<AlertRule> rules = alertRuleRepository.findByAppAppNameAndStatus(event.getAppName(), "enabled");
+        List<AlertRule> rules = alertRuleRepository.findByAppAppidAndStatus(event.getAppid(), "enabled");
         if (rules.isEmpty()) {
-            log.debug("[spring-watch: 告警评估跳过 - app={} 无启用规则]", event.getAppName());
+            log.debug("[spring-watch: 告警评估跳过 - appid={} 无启用规则]", event.getAppid());
             return;
         }
-        log.debug("[spring-watch: 告警评估开始 - app={}, metric={}, value={}, 待评估规则数={}]",
-                event.getAppName(), event.getMetricName(), event.getValue(), rules.size());
+        log.debug("[spring-watch: 告警评估开始 - appid={}, metric={}, value={}, 待评估规则数={}]",
+                event.getAppid(), event.getMetricName(), event.getValue(), rules.size());
 
         for (AlertRule rule : rules) {
             if (!"metric".equals(rule.getRuleType())) {
@@ -38,13 +38,13 @@ public class AlertEvaluator {
             if (matchRule(rule, event)) {
                 boolean alreadyFired = alertWindowManager.isAlreadyFired(rule.getId(), event.getTimestamp());
                 if (!alreadyFired) {
-                    log.info("[spring-watch: 告警触发 - app={}, rule={}, metric={}, value={}]",
-                            event.getAppName(), rule.getRuleName(), event.getMetricName(), event.getValue());
+                    log.info("[spring-watch: 告警触发 - appid={}, rule={}, metric={}, value={}]",
+                            event.getAppid(), rule.getRuleName(), event.getMetricName(), event.getValue());
                     alertNotifier.notify(rule, event);
                     alertWindowManager.recordFire(rule.getId(), event.getTimestamp());
                 } else {
-                    log.debug("[spring-watch: 告警抑制 - app={}, rule={} 已在窗口期内触发]",
-                            event.getAppName(), rule.getRuleName());
+                    log.debug("[spring-watch: 告警抑制 - appid={}, rule={} 已在窗口期内触发]",
+                            event.getAppid(), rule.getRuleName());
                 }
             }
         }

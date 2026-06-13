@@ -7,6 +7,6 @@ import java.util.List;
 
 public interface AlertHistoryRepository extends JpaRepository<AlertHistory, Long> {
 
-    List<AlertHistory> findByAppAppNameOrderByCreatedAtDesc(String appName);
+    List<AlertHistory> findByAppAppidOrderByCreatedAtDesc(Long appid);
 
 }

@@ -48,7 +48,7 @@ public class AgentMetricsCollector {
                         tags.put("statusCode", String.valueOf(statusCode));
 
                         MetricEvent event = MetricEvent.builder()
-                                .appName(target.appName())
+                                .appid(target.appid())
                                 .metricName(parsed.name)
                                 .method("agent_pull")
                                 .value(parsed.value)
@@ -60,18 +60,18 @@ public class AgentMetricsCollector {
                     }
                 }
                 reader.close();
-                log.info("[spring-watch: Agent拉取成功 - app={}, url={}, metrics={}, cost={}ms]",
-                        target.appName(), metricsUrl, metricCount, costMs);
+                log.info("[spring-watch: Agent拉取成功 - appid={}, app={}, url={}, metrics={}, cost={}ms]",
+                        target.appid(), target.appName(), metricsUrl, metricCount, costMs);
             } else {
-                log.warn("[spring-watch: Agent拉取非200 - app={}, url={}, status={}, cost={}ms]",
-                        target.appName(), metricsUrl, statusCode, costMs);
+                log.warn("[spring-watch: Agent拉取非200 - appid={}, app={}, url={}, status={}, cost={}ms]",
+                        target.appid(), target.appName(), metricsUrl, statusCode, costMs);
             }
             conn.disconnect();
 
         } catch (Exception e) {
             long costMs = (System.nanoTime() - start) / 1_000_000;
-            log.warn("[spring-watch: Agent拉取失败 - app={}, url={}, error={}, cost={}ms]",
-                    target.appName(), metricsUrl, e.getMessage(), costMs);
+            log.warn("[spring-watch: Agent拉取失败 - appid={}, app={}, url={}, error={}, cost={}ms]",
+                    target.appid(), target.appName(), metricsUrl, e.getMessage(), costMs);
         }
     }
 
@@ -128,5 +128,5 @@ public class AgentMetricsCollector {
     }
 
     public record ParsedMetric(String name, Map<String, String> tags, double value) {}
-    public record MonitorTarget(String appName, String endpoint, Integer metricsPort) {}
+    public record MonitorTarget(Long appid, String appName, String endpoint, Integer metricsPort) {}
 }

@@ -10,7 +10,10 @@ public interface MonitorAppRepository extends JpaRepository<MonitorApp, Long> {
 
     Optional<MonitorApp> findByAppName(String appName);
 
+    Optional<MonitorApp> findByAppid(Long appid);
+
     List<MonitorApp> findByStatus(String status);
 
     boolean existsByAppName(String appName);
+
 }

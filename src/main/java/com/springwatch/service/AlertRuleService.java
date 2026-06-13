@@ -24,11 +24,11 @@ public class AlertRuleService {
     private final MonitorAppRepository monitorAppRepository;
 
     @Transactional
-    public AlertRule createRule(String appName, String ruleName, String ruleType,
+    public AlertRule createRule(Long appid, String ruleName, String ruleType,
                                  String expression, Double thresholdValue, Integer durationSeconds,
                                  String notifyChannels) {
-        MonitorApp app = monitorAppRepository.findByAppName(appName)
-                .orElseThrow(() -> new IllegalArgumentException("应用不存在: " + appName));
+        MonitorApp app = monitorAppRepository.findByAppid(appid)
+                .orElseThrow(() -> new IllegalArgumentException("应用不存在: appid=" + appid));
 
         AlertRule rule = AlertRule.builder()
                 .app(app)
@@ -43,19 +43,19 @@ public class AlertRuleService {
                 .build();
 
         AlertRule saved = alertRuleRepository.save(rule);
-        log.info("[spring-watch: 创建告警规则 - app={}, rule={}, type={}]",
-                appName, ruleName, ruleType);
+        log.info("[spring-watch: 创建告警规则 - appid={}, app={}, rule={}, type={}]",
+                appid, app.getAppName(), ruleName, ruleType);
         return saved;
     }
 
-    public List<AlertRule> listRules(String appName) {
+    public List<AlertRule> listRules(Long appid) {
         List<AlertRule> rules;
-        if (appName != null) {
-            rules = alertRuleRepository.findByAppAppNameAndStatus(appName, "enabled");
+        if (appid != null) {
+            rules = alertRuleRepository.findByAppAppidAndStatus(appid, "enabled");
         } else {
             rules = alertRuleRepository.findByStatus("enabled");
         }
-        log.debug("[spring-watch: 查询告警规则 - app={}, count={}]", appName, rules.size());
+        log.debug("[spring-watch: 查询告警规则 - appid={}, count={}]", appid, rules.size());
         return rules;
     }
 
@@ -99,14 +99,14 @@ public class AlertRuleService {
         alertRuleRepository.delete(rule);
     }
 
-    public List<AlertHistory> listAlertHistory(String appName) {
+    public List<AlertHistory> listAlertHistory(Long appid) {
         List<AlertHistory> history;
-        if (appName != null) {
-            history = alertHistoryRepository.findByAppAppNameOrderByCreatedAtDesc(appName);
+        if (appid != null) {
+            history = alertHistoryRepository.findByAppAppidOrderByCreatedAtDesc(appid);
         } else {
             history = alertHistoryRepository.findAll();
         }
-        log.debug("[spring-watch: 查询告警历史 - app={}, count={}]", appName, history.size());
+        log.debug("[spring-watch: 查询告警历史 - appid={}, count={}]", appid, history.size());
         return history;
     }
 }

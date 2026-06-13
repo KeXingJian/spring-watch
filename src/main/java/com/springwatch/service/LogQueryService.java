@@ -28,14 +28,14 @@ public class LogQueryService {
     @Value("${influxdb.org}")
     private String influxOrg;
 
-    public List<Map<String, Object>> queryLogs(String appName, String level,
+    public List<Map<String, Object>> queryLogs(Long appid, String level,
                                                 Instant startTime, Instant endTime, int limit) {
         StringBuilder flux = new StringBuilder();
         flux.append("from(bucket: \"").append(logBucket).append("\")\n");
         flux.append("  |> range(start: ").append(startTime).append(", stop: ").append(endTime).append(")\n");
         flux.append("  |> filter(fn: (r) => r._measurement == \"app_log\")\n");
-        if (appName != null) {
-            flux.append("  |> filter(fn: (r) => r[\"app\"] == \"").append(appName).append("\")\n");
+        if (appid != null) {
+            flux.append("  |> filter(fn: (r) => r[\"appid\"] == \"").append(appid).append("\")\n");
         }
         if (level != null) {
             flux.append("  |> filter(fn: (r) => r[\"level\"] == \"").append(level).append("\")\n");
@@ -44,8 +44,8 @@ public class LogQueryService {
         flux.append("  |> sort(columns: [\"_time\"], desc: true)\n");
         flux.append("  |> limit(n: ").append(limit).append(")\n");
 
-        log.info("[spring-watch: InfluxDB查询日志 - app={}, level={}, range={}~{}, limit={}]",
-                appName, level, startTime, endTime, limit);
+        log.info("[spring-watch: InfluxDB查询日志 - appid={}, level={}, range={}~{}, limit={}]",
+                appid, level, startTime, endTime, limit);
 
         QueryApi queryApi = influxDBClient.getQueryApi();
         List<FluxTable> tables = queryApi.query(flux.toString(), influxOrg);
@@ -64,8 +64,8 @@ public class LogQueryService {
                 results.add(row);
             }
         }
-        log.info("[spring-watch: InfluxDB查询日志完成 - app={}, level={}, rows={}]",
-                appName, level, results.size());
+        log.info("[spring-watch: InfluxDB查询日志完成 - appid={}, level={}, rows={}]",
+                appid, level, results.size());
         return results;
     }
 }

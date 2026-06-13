@@ -22,14 +22,14 @@ public class HeartbeatConsumer {
     public void onHeartbeat(String message) {
         try {
             HeartbeatEvent event = objectMapper.readValue(message, HeartbeatEvent.class);
-            log.info("[spring-watch: HeartbeatConsumer 收到心跳 - app={}, ip={}, agentVersion={}]",
-                    event.getAppName(), event.getIp(), event.getAgentVersion());
+            log.info("[spring-watch: HeartbeatConsumer 收到心跳 - appid={}, ip={}, agentVersion={}]",
+                    event.getAppid(), event.getIp(), event.getAgentVersion());
 
-            monitorAppRepository.findByAppName(event.getAppName()).ifPresent(app -> {
+            monitorAppRepository.findByAppid(event.getAppid()).ifPresent(app -> {
                 app.setLastHeartbeat(Instant.now());
                 app.setStatus("active");
                 monitorAppRepository.save(app);
-                log.debug("[spring-watch: 心跳更新成功 - app={}]", event.getAppName());
+                log.debug("[spring-watch: 心跳更新成功 - appid={}, app={}]", event.getAppid(), app.getAppName());
             });
         } catch (Exception e) {
             log.error("[spring-watch: HeartbeatConsumer 处理失败 - error={}]", e.getMessage(), e);

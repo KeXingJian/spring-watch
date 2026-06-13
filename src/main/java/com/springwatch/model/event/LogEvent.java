@@ -11,7 +11,7 @@ import java.time.Instant;
 @Data
 public class LogEvent {
 
-    private String appName;
+    private Long appid;
     private String level;
     private String logger;
     private String threadName;

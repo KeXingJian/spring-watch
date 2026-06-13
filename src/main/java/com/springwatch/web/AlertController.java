@@ -21,7 +21,8 @@ public class AlertController {
 
     @PostMapping("/rules")
     public ApiResponse<AlertRule> createRule(@RequestBody Map<String, Object> body) {
-        String appName = (String) body.get("appName");
+        Long appid = body.get("appid") != null
+                ? ((Number) body.get("appid")).longValue() : null;
         String ruleName = (String) body.get("ruleName");
         String ruleType = (String) body.getOrDefault("ruleType", "metric");
         String expression = (String) body.get("expression");
@@ -31,16 +32,16 @@ public class AlertController {
                 ? ((Number) body.get("durationSeconds")).intValue() : 60;
         String notifyChannels = (String) body.get("notifyChannels");
 
-        log.info("[spring-watch: API创建告警规则 - app={}, rule={}, type={}]", appName, ruleName, ruleType);
+        log.info("[spring-watch: API创建告警规则 - appid={}, rule={}, type={}]", appid, ruleName, ruleType);
         return ApiResponse.ok(alertRuleService.createRule(
-                appName, ruleName, ruleType, expression, thresholdValue, durationSeconds, notifyChannels));
+                appid, ruleName, ruleType, expression, thresholdValue, durationSeconds, notifyChannels));
     }
 
     @GetMapping("/rules")
     public ApiResponse<List<AlertRule>> listRules(
-            @RequestParam(required = false) String app) {
-        List<AlertRule> rules = alertRuleService.listRules(app);
-        log.info("[spring-watch: API查询告警规则 - app={}, count={}]", app, rules.size());
+            @RequestParam(required = false) Long appid) {
+        List<AlertRule> rules = alertRuleService.listRules(appid);
+        log.info("[spring-watch: API查询告警规则 - appid={}, count={}]", appid, rules.size());
         return ApiResponse.ok(rules);
     }
 
@@ -64,9 +65,9 @@ public class AlertController {
 
     @GetMapping("/history")
     public ApiResponse<List<AlertHistory>> listHistory(
-            @RequestParam(required = false) String app) {
-        List<AlertHistory> history = alertRuleService.listAlertHistory(app);
-        log.info("[spring-watch: API查询告警历史 - app={}, count={}]", app, history.size());
+            @RequestParam(required = false) Long appid) {
+        List<AlertHistory> history = alertRuleService.listAlertHistory(appid);
+        log.info("[spring-watch: API查询告警历史 - appid={}, count={}]", appid, history.size());
         return ApiResponse.ok(history);
     }
 }

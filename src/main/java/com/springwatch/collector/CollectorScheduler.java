@@ -37,7 +37,7 @@ public class CollectorScheduler {
             try {
                 Integer metricsPort = app.getMetricsPort() != null ? app.getMetricsPort() : 9464;
                 AgentMetricsCollector.MonitorTarget target =
-                        new AgentMetricsCollector.MonitorTarget(app.getAppName(), app.getEndpoint(), metricsPort);
+                        new AgentMetricsCollector.MonitorTarget(app.getAppid(), app.getAppName(), app.getEndpoint(), metricsPort);
 
                 if (isReachable(target)) {
                     agentMetricsCollector.collect(target);
@@ -46,7 +46,7 @@ public class CollectorScheduler {
                     Instant since = app.getLastLogPullTime() != null
                             ? app.getLastLogPullTime()
                             : now.minusSeconds(3600);
-                    Instant latest = agentLogCollector.collect(app.getAppName(), app.getEndpoint(), since);
+                    Instant latest = agentLogCollector.collect(app.getAppid(), app.getAppName(), app.getEndpoint(), since);
                     if (latest.isAfter(since)) {
                         app.setLastLogPullTime(latest);
                         app.setUpdatedAt(now);
@@ -57,13 +57,14 @@ public class CollectorScheduler {
                         app.setStatus("active");
                         app.setUpdatedAt(now);
                         monitorAppRepository.save(app);
-                        log.info("[spring-watch: Agent复活 - app={}]", app.getAppName());
+                        log.info("[spring-watch: Agent复活 - appid={}, app={}]", app.getAppid(), app.getAppName());
                     }
                 } else {
                     markInactive(app, "agent端口不可达");
                 }
             } catch (Exception e) {
-                log.warn("[spring-watch: 调度异常 - app={}, error={}]", app.getAppName(), e.getMessage());
+                log.warn("[spring-watch: 调度异常 - appid={}, app={}, error={}]",
+                        app.getAppid(), app.getAppName(), e.getMessage());
             }
         }
     }
@@ -79,8 +80,8 @@ public class CollectorScheduler {
             conn.disconnect();
             return code == 200;
         } catch (Exception e) {
-            log.debug("[spring-watch: Agent端口不可达 - app={}, url={}, error={}]",
-                    target.appName(), url, e.getMessage());
+            log.debug("[spring-watch: Agent端口不可达 - appid={}, app={}, url={}, error={}]",
+                    target.appid(), target.appName(), url, e.getMessage());
             return false;
         }
     }
@@ -99,7 +100,7 @@ public class CollectorScheduler {
 
     private void sendHeartbeat(MonitorApp app) {
         HeartbeatEvent heartbeat = HeartbeatEvent.builder()
-                .appName(app.getAppName())
+                .appid(app.getAppid())
                 .ip(extractHost(app.getEndpoint()))
                 .agentVersion("java-agent")
                 .timestamp(Instant.now())
@@ -108,7 +109,8 @@ public class CollectorScheduler {
     }
 
     private void markInactive(MonitorApp app, String reason) {
-        log.warn("[spring-watch: Agent失活 - app={}, reason={}]", app.getAppName(), reason);
+        log.warn("[spring-watch: Agent失活 - appid={}, app={}, reason={}]",
+                app.getAppid(), app.getAppName(), reason);
         app.setStatus("inactive");
         app.setUpdatedAt(Instant.now());
         monitorAppRepository.save(app);

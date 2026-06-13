@@ -68,23 +68,27 @@ class MonitorTargetIntegrationTest {
 
         ApiResponse<MonitorApp> body = response.getBody();
         MonitorApp app = body != null ? body.getData() : null;
-        log.info("[spring-watch: 集成测试 - 注册mock-test监控目标] status={}, id={}, appName={}, endpoint={}, metricsPort={}",
+        log.info("[spring-watch: 集成测试 - 注册mock-test监控目标] status={}, id={}, appid={}, appName={}, endpoint={}, metricsPort={}",
                 response.getStatusCode().value(),
                 app != null ? app.getId() : null,
+                app != null ? app.getAppid() : null,
                 app != null ? app.getAppName() : null,
                 app != null ? app.getEndpoint() : null,
                 app != null ? app.getMetricsPort() : null);
 
         MonitorApp persisted = monitorAppRepository.findByAppName("mock-test").orElse(null);
-        log.info("[spring-watch: 集成测试 - 数据库持久化检查] id={}, endpoint={}, metricsPort={}",
+        log.info("[spring-watch: 集成测试 - 数据库持久化检查] id={}, appid={}, endpoint={}, metricsPort={}",
                 persisted != null ? persisted.getId() : null,
+                persisted != null ? persisted.getAppid() : null,
                 persisted != null ? persisted.getEndpoint() : null,
                 persisted != null ? persisted.getMetricsPort() : null);
     }
 
     @Test
     void listActiveMonitoringTargets() {
+        Long appid = com.springwatch.util.SnowFlakeIdGenerator.generateId();
         monitorAppRepository.save(MonitorApp.builder()
+                .appid(appid)
                 .appName("mock-test")
                 .endpoint("http://localhost:8081")
                 .metricsPort(9464)
@@ -105,14 +109,16 @@ class MonitorTargetIntegrationTest {
                 response.getStatusCode().value(),
                 activeApps != null ? activeApps.size() : 0);
         if (activeApps != null) {
-            activeApps.forEach(a -> log.info("[spring-watch: 集成测试 - 活跃目标] appName={}, endpoint={}, status={}",
-                    a.getAppName(), a.getEndpoint(), a.getStatus()));
+            activeApps.forEach(a -> log.info("[spring-watch: 集成测试 - 活跃目标] appid={}, appName={}, endpoint={}, status={}",
+                    a.getAppid(), a.getAppName(), a.getEndpoint(), a.getStatus()));
         }
     }
 
     @Test
     void generateOtelConfigForMockTest() {
+        Long appid = com.springwatch.util.SnowFlakeIdGenerator.generateId();
         MonitorApp saved = monitorAppRepository.save(MonitorApp.builder()
+                .appid(appid)
                 .appName("mock-test")
                 .endpoint("http://localhost:8081")
                 .metricsPort(9464)
@@ -134,11 +140,12 @@ class MonitorTargetIntegrationTest {
 
     @Test
     void pullAgentMetricsForMockTest() {
+        Long appid = com.springwatch.util.SnowFlakeIdGenerator.generateId();
         AgentMetricsCollector.MonitorTarget target = new AgentMetricsCollector.MonitorTarget(
-                "mock-test", "http://localhost:8081", 9464);
+                appid, "mock-test", "http://localhost:8081", 9464);
 
         agentMetricsCollector.collect(target);
 
-        log.info("[spring-watch: 集成测试 - mock-test Agent拉取完成]");
+        log.info("[spring-watch: 集成测试 - mock-test Agent拉取完成 - appid={}]", appid);
     }
 }

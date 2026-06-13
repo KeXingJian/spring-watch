@@ -46,6 +46,12 @@ public class MonitorAppController {
         return ApiResponse.ok(monitorAppService.getById(id));
     }
 
+    @GetMapping("/by-appid/{appid}")
+    public ApiResponse<MonitorApp> getByAppid(@PathVariable Long appid) {
+        log.info("[spring-watch: API查询应用详情 - appid={}]", appid);
+        return ApiResponse.ok(monitorAppService.getByAppid(appid));
+    }
+
     @PutMapping("/{id}")
     public ApiResponse<MonitorApp> update(@PathVariable Long id, @RequestBody AppRegisterRequest request) {
         log.info("[spring-watch: API更新应用 - id={}, appName={}]", id, request.getAppName());

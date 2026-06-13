@@ -21,8 +21,8 @@ public class AlertNotifier {
         String alertLevel = determineLevel(rule, event);
         String message = buildMessage(rule, event, alertLevel);
 
-        log.info("[spring-watch: 发送告警 - rule={}, app={}, level={}, message={}]",
-                rule.getRuleName(), event.getAppName(), alertLevel, message);
+        log.info("[spring-watch: 发送告警 - rule={}, appid={}, level={}, message={}]",
+                rule.getRuleName(), event.getAppid(), alertLevel, message);
 
         AlertHistory history = AlertHistory.builder()
                 .rule(rule)
@@ -31,8 +31,8 @@ public class AlertNotifier {
                 .alertMessage(message)
                 .build();
         AlertHistory saved = alertHistoryRepository.save(history);
-        log.info("[spring-watch: 告警历史持久化完成 - historyId={}, rule={}, app={}, level={}]",
-                saved.getId(), rule.getRuleName(), event.getAppName(), alertLevel);
+        log.info("[spring-watch: 告警历史持久化完成 - historyId={}, rule={}, appid={}, level={}]",
+                saved.getId(), rule.getRuleName(), event.getAppid(), alertLevel);
 
         if (rule.getNotifyChannels() != null && !rule.getNotifyChannels().isBlank()) {
             sendWebhook(rule, message, event);
@@ -52,13 +52,13 @@ public class AlertNotifier {
     }
 
     private String buildMessage(AlertRule rule, MetricEvent event, String level) {
-        return String.format("[%s] 应用 %s 指标 %s 触发告警: 当前值=%.2f, 规则=%s, 时间=%s",
-                level.toUpperCase(), event.getAppName(), event.getMetricName(),
+        return String.format("[%s] 应用(appid=%s) 指标 %s 触发告警: 当前值=%.2f, 规则=%s, 时间=%s",
+                level.toUpperCase(), event.getAppid(), event.getMetricName(),
                 event.getValue(), rule.getExpression(), Instant.now());
     }
 
     private void sendWebhook(AlertRule rule, String message, MetricEvent event) {
-        log.info("[spring-watch: Webhook通知 - rule={}, channels={}, app={}]",
-                rule.getRuleName(), rule.getNotifyChannels(), event.getAppName());
+        log.info("[spring-watch: Webhook通知 - rule={}, channels={}, appid={}]",
+                rule.getRuleName(), rule.getNotifyChannels(), event.getAppid());
     }
 }

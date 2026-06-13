@@ -23,15 +23,15 @@ public class KafkaProducerBridge {
     private static final String TOPIC_HEARTBEAT = "monitor-heartbeat";
 
     public void sendMetric(MetricEvent event) {
-        send(TOPIC_METRICS, event.getAppName(), event);
+        send(TOPIC_METRICS, String.valueOf(event.getAppid()), event);
     }
 
     public void sendLog(LogEvent event) {
-        send(TOPIC_LOGS, event.getAppName(), event);
+        send(TOPIC_LOGS, String.valueOf(event.getAppid()), event);
     }
 
     public void sendHeartbeat(HeartbeatEvent event) {
-        send(TOPIC_HEARTBEAT, event.getAppName(), event);
+        send(TOPIC_HEARTBEAT, String.valueOf(event.getAppid()), event);
     }
 
     private void send(String topic, String key, Object event) {

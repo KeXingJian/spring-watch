@@ -14,7 +14,7 @@ import java.util.Map;
 @AllArgsConstructor
 public class MetricEvent {
 
-    private String appName;
+    private Long appid;
     private String metricName;
     private String method;
     private Double value;
@@ -23,7 +23,7 @@ public class MetricEvent {
     private Map<String, String> tags;
 
     public String toLogString() {
-        return String.format("[MetricEvent: app=%s, metric=%s, method=%s, value=%.2f, time=%s]",
-                appName, metricName, method, value, timestamp);
+        return String.format("[MetricEvent: appid=%s, metric=%s, method=%s, value=%.2f, time=%s]",
+                appid, metricName, method, value, timestamp);
     }
 }
