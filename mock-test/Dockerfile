@@ -5,10 +5,15 @@ WORKDIR /build
 # 配置阿里云 Maven 镜像
 RUN mkdir -p /root/.m2 && printf '<?xml version="1.0" encoding="UTF-8"?>\n<settings>\n  <mirrors>\n    <mirror>\n      <id>aliyunmaven</id>\n      <name>Aliyun Maven</name>\n      <url>https://maven.aliyun.com/repository/public</url>\n      <mirrorOf>central</mirrorOf>\n    </mirror>\n  </mirrors>\n</settings>\n' > /root/.m2/settings.xml
 
-
+# 1) 仅拷贝 pom.xml，单独预热依赖层（只要 pom 不变，这一层就被缓存复用）
 COPY pom.xml ./
+RUN --mount=type=cache,target=/root/.m2/repository \
+    mvn -s /root/.m2/settings.xml -B -q dependency:go-offline
+
+# 2) 再拷贝源码，源码变更不影响上面的依赖层
 COPY src ./src
-RUN mvn -s /root/.m2/settings.xml clean package -DskipTests
+RUN --mount=type=cache,target=/root/.m2/repository \
+    mvn -s /root/.m2/settings.xml -B -q clean package -DskipTests
 
 FROM eclipse-temurin:21-jre-jammy
 WORKDIR /app
