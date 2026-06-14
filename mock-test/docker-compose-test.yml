@@ -1,0 +1,57 @@
+version: '3.8'
+
+x-mock-base: &mock-base
+  build:
+    context: .
+    dockerfile: Dockerfile
+  image: mock-test:1.0.0
+  environment:
+    - TZ=Asia/Shanghai
+    - OTEL_ENABLED=true
+    - JAVA_OPTS=-Xmx256m
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  restart: unless-stopped
+  healthcheck:
+    test: ["CMD", "curl", "-f", "http://localhost:8081/api/ping"]
+    interval: 10s
+    timeout: 5s
+    retries: 3
+    start_period: 30s
+
+services:
+  mock-test-1:
+    <<: *mock-base
+    container_name: mock-test-1
+    ports:
+      - "18081:8081"
+      - "19464:9464"
+    environment:
+      - OTEL_SERVICE_NAME=mock-test-1
+      - OTEL_EXPORTER_PROMETHEUS_HOST=0.0.0.0
+      - OTEL_EXPORTER_PROMETHEUS_PORT=9464
+      - SERVER_PORT=8081
+
+  mock-test-2:
+    <<: *mock-base
+    container_name: mock-test-2
+    ports:
+      - "18082:8082"
+      - "19465:9465"
+    environment:
+      - OTEL_SERVICE_NAME=mock-test-2
+      - OTEL_EXPORTER_PROMETHEUS_HOST=0.0.0.0
+      - OTEL_EXPORTER_PROMETHEUS_PORT=9465
+      - SERVER_PORT=8082
+
+  mock-test-3:
+    <<: *mock-base
+    container_name: mock-test-3
+    ports:
+      - "18083:8083"
+      - "19466:9466"
+    environment:
+      - OTEL_SERVICE_NAME=mock-test-3
+      - OTEL_EXPORTER_PROMETHEUS_HOST=0.0.0.0
+      - OTEL_EXPORTER_PROMETHEUS_PORT=9466
+      - SERVER_PORT=8083

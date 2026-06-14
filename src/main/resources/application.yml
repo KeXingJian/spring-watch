@@ -3,7 +3,6 @@ server:
 
 spring-watch:
   collector:
-    interval: 30000
     pool-size: 32
     per-host-concurrent: 4
     jitter-percent: 10
