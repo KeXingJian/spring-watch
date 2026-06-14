@@ -17,6 +17,7 @@ public class KafkaProducerBridge {
 
     private final KafkaTemplate<String, String> kafkaTemplate;
     private final ObjectMapper objectMapper;
+    private final KafkaFallbackQueue fallbackQueue;
 
     private static final String TOPIC_METRICS = "monitor-metrics";
     private static final String TOPIC_LOGS = "monitor-logs";
@@ -35,22 +36,30 @@ public class KafkaProducerBridge {
     }
 
     private void send(String topic, String key, Object event) {
+        String json;
         try {
-            String json = objectMapper.writeValueAsString(event);
-            kafkaTemplate.send(topic, key, json)
-                    .whenComplete((result, ex) -> {
-                        if (ex != null) {
-                            log.warn("[spring-watch: Kafka发送失败 - topic={}, key={}, error={}]",
-                                    topic, key, ex.getMessage());
-                        } else {
-                            log.trace("[spring-watch: Kafka发送成功 - topic={}, key={}, partition={}, offset={}]",
-                                    topic, key,
-                                    result.getRecordMetadata().partition(),
-                                    result.getRecordMetadata().offset());
-                        }
-                    });
+            json = objectMapper.writeValueAsString(event);
         } catch (Exception e) {
             log.error("[spring-watch: JSON序列化失败 - topic={}, key={}]", topic, key, e);
+            return;
+        }
+        try {
+            kafkaTemplate.send(topic, key, json).whenComplete((result, ex) -> {
+                if (ex != null) {
+                    log.warn("[spring-watch: Kafka发送失败, 转入降级队列 - topic={}, key={}, error={}]",
+                            topic, key, ex.getMessage());
+                    fallbackQueue.offer(topic, key, json);
+                } else {
+                    log.trace("[spring-watch: Kafka发送成功 - topic={}, key={}, partition={}, offset={}]",
+                            topic, key,
+                            result.getRecordMetadata().partition(),
+                            result.getRecordMetadata().offset());
+                }
+            });
+        } catch (Exception e) {
+            log.warn("[spring-watch: KafkaTemplate.send 抛异常, 直接入降级队列 - topic={}, key={}, error={}]",
+                    topic, key, e.getMessage());
+            fallbackQueue.offer(topic, key, json);
         }
     }
 }
