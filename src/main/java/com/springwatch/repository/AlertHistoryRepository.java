@@ -9,4 +9,6 @@ public interface AlertHistoryRepository extends JpaRepository<AlertHistory, Long
 
     List<AlertHistory> findByAppAppidOrderByCreatedAtDesc(Long appid);
 
+    List<AlertHistory> findByAppAppidAndRuleIdAndResolvedAtIsNullOrderByCreatedAtDesc(Long appid, Long ruleId);
+
 }

@@ -95,7 +95,7 @@ public class AppPullTask {
         AgentMetricsCollector.MonitorTarget target = new AgentMetricsCollector.MonitorTarget(
                 app.getAppid(), app.getAppName(), app.getEndpoint(), metricsPort);
 
-        log.debug("[spring-watch: 重投拉指标 - appid={}, url=http://{}:{}/metrics",
+        log.debug("[spring-watch: 拉指标 - appid={}, url=http://{}:{}/metrics",
                 appid, extractHost(app), metricsPort);
         agentMetricsCollector.collect(target);
         log.debug("[spring-watch: 指标拉取完成 - appid={}]", appid);
@@ -103,7 +103,7 @@ public class AppPullTask {
         Instant since = app.getLastLogPullTime() != null
                 ? app.getLastLogPullTime()
                 : now.minusSeconds(3600);
-        log.debug("[spring-watch: 重投拉日志 - appid={}, since={}]", appid, since);
+        log.debug("[spring-watch: 拉日志 - appid={}, since={}]", appid, since);
         Instant latest = agentLogCollector.collect(app.getAppid(), app.getAppName(), app.getEndpoint(), since);
         if (latest.isAfter(since)) {
             log.info("[spring-watch: 日志有新进展 - appid={}, since={} -> latest={}]",

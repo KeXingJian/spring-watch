@@ -1,0 +1,5 @@
+ALTER TABLE alert_rule
+    ADD COLUMN times INTEGER NOT NULL DEFAULT 1;
+
+ALTER TABLE alert_rule
+    ADD COLUMN template VARCHAR(1024);

@@ -43,6 +43,17 @@ public class AlertRule {
     @Builder.Default
     private String status = "enabled";
 
+    @Column(length = 16)
+    @Builder.Default
+    private String level = "warning";
+
+    @Column
+    @Builder.Default
+    private Integer times = 1;
+
+    @Column(length = 1024)
+    private String template;
+
     @Column(updatable = false)
     private Instant createdAt;
 }

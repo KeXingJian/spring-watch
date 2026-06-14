@@ -11,6 +11,39 @@ spring-watch:
       max-attempts: 5
   agent:
     prometheus-host: 0.0.0.0
+  alert:
+    enabled: true
+    mail:
+      from: 2787901285@qq.com
+      from-name: spring-watch
+    state-store:
+      ttl-hours: 24
+    rule-cache:
+      refresh-interval-ms: 30000
+    executor:
+      pool-size: 8
+  kafka:
+    fallback-queue:
+      capacity: 50000
+      drain-interval-ms: 5000
+      send-timeout-ms: 2000
+      alert-threshold: 1000
+
+  mail:
+    host: smtp.qq.com
+    port: 587
+    username: 2787901285@qq.com
+    password: xekbwqmunbxedfgc #已弃用
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+            required: true
+          connectiontimeout: 5000
+          timeout: 5000
+          writetimeout: 5000
 
 spring:
   application:
@@ -37,11 +70,40 @@ spring:
       auto-offset-reset: earliest
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      max-poll-records: 500
+      fetch-min-size: 1024
+      fetch-max-wait: 200
+      max-poll-interval-ms: 300000
       properties:
         spring.json.trusted.packages: "*"
+        isolation.level: read_committed
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+      compression-type: lz4
+      batch-size: 65536
+      linger-ms: 30
+      buffer-memory: 134217728
+      delivery-timeout-ms: 120000
+      request-timeout-ms: 30000
+    listener:
+      concurrency: 3
+      poll-timeout: 200
+    topics:
+      metrics: monitor-metrics
+      logs: monitor-logs
+      heartbeat: monitor-heartbeat
+      metrics-partitions: 12
+      logs-partitions: 6
+      heartbeat-partitions: 3
+      dlq-partitions: 3
+      replication-factor: 1
+    dlq:
+      retry-max-attempts: 5
+      retry-initial-interval: 200
+      retry-multiplier: 2.0
+      retry-max-interval: 5000
 
   data:
     redis:
@@ -55,6 +117,15 @@ influxdb:
   org: spring-watch
   metrics-bucket: metrics
   log-bucket: logs
+  write:
+    batch-size: 1000
+    flush-interval-ms: 1000
+    buffer-limit: 100000
+    retry-interval-ms: 1000
+    max-retries: 3
+    max-retry-delay-ms: 5000
+    max-retry-time-ms: 60000
+    jitter-interval-ms: 200
 
 logging:
   level:
