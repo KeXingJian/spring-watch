@@ -1,5 +1,6 @@
 package com.springwatch.web;
 
+import com.springwatch.alerter.AlertRuleCache;
 import com.springwatch.model.dto.ApiResponse;
 import com.springwatch.model.entity.AlertHistory;
 import com.springwatch.model.entity.AlertRule;
@@ -9,7 +10,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
-import java.util.Map;
 
 @Slf4j
 @RestController
@@ -18,56 +18,6 @@ import java.util.Map;
 public class AlertController {
 
     private final AlertRuleService alertRuleService;
+    private final AlertRuleCache alertRuleCache;
 
-    @PostMapping("/rules")
-    public ApiResponse<AlertRule> createRule(@RequestBody Map<String, Object> body) {
-        Long appid = body.get("appid") != null
-                ? ((Number) body.get("appid")).longValue() : null;
-        String ruleName = (String) body.get("ruleName");
-        String ruleType = (String) body.getOrDefault("ruleType", "metric");
-        String expression = (String) body.get("expression");
-        Double thresholdValue = body.get("thresholdValue") != null
-                ? ((Number) body.get("thresholdValue")).doubleValue() : null;
-        Integer durationSeconds = body.get("durationSeconds") != null
-                ? ((Number) body.get("durationSeconds")).intValue() : 60;
-        String notifyChannels = (String) body.get("notifyChannels");
-
-        log.info("[spring-watch: API创建告警规则 - appid={}, rule={}, type={}]", appid, ruleName, ruleType);
-        return ApiResponse.ok(alertRuleService.createRule(
-                appid, ruleName, ruleType, expression, thresholdValue, durationSeconds, notifyChannels));
-    }
-
-    @GetMapping("/rules")
-    public ApiResponse<List<AlertRule>> listRules(
-            @RequestParam(required = false) Long appid) {
-        List<AlertRule> rules = alertRuleService.listRules(appid);
-        log.info("[spring-watch: API查询告警规则 - appid={}, count={}]", appid, rules.size());
-        return ApiResponse.ok(rules);
-    }
-
-    @PutMapping("/rules/{id}")
-    public ApiResponse<AlertRule> updateRule(@PathVariable Long id, @RequestBody Map<String, Object> body) {
-        String expression = (String) body.get("expression");
-        Double thresholdValue = body.get("thresholdValue") != null
-                ? ((Number) body.get("thresholdValue")).doubleValue() : null;
-        String notifyChannels = (String) body.get("notifyChannels");
-        String status = (String) body.get("status");
-        log.info("[spring-watch: API更新告警规则 - id={}, status={}]", id, status);
-        return ApiResponse.ok(alertRuleService.updateRule(id, expression, thresholdValue, notifyChannels, status));
-    }
-
-    @DeleteMapping("/rules/{id}")
-    public ApiResponse<Void> deleteRule(@PathVariable Long id) {
-        log.info("[spring-watch: API删除告警规则 - id={}]", id);
-        alertRuleService.deleteRule(id);
-        return ApiResponse.ok(null);
-    }
-
-    @GetMapping("/history")
-    public ApiResponse<List<AlertHistory>> listHistory(
-            @RequestParam(required = false) Long appid) {
-        List<AlertHistory> history = alertRuleService.listAlertHistory(appid);
-        log.info("[spring-watch: API查询告警历史 - appid={}, count={}]", appid, history.size());
-        return ApiResponse.ok(history);
-    }
 }
