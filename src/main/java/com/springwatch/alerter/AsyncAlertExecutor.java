@@ -94,14 +94,14 @@ public class AsyncAlertExecutor {
         try {
             executor.submit(() -> {
                 try {
-                    log.debug("[Alerter] 日志评估任务开始 - appid={}, fingerprint={}", event.getAppid(), event.getFingerprint());
+                    log.trace("[Alerter] 日志评估任务开始 - appid={}, fingerprint={}", event.getAppid(), event.getFingerprint());
                     engine.process(event);
                 } catch (Throwable t) {
                     log.error("[Alerter] 日志评估异常 - appid={}, fingerprint={}, error={}",
                             event.getAppid(), event.getFingerprint(), t.getMessage(), t);
                 }
             });
-            log.debug("[Alerter] 日志评估任务已提交 - appid={}, fingerprint={}", event.getAppid(), event.getFingerprint());
+            log.trace("[Alerter] 日志评估任务已提交 - appid={}, fingerprint={}", event.getAppid(), event.getFingerprint());
         } catch (Exception e) {
             log.warn("[Alerter] 提交日志评估任务失败, 降级为同步 - appid={}, error={}",
                     event.getAppid(), e.getMessage());
