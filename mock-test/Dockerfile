@@ -20,7 +20,7 @@ WORKDIR /app
 COPY --from=builder /build/target/mock-test-1.0.0.jar app.jar
 COPY --from=builder /build/target/opentelemetry-javaagent.jar /app/opentelemetry-javaagent.jar
 COPY entrypoint.sh /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh
+RUN sed -i 's/\r$//' /app/entrypoint.sh && chmod +x /app/entrypoint.sh
 
 EXPOSE 8081 9464
 
