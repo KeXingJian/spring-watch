@@ -20,5 +20,11 @@ public class LogEvent {
     private String traceId;
     private Instant timestamp;
 
+    private String host;
+    private String service;
+    private String method;
+    private String env;
+    private String fingerprint;
+    private String pattern;
 
 }

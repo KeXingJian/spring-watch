@@ -23,7 +23,7 @@ public class AlertHistory {
     private AlertRule rule;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "app_id")
+    @JoinColumn(name = "appid", referencedColumnName = "appid")
     private MonitorApp app;
 
     @Column(length = 16)

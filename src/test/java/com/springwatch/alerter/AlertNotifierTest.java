@@ -3,6 +3,7 @@ package com.springwatch.alerter;
 import com.springwatch.model.entity.AlertRule;
 import com.springwatch.model.entity.MonitorApp;
 import com.springwatch.model.event.MetricEvent;
+import com.springwatch.repository.AlertNotificationConfigRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -12,11 +13,13 @@ import org.springframework.mail.javamail.JavaMailSender;
 import tools.jackson.databind.ObjectMapper;
 
 import java.time.Instant;
+import java.util.Collections;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -26,13 +29,17 @@ class AlertNotifierTest {
 
     private JavaMailSender mailSender;
     private ObjectMapper objectMapper;
+    private AlertNotificationConfigRepository notifyConfigRepository;
     private AlertNotifier notifier;
 
     @BeforeEach
     void setUp() {
         mailSender = mock(JavaMailSender.class);
         objectMapper = new ObjectMapper();
-        notifier = new AlertNotifier(mailSender, objectMapper);
+        notifyConfigRepository = mock(AlertNotificationConfigRepository.class);
+        when(notifyConfigRepository.findByAppidAndStatus(any(Long.class), eq("enabled")))
+                .thenReturn(Collections.emptyList());
+        notifier = new AlertNotifier(mailSender, objectMapper, notifyConfigRepository);
     }
 
     @Test
@@ -134,7 +141,7 @@ class AlertNotifierTest {
                 .notifyChannels(null)
                 .build();
         String result = notifier.notify(rule, event(), "firing");
-        assertTrue(result.contains("no_channels"), "no channels should return skipped, got: " + result);
+        assertTrue(result.contains("no_email"), "no channels + empty config should return no_email, got: " + result);
     }
 
     @Test
@@ -147,7 +154,7 @@ class AlertNotifierTest {
                 .notifyChannels("{}")
                 .build();
         String result = notifier.notify(rule, event(), "firing");
-        assertTrue(result.contains("empty_channels"), "empty channels should return skipped, got: " + result);
+        assertTrue(result.contains("no_email"), "empty channels + empty config should fall back to no_email, got: " + result);
     }
 
     @Test
@@ -206,6 +213,54 @@ class AlertNotifierTest {
         String result = notifier.notify(rule, event(), "firing");
         assertTrue(result.contains("failed"), "smtp failure should return failed, got: " + result);
         assertTrue(result.contains("smtp down"), "should include error message, got: " + result);
+    }
+
+    @Test
+    void noRuleChannels_fallbackToConfigTable_sends() {
+        AlertRule rule = AlertRule.builder()
+                .id(1L)
+                .ruleName("test-rule")
+                .app(app(100L, "myapp"))
+                .expression("x > 0")
+                .level("warning")
+                .notifyChannels(null)
+                .build();
+        com.springwatch.model.entity.AlertNotificationConfig cfg =
+                com.springwatch.model.entity.AlertNotificationConfig.builder()
+                        .id(10L).appid(100L).target("ops@example.com").status("enabled").build();
+        when(notifyConfigRepository.findByAppidAndStatus(100L, "enabled"))
+                .thenReturn(java.util.List.of(cfg));
+        notifier.notify(rule, event(), "firing");
+        SimpleMailMessage sent = captureSent();
+        String[] to = sent.getTo();
+        assertNotNull(to);
+        assertEquals("ops@example.com", String.join(",", to));
+    }
+
+    @Test
+    void noRuleChannels_noConfigMatch_skipped() {
+        AlertRule rule = AlertRule.builder()
+                .id(1L)
+                .ruleName("test-rule")
+                .app(app(100L, "myapp"))
+                .expression("x > 0")
+                .level("warning")
+                .notifyChannels(null)
+                .build();
+        when(notifyConfigRepository.findByAppidAndStatus(100L, "enabled"))
+                .thenReturn(Collections.emptyList());
+        String result = notifier.notify(rule, event(), "firing");
+        assertTrue(result.contains("no_email"), "no config match should return no_email skipped, got: " + result);
+    }
+
+    @Test
+    void ruleChannelHasEmail_configTableIgnored() {
+        AlertRule rule = ruleWith("warning", "test");
+        notifier.notify(rule, event(), "firing");
+        SimpleMailMessage sent = captureSent();
+        String[] to = sent.getTo();
+        assertNotNull(to);
+        assertEquals("ops@example.com", String.join(",", to));
     }
 
     private AlertRule ruleWith(String level, String template) {

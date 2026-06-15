@@ -19,7 +19,7 @@ public class AlertRule {
     private Long id;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "app_id")
+    @JoinColumn(name = "appid", referencedColumnName = "appid")
     private MonitorApp app;
 
     @Column(length = 256)

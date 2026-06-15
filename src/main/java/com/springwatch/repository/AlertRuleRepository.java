@@ -10,4 +10,6 @@ public interface AlertRuleRepository extends JpaRepository<AlertRule, Long> {
     List<AlertRule> findByAppAppidAndStatus(Long appid, String status);
 
     List<AlertRule> findByStatus(String status);
+
+    List<AlertRule> findByRuleTypeAndStatus(String ruleType, String status);
 }

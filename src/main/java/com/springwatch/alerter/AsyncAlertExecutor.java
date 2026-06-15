@@ -48,6 +48,10 @@ public class AsyncAlertExecutor {
     }
 
     public void submit(com.springwatch.model.event.MetricEvent event) {
+        if (event == null) {
+            log.debug("[Alerter] submit(MetricEvent) event为空, 跳过");
+            return;
+        }
         if (executor == null) {
             log.warn("[Alerter] 线程池未初始化, 同步执行 - appid={}", event.getAppid());
             engine.process(event);
@@ -56,14 +60,47 @@ public class AsyncAlertExecutor {
         try {
             executor.submit(() -> {
                 try {
+                    log.debug("[Alerter] 评估任务开始 - appid={}, metric={}", event.getAppid(), event.getMetricName());
                     engine.process(event);
                 } catch (Throwable t) {
                     log.error("[Alerter] 评估异常 - appid={}, metric={}, error={}",
                             event.getAppid(), event.getMetricName(), t.getMessage(), t);
                 }
             });
+            log.debug("[Alerter] 评估任务已提交 - appid={}, metric={}", event.getAppid(), event.getMetricName());
         } catch (Exception e) {
             log.warn("[Alerter] 提交评估任务失败, 降级为同步 - appid={}, error={}",
+                    event.getAppid(), e.getMessage());
+            engine.process(event);
+        }
+    }
+
+    /**
+     * kxj: 异步提交日志事件评估-与metric使用同一线程池
+     */
+    public void submit(com.springwatch.model.event.LogEvent event) {
+        if (event == null || event.getAppid() == null) {
+            log.debug("[Alerter] submit(LogEvent) event/appid为空, 跳过 - event={}", event);
+            return;
+        }
+        if (executor == null) {
+            log.warn("[Alerter] 线程池未初始化, 同步执行 - appid={}", event.getAppid());
+            engine.process(event);
+            return;
+        }
+        try {
+            executor.submit(() -> {
+                try {
+                    log.debug("[Alerter] 日志评估任务开始 - appid={}, fingerprint={}", event.getAppid(), event.getFingerprint());
+                    engine.process(event);
+                } catch (Throwable t) {
+                    log.error("[Alerter] 日志评估异常 - appid={}, fingerprint={}, error={}",
+                            event.getAppid(), event.getFingerprint(), t.getMessage(), t);
+                }
+            });
+            log.debug("[Alerter] 日志评估任务已提交 - appid={}, fingerprint={}", event.getAppid(), event.getFingerprint());
+        } catch (Exception e) {
+            log.warn("[Alerter] 提交日志评估任务失败, 降级为同步 - appid={}, error={}",
                     event.getAppid(), e.getMessage());
             engine.process(event);
         }

@@ -52,7 +52,9 @@ public class AlertRuleCache {
     }
 
     public List<AlertRule> rulesFor(Long appid) {
-        return cache.get().getOrDefault(appid, Collections.emptyList());
+        List<AlertRule> rules = cache.get().getOrDefault(appid, Collections.emptyList());
+        log.debug("[Alerter] 规则查询 - appid={}, hit={}", appid, rules.size());
+        return rules;
     }
 
     public int size() {

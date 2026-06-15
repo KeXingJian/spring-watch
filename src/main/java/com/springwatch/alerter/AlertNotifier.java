@@ -1,7 +1,9 @@
 package com.springwatch.alerter;
 
+import com.springwatch.model.entity.AlertNotificationConfig;
 import com.springwatch.model.entity.AlertRule;
 import com.springwatch.model.event.MetricEvent;
+import com.springwatch.repository.AlertNotificationConfigRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -12,7 +14,9 @@ import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Component
@@ -21,6 +25,7 @@ public class AlertNotifier {
 
     private final JavaMailSender mailSender;
     private final ObjectMapper objectMapper;
+    private final AlertNotificationConfigRepository notifyConfigRepository;
 
     @Value("${spring-watch.alert.mail.from:alert@example.com}")
     private String from;
@@ -28,33 +33,76 @@ public class AlertNotifier {
     @Value("${spring-watch.alert.mail.from-name:spring-watch}")
     private String fromName;
 
+    private static final String INVALID_CHANNELS_MARKER = "__INVALID_CHANNELS__";
+
     public String notify(AlertRule rule, MetricEvent event, String type) {
-        if (rule.getNotifyChannels() == null || rule.getNotifyChannels().isBlank()) {
-            log.debug("[Alerter] 无通知渠道 - ruleId={}", rule.getId());
-            return "{\"status\":\"skipped\",\"reason\":\"no_channels\"}";
-        }
-        Map<String, String> channels;
-        try {
-            channels = objectMapper.readValue(rule.getNotifyChannels(), new TypeReference<Map<String, String>>() {});
-        } catch (Exception e) {
-            log.warn("[Alerter] 通知渠道配置解析失败 - ruleId={}, raw={}, error={}",
-                    rule.getId(), rule.getNotifyChannels(), e.getMessage());
+        log.debug("[Alerter] notify 入口 - ruleId={}, appid={}, type={}", rule.getId(), event.getAppid(), type);
+        String email = resolveEmail(rule, event);
+        if (INVALID_CHANNELS_MARKER.equals(email)) {
             return "{\"status\":\"failed\",\"reason\":\"invalid_channels\"}";
         }
-        if (channels.isEmpty()) {
-            return "{\"status\":\"skipped\",\"reason\":\"empty_channels\"}";
-        }
-        String email = channels.get("email");
         if (email == null || email.isBlank()) {
-            log.debug("[Alerter] 未配置email渠道 - ruleId={}", rule.getId());
+            log.debug("[Alerter] 未配置email渠道 - ruleId={}, appid={}", rule.getId(), event.getAppid());
             return "{\"status\":\"skipped\",\"reason\":\"no_email\"}";
         }
         return sendEmail(email, rule, event, type);
     }
 
+    /**
+     * kxj: 邮箱解析-优先使用规则notify_channels,否则回退到通知配置表
+     * 返回 INVALID_CHANNELS_MARKER 表示规则配置JSON解析失败(不静默回退)
+     */
+    private String resolveEmail(AlertRule rule, MetricEvent event) {
+        if (rule.getNotifyChannels() == null || rule.getNotifyChannels().isBlank()) {
+            log.debug("[Alerter] 规则未配置notify_channels, 查通知配置表 - ruleId={}, appid={}",
+                    rule.getId(), event.getAppid());
+        } else {
+            Map<String, String> channels;
+            try {
+                channels = objectMapper.readValue(rule.getNotifyChannels(), new TypeReference<Map<String, String>>() {});
+            } catch (Exception e) {
+                log.warn("[Alerter] 通知渠道配置解析失败 - ruleId={}, raw={}, error={}",
+                        rule.getId(), rule.getNotifyChannels(), e.getMessage());
+                return INVALID_CHANNELS_MARKER;
+            }
+            if (channels.isEmpty()) {
+                log.debug("[Alerter] 规则通知渠道为空, 查通知配置表 - ruleId={}, appid={}", rule.getId(), event.getAppid());
+                return lookupConfigTargets(event.getAppid());
+            }
+            String email = channels.get("email");
+            if (email != null && !email.isBlank()) {
+                return email;
+            }
+            log.debug("[Alerter] 规则notify_channels未配置email, 查通知配置表 - ruleId={}, appid={}",
+                    rule.getId(), event.getAppid());
+        }
+        return lookupConfigTargets(event.getAppid());
+    }
+
+    private String lookupConfigTargets(Long appid) {
+        try {
+            List<AlertNotificationConfig> configs = notifyConfigRepository.findByAppidAndStatus(appid, "enabled");
+            if (configs == null || configs.isEmpty()) {
+                log.debug("[Alerter] 通知配置表无启用项 - appid={}", appid);
+                return null;
+            }
+            String joined = configs.stream()
+                    .map(AlertNotificationConfig::getTarget)
+                    .filter(t -> t != null && !t.isBlank())
+                    .distinct()
+                    .collect(Collectors.joining(","));
+            log.info("[Alerter] 通知配置表命中 - appid={}, count={}, targets={}", appid, configs.size(), joined);
+            return joined;
+        } catch (Exception e) {
+            log.warn("[Alerter] 通知配置表查询失败 - appid={}, error={}", appid, e.getMessage());
+            return null;
+        }
+    }
+
     private String sendEmail(String to, AlertRule rule, MetricEvent event, String type) {
         String subject = buildSubject(rule, event, type);
         String body = buildBody(rule, event, type);
+        log.debug("[Alerter] sendEmail - to={}, type={}, subject={}", to, type, subject);
         try {
             SimpleMailMessage msg = new SimpleMailMessage();
             msg.setFrom(from);
@@ -97,6 +145,7 @@ public class AlertNotifier {
         String ruleName = rule.getRuleName() != null ? rule.getRuleName() : "rule-" + rule.getId();
         String level = resolveLevel(rule);
         String time = Instant.now().toString();
+        String logDetail = renderLogDetail(rule, event);
 
         if ("firing".equals(type)) {
             return String.format("""
@@ -105,7 +154,7 @@ public class AlertNotifier {
                     指标: %s = %s
                     规则: %s (表达式: %s)
                     时间: %s
-                    """, level, appName, appid, metric, value, ruleName, expression, time);
+                    %s""", level, appName, appid, metric, value, ruleName, expression, time, logDetail);
         } else {
             return String.format("""
                     [RESOLVED][%s] 告警恢复
@@ -113,7 +162,34 @@ public class AlertNotifier {
                     指标: %s = %s
                     规则: %s (表达式: %s)
                     恢复时间: %s
-                    """, level, appName, appid, metric, value, ruleName, expression, time);
+                    %s""", level, appName, appid, metric, value, ruleName, expression, time, logDetail);
+        }
+    }
+
+    private String renderLogDetail(AlertRule rule, MetricEvent event) {
+        String ruleType = rule.getRuleType();
+        if (!"log_keyword".equals(ruleType) && !"log_new_pattern".equals(ruleType)) {
+            return "";
+        }
+        Map<String, String> tags = event.getTags();
+        if (tags == null || tags.isEmpty()) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder("日志详情:\n");
+        appendIfPresent(sb, tags, "level", "  级别");
+        appendIfPresent(sb, tags, "logger", "  Logger");
+        appendIfPresent(sb, tags, "method", "  方法");
+        appendIfPresent(sb, tags, "host", "  主机");
+        appendIfPresent(sb, tags, "traceId", "  TraceId");
+        appendIfPresent(sb, tags, "fingerprint", "  指纹");
+        appendIfPresent(sb, tags, "message", "  消息");
+        return sb.toString();
+    }
+
+    private void appendIfPresent(StringBuilder sb, Map<String, String> tags, String key, String label) {
+        String v = tags.get(key);
+        if (v != null && !v.isEmpty()) {
+            sb.append(label).append(": ").append(v).append('\n');
         }
     }
 

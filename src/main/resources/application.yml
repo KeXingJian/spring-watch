@@ -28,6 +28,20 @@ spring-watch:
       drain-interval-ms: 5000
       send-timeout-ms: 2000
       alert-threshold: 1000
+  log:
+    env: dev
+    dedup:
+      window-seconds: 60
+      count-ttl-seconds: 3600
+    anomaly:
+      rate-ttl-seconds: 600
+      pattern-ttl-hours: 168
+      min-base-rate: 0.01
+    alert:
+      error-rate-window-seconds: 60
+      error-rate-interval-ms: 60000
+    linker:
+      default-metric: jvm_memory_used_bytes
 
   mail:
     host: smtp.qq.com

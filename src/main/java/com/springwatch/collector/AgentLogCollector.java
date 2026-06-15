@@ -24,6 +24,7 @@ public class AgentLogCollector {
 
     public Instant collect(Long appid, String appName, String endpoint, Instant since) {
         String url = buildUrl(endpoint, since);
+        String remoteHost = parseHost(endpoint);
         long start = System.nanoTime();
 
         try {
@@ -55,6 +56,9 @@ public class AgentLogCollector {
                     if (event.getTimestamp() == null) {
                         event.setTimestamp(Instant.now());
                     }
+                    if (event.getHost() == null && remoteHost != null) {
+                        event.setHost(remoteHost);
+                    }
                     kafkaProducerBridge.sendLog(event);
                     sent++;
                     if (event.getTimestamp().isAfter(latest)) {
@@ -82,5 +86,16 @@ public class AgentLogCollector {
                 ? endpoint.substring(0, endpoint.length() - 1)
                 : endpoint;
         return base + "/api/agent/logs?since=" + since.toString();
+    }
+
+    private String parseHost(String endpoint) {
+        if (endpoint == null || endpoint.isEmpty()) {
+            return null;
+        }
+        try {
+            return URI.create(endpoint).getHost();
+        } catch (Exception e) {
+            return null;
+        }
     }
 }

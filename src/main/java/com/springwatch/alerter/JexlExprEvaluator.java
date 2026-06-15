@@ -19,6 +19,7 @@ public class JexlExprEvaluator {
 
     public boolean evaluate(String expression, MetricEvent event) {
         if (expression == null || expression.isBlank() || event == null) {
+            log.debug("[Alerter] JEXL evaluate 跳过 - expression={}, event={}", expression, event);
             return false;
         }
         try {
@@ -32,7 +33,10 @@ public class JexlExprEvaluator {
                 event.getTags().forEach(ctx::set);
             }
             Object result = expr.evaluate(ctx);
-            return Boolean.TRUE.equals(result);
+            boolean boolResult = Boolean.TRUE.equals(result);
+            log.debug("[Alerter] JEXL evaluate - expression={}, value={}, metric={}, result={}",
+                    expression, event.getValue(), event.getMetricName(), boolResult);
+            return boolResult;
         } catch (JexlException e) {
             log.warn("[Alerter] JEXL 表达式执行失败 - expr={}, error={}", expression, e.getMessage());
             return false;

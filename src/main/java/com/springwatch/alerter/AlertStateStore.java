@@ -54,7 +54,9 @@ public class AlertStateStore {
         String key = key(ruleId, appid);
         Long count = redis.opsForHash().increment(key, FIELD_TRIGGER_COUNT, 1L);
         redis.expire(key, Duration.ofHours(ttlHours));
-        return count == null ? 0L : count;
+        long result = count == null ? 0L : count;
+        log.debug("[Alerter] 触发次数自增 - ruleId={}, appid={}, count={}", ruleId, appid, result);
+        return result;
     }
 
     public void clearTriggerCount(Long ruleId, Long appid) {
@@ -79,10 +81,13 @@ public class AlertStateStore {
             redis.opsForHash().putAll(key, map);
         }
         redis.expire(key, Duration.ofHours(ttlHours));
+        log.debug("[Alerter] 状态变更 - ruleId={}, appid={}, state={}, firstBreachAt={}, lastFiredAt={}",
+                ruleId, appid, state, firstBreachAt, lastFiredAt);
     }
 
     public void clear(Long ruleId, Long appid) {
         redis.delete(key(ruleId, appid));
+        log.debug("[Alerter] 状态清除 - ruleId={}, appid={}", ruleId, appid);
     }
 
     private String key(Long ruleId, Long appid) {

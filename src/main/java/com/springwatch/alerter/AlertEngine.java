@@ -1,7 +1,9 @@
 package com.springwatch.alerter;
 
+import com.springwatch.analysis.LogAnomalyDetector;
 import com.springwatch.model.entity.AlertHistory;
 import com.springwatch.model.entity.AlertRule;
+import com.springwatch.model.event.LogEvent;
 import com.springwatch.model.event.MetricEvent;
 import com.springwatch.repository.AlertHistoryRepository;
 import lombok.RequiredArgsConstructor;
@@ -11,7 +13,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 @Slf4j
 @Component
@@ -23,20 +27,69 @@ public class AlertEngine {
     private final AlertRuleCache ruleCache;
     private final AlertNotifier notifier;
     private final AlertHistoryRepository historyRepository;
+    private final LogAnomalyDetector anomalyDetector;
 
     public void process(MetricEvent event) {
         if (event == null || event.getAppid() == null) {
+            log.debug("[Alerter] process(MetricEvent) 跳过 - event={}, appid={}",
+                    event, event == null ? null : event.getAppid());
             return;
         }
         List<AlertRule> rules = ruleCache.rulesFor(event.getAppid());
         if (rules.isEmpty()) {
+            log.debug("[Alerter] process(MetricEvent) 无匹配规则 - appid={}, metric={}, value={}",
+                    event.getAppid(), event.getMetricName(), event.getValue());
             return;
         }
+        log.debug("[Alerter] process(MetricEvent) 命中规则 - appid={}, metric={}, value={}, rules={}",
+                event.getAppid(), event.getMetricName(), event.getValue(), rules.size());
         for (AlertRule rule : rules) {
+            String type = rule.getRuleType();
+            if (!"metric".equals(type) && !"log_error_rate".equals(type)) {
+                continue;
+            }
+            if ("log_error_rate".equals(type) && !"log_error_rate".equals(event.getMetricName())) {
+                continue;
+            }
             try {
+                log.debug("[Alerter] 规则评估开始 - ruleId={}, appid={}, type={}, metric={}, value={}",
+                        rule.getId(), event.getAppid(), type, event.getMetricName(), event.getValue());
                 evaluateRule(rule, event);
             } catch (Exception e) {
                 log.warn("[Alerter] 规则评估异常 - ruleId={}, appid={}, error={}",
+                        rule.getId(), event.getAppid(), e.getMessage(), e);
+            }
+        }
+    }
+
+    /**
+     * kxj: 日志规则评估入口-处理log_keyword/log_new_pattern两类规则
+     */
+    public void process(LogEvent event) {
+        if (event == null || event.getAppid() == null) {
+            log.debug("[Alerter] process(LogEvent) 跳过 - event={}, appid={}",
+                    event, event == null ? null : event.getAppid());
+            return;
+        }
+        List<AlertRule> rules = ruleCache.rulesFor(event.getAppid());
+        if (rules.isEmpty()) {
+            log.debug("[Alerter] process(LogEvent) 无匹配规则 - appid={}, fingerprint={}, level={}",
+                    event.getAppid(), event.getFingerprint(), event.getLevel());
+            return;
+        }
+        log.debug("[Alerter] process(LogEvent) 命中规则 - appid={}, fingerprint={}, level={}, rules={}",
+                event.getAppid(), event.getFingerprint(), event.getLevel(), rules.size());
+        for (AlertRule rule : rules) {
+            String type = rule.getRuleType();
+            if (!"log_keyword".equals(type) && !"log_new_pattern".equals(type)) {
+                continue;
+            }
+            try {
+                log.debug("[Alerter] 日志规则评估开始 - ruleId={}, appid={}, type={}, fingerprint={}",
+                        rule.getId(), event.getAppid(), type, event.getFingerprint());
+                evaluateLogRule(rule, event);
+            } catch (Exception e) {
+                log.warn("[Alerter] 日志规则评估异常 - ruleId={}, appid={}, error={}",
                         rule.getId(), event.getAppid(), e.getMessage(), e);
             }
         }
@@ -46,6 +99,8 @@ public class AlertEngine {
         boolean breached = evaluator.isBreached(rule, event);
         AlertState current = stateStore.getState(rule.getId(), event.getAppid());
         Instant now = Instant.now();
+        log.debug("[Alerter] 规则评估结果 - ruleId={}, appid={}, breached={}, currentState={}",
+                rule.getId(), event.getAppid(), breached, current);
 
         if (breached) {
             handleBreach(rule, event, current, now);
@@ -54,10 +109,65 @@ public class AlertEngine {
         }
     }
 
+    private void evaluateLogRule(AlertRule rule, LogEvent event) {
+        boolean breached;
+        if ("log_new_pattern".equals(rule.getRuleType())) {
+            breached = anomalyDetector.isNewPattern(event.getAppid(), event.getFingerprint());
+        } else {
+            breached = evaluator.isLogBreached(rule, event);
+        }
+        log.debug("[Alerter] 日志规则评估结果 - ruleId={}, appid={}, type={}, breached={}",
+                rule.getId(), event.getAppid(), rule.getRuleType(), breached);
+        if (!breached) {
+            return;
+        }
+
+        Long ruleId = rule.getId();
+        Long appid = event.getAppid();
+        Instant now = Instant.now();
+        AlertState current = stateStore.getState(ruleId, appid);
+        if (current == AlertState.FIRING) {
+            log.trace("[Alerter] 日志告警持续中, 跳过 - ruleId={}, appid={}", ruleId, appid);
+            return;
+        }
+        stateStore.setState(ruleId, appid, AlertState.FIRING, now, now);
+        MetricEvent synthetic = toSyntheticMetric(rule, event);
+        log.debug("[Alerter] 日志规则构造合成指标 - ruleId={}, appid={}, metric={}, fingerprint={}",
+                ruleId, appid, synthetic.getMetricName(), event.getFingerprint());
+        fire(rule, synthetic, now);
+    }
+
+    private MetricEvent toSyntheticMetric(AlertRule rule, LogEvent event) {
+        Map<String, String> tags = new HashMap<>();
+        if (event.getLevel() != null) tags.put("level", event.getLevel());
+        if (event.getLogger() != null) tags.put("logger", event.getLogger());
+        if (event.getFingerprint() != null) tags.put("fingerprint", event.getFingerprint());
+        if (event.getTraceId() != null) tags.put("traceId", event.getTraceId());
+        if (event.getMethod() != null) tags.put("method", event.getMethod());
+        if (event.getHost() != null) tags.put("host", event.getHost());
+        if (event.getMessage() != null) {
+            String m = event.getMessage();
+            tags.put("message", m.length() > 256 ? m.substring(0, 256) : m);
+        }
+        MetricEvent built = MetricEvent.builder()
+                .appid(event.getAppid())
+                .metricName(rule.getRuleType())
+                .value(1.0)
+                .timestamp(event.getTimestamp() != null ? event.getTimestamp() : Instant.now())
+                .tags(tags)
+                .build();
+        log.debug("[Alerter] 合成指标构建完成 - appid={}, metricName={}, value={}, tagKeys={}",
+                built.getAppid(), built.getMetricName(), built.getValue(), tags.keySet());
+        return built;
+    }
+
     private void handleBreach(AlertRule rule, MetricEvent event,
                               AlertState current, Instant now) {
         Long ruleId = rule.getId();
         Long appid = event.getAppid();
+
+        log.debug("[Alerter] handleBreach - ruleId={}, appid={}, current={}",
+                ruleId, appid, current);
 
         if (current == AlertState.FIRING) {
             log.trace("[Alerter] 告警持续中, 跳过 - ruleId={}, appid={}", ruleId, appid);
@@ -108,6 +218,9 @@ public class AlertEngine {
                                 AlertState current, Instant now) {
         Long ruleId = rule.getId();
         Long appid = event.getAppid();
+
+        log.debug("[Alerter] handleRecover - ruleId={}, appid={}, current={}",
+                ruleId, appid, current);
 
         if (current == AlertState.PENDING) {
             stateStore.clear(ruleId, appid);
@@ -175,10 +288,12 @@ public class AlertEngine {
     }
 
     private String buildMessage(AlertRule rule, MetricEvent event, String type) {
-        return String.format("[%s][%s] appid=%s 指标 %s 当前值=%.2f 规则=%s 时间=%s",
+        String msg = String.format("[%s][%s] appid=%s 指标 %s 当前值=%.2f 规则=%s 时间=%s",
                 determineLevel(event, rule).toUpperCase(),
                 type.toUpperCase(), event.getAppid(), event.getMetricName(),
                 event.getValue() != null ? event.getValue() : 0.0,
                 rule.getExpression(), Instant.now());
+        log.debug("[Alerter] 告警消息构建 - ruleId={}, appid={}, message={}", rule.getId(), event.getAppid(), msg);
+        return msg;
     }
 }
