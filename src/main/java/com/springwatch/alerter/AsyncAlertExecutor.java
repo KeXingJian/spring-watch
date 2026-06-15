@@ -1,5 +1,7 @@
 package com.springwatch.alerter;
 
+import com.springwatch.model.entity.AlertRule;
+import com.springwatch.model.event.MetricEvent;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
@@ -7,6 +9,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import java.time.Instant;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
@@ -47,7 +50,7 @@ public class AsyncAlertExecutor {
         log.info("[Alerter] 异步告警评估线程池关闭");
     }
 
-    public void submit(com.springwatch.model.event.MetricEvent event) {
+    public void submit(MetricEvent event) {
         if (event == null) {
             log.debug("[Alerter] submit(MetricEvent) event为空, 跳过");
             return;
@@ -67,7 +70,7 @@ public class AsyncAlertExecutor {
                             event.getAppid(), event.getMetricName(), t.getMessage(), t);
                 }
             });
-            log.debug("[Alerter] 评估任务已提交 - appid={}, metric={}", event.getAppid(), event.getMetricName());
+            log.trace("[Alerter] 评估任务已提交 - appid={}, metric={}", event.getAppid(), event.getMetricName());
         } catch (Exception e) {
             log.warn("[Alerter] 提交评估任务失败, 降级为同步 - appid={}, error={}",
                     event.getAppid(), e.getMessage());
@@ -103,6 +106,36 @@ public class AsyncAlertExecutor {
             log.warn("[Alerter] 提交日志评估任务失败, 降级为同步 - appid={}, error={}",
                     event.getAppid(), e.getMessage());
             engine.process(event);
+        }
+    }
+
+    /**
+     * kxj: 扫描器提交-PendingStateScanner专用,与MetricEvent走同一线程池
+     */
+    public void submitFromScanner(AlertRule rule, Long appid, Instant firstBreachAt, long triggerCount, Instant now) {
+        if (rule == null || appid == null) {
+            return;
+        }
+        if (executor == null) {
+            log.warn("[Alerter] 线程池未初始化, 同步执行 - ruleId={}, appid={}", rule.getId(), appid);
+            engine.fireFromScanner(rule, appid, firstBreachAt, triggerCount, now);
+            return;
+        }
+        try {
+            executor.submit(() -> {
+                try {
+                    log.debug("[Alerter] 扫描器评估任务开始 - ruleId={}, appid={}", rule.getId(), appid);
+                    engine.fireFromScanner(rule, appid, firstBreachAt, triggerCount, now);
+                } catch (Throwable t) {
+                    log.error("[Alerter] 扫描器评估异常 - ruleId={}, appid={}, error={}",
+                            rule.getId(), appid, t.getMessage(), t);
+                }
+            });
+            log.debug("[Alerter] 扫描器评估任务已提交 - ruleId={}, appid={}", rule.getId(), appid);
+        } catch (Exception e) {
+            log.warn("[Alerter] 提交扫描器评估任务失败, 降级为同步 - ruleId={}, error={}",
+                    rule.getId(), e.getMessage());
+            engine.fireFromScanner(rule, appid, firstBreachAt, triggerCount, now);
         }
     }
 }

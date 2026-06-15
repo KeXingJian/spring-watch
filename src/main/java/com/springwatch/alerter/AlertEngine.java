@@ -31,8 +31,7 @@ public class AlertEngine {
 
     public void process(MetricEvent event) {
         if (event == null || event.getAppid() == null) {
-            log.debug("[Alerter] process(MetricEvent) 跳过 - event={}, appid={}",
-                    event, event == null ? null : event.getAppid());
+            log.debug("[Alerter] process(MetricEvent) 跳过 - event={}", event);
             return;
         }
         List<AlertRule> rules = ruleCache.rulesFor(event.getAppid());
@@ -96,7 +95,13 @@ public class AlertEngine {
     }
 
     private void evaluateRule(AlertRule rule, MetricEvent event) {
-        boolean breached = evaluator.isBreached(rule, event);
+        AlertEvaluator.BreachResult result = evaluator.evaluate(rule, event);
+        if (result == AlertEvaluator.BreachResult.NOT_APPLICABLE) {
+            log.trace("[Alerter] 规则与event不相关, 跳过 - ruleId={}, appid={}, metric={}",
+                    rule.getId(), event.getAppid(), event.getMetricName());
+            return;
+        }
+        boolean breached = (result == AlertEvaluator.BreachResult.BREACHED);
         AlertState current = stateStore.getState(rule.getId(), event.getAppid());
         Instant now = Instant.now();
         log.debug("[Alerter] 规则评估结果 - ruleId={}, appid={}, breached={}, currentState={}",
@@ -277,6 +282,46 @@ public class AlertEngine {
         } catch (Exception e) {
             log.warn("[Alerter] 恢复通知失败 - ruleId={}, error={}", rule.getId(), e.getMessage());
         }
+    }
+
+    /**
+     * kxj: PENDING扫描器触发入口-由PendingStateScanner调用,合成MetricEvent后走fire()
+     * 必须在虚拟线程池内调用,避免阻塞扫描器
+     */
+    public void fireFromScanner(AlertRule rule, Long appid, Instant firstBreachAt, long triggerCount, Instant now) {
+        if (rule == null || appid == null) {
+            return;
+        }
+        AlertState current = stateStore.getState(rule.getId(), appid);
+        if (current != AlertState.PENDING) {
+            log.debug("[Alerter] 扫描触发时状态已变更, 跳过 - ruleId={}, appid={}, current={}",
+                    rule.getId(), appid, current);
+            return;
+        }
+        int times = rule.getTimes() == null ? 1 : rule.getTimes();
+        int durationSec = rule.getDurationSeconds() == null ? 60 : rule.getDurationSeconds();
+        if (times > 1 && triggerCount < times) {
+            log.debug("[Alerter] 扫描触发但times未达 - ruleId={}, appid={}, count={}/{}",
+                    rule.getId(), appid, triggerCount, times);
+            return;
+        }
+        if (Duration.between(firstBreachAt, now).toMillis() < durationSec * 1000L) {
+            log.debug("[Alerter] 扫描触发但duration未达 - ruleId={}, appid={}, elapsed={}ms, duration={}ms",
+                    rule.getId(), appid,
+                    Duration.between(firstBreachAt, now).toMillis(), durationSec * 1000L);
+            return;
+        }
+        MetricEvent synthetic = MetricEvent.builder()
+                .appid(appid)
+                .metricName(rule.getRuleType())
+                .value(0.0)
+                .timestamp(now)
+                .build();
+        stateStore.setState(rule.getId(), appid, AlertState.FIRING, firstBreachAt, now);
+        stateStore.clearTriggerCount(rule.getId(), appid);
+        log.info("[Alerter] 扫描器触发FIRING - ruleId={}, appid={}, firstBreachAt={}, triggerCount={}",
+                rule.getId(), appid, firstBreachAt, triggerCount);
+        fire(rule, synthetic, now);
     }
 
     private String determineLevel(MetricEvent event, AlertRule rule) {

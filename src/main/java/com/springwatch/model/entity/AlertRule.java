@@ -2,6 +2,8 @@ package com.springwatch.model.entity;
 
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.time.Instant;
 
@@ -36,6 +38,7 @@ public class AlertRule {
     @Builder.Default
     private Integer durationSeconds = 60;
 
+    @JdbcTypeCode(SqlTypes.JSON)
     @Column(columnDefinition = "jsonb")
     private String notifyChannels;
 

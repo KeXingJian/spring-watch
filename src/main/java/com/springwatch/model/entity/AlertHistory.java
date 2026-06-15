@@ -2,6 +2,8 @@ package com.springwatch.model.entity;
 
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.time.Instant;
 
@@ -32,6 +34,7 @@ public class AlertHistory {
     @Column(columnDefinition = "TEXT")
     private String alertMessage;
 
+    @JdbcTypeCode(SqlTypes.JSON)
     @Column(columnDefinition = "jsonb")
     private String notifyResult;
 

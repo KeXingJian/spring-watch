@@ -15,6 +15,10 @@ import java.util.regex.Pattern;
 @RequiredArgsConstructor
 public class AlertEvaluator {
 
+    public enum BreachResult {
+        BREACHED, NOT_BREACHED, NOT_APPLICABLE
+    }
+
     private static final Pattern SIMPLE_EXPR =
             Pattern.compile("^(\\w[\\w.]*)\\s*(>=|<=|>|<|==|!=)\\s*([\\d.]+)$");
 
@@ -24,34 +28,42 @@ public class AlertEvaluator {
     private final JexlExprEvaluator jexlEvaluator;
 
     public boolean isBreached(AlertRule rule, MetricEvent event) {
+        return evaluate(rule, event) == BreachResult.BREACHED;
+    }
+
+    public BreachResult evaluate(AlertRule rule, MetricEvent event) {
         if (rule == null || event == null) {
-            log.debug("[Alerter] isBreached 跳过 - rule={}, event={}", rule, event);
-            return false;
+            log.debug("[Alerter] evaluate 跳过 - rule={}, event={}", rule, event);
+            return BreachResult.NOT_APPLICABLE;
         }
         String type = rule.getRuleType();
         if ("log_error_rate".equals(type)) {
+            if (!"log_error_rate".equals(event.getMetricName())) {
+                return BreachResult.NOT_APPLICABLE;
+            }
             boolean r = evaluateLogErrorRate(rule, event);
             log.debug("[Alerter] log_error_rate 评估 - ruleId={}, value={}, threshold={}, breached={}",
                     rule.getId(), event.getValue(), rule.getThresholdValue(), r);
-            return r;
+            return r ? BreachResult.BREACHED : BreachResult.NOT_BREACHED;
         }
         if (!"metric".equals(type)) {
             log.debug("[Alerter] 非metric/log_error_rate类型, 跳过 - ruleId={}, type={}", rule.getId(), type);
-            return false;
+            return BreachResult.NOT_APPLICABLE;
         }
         if (rule.getExpression() == null || rule.getExpression().isBlank()) {
             log.warn("[Alerter] metric规则表达式为空, 跳过 - ruleId={}, appid={}", rule.getId(), event.getAppid());
-            return false;
+            return BreachResult.NOT_APPLICABLE;
         }
 
         String expr = rule.getExpression().trim();
-        boolean result;
+        BreachResult result;
         if (SIMPLE_EXPR.matcher(expr).matches()) {
             result = simpleEvaluate(expr, event);
         } else {
-            result = jexlEvaluator.evaluate(expr, event);
+            boolean jexl = jexlEvaluator.evaluate(expr, event);
+            result = jexl ? BreachResult.BREACHED : BreachResult.NOT_BREACHED;
         }
-        log.debug("[Alerter] metric规则评估 - ruleId={}, appid={}, metric={}, value={}, expression={}, breached={}",
+        log.debug("[Alerter] metric规则评估 - ruleId={}, appid={}, metric={}, value={}, expression={}, result={}",
                 rule.getId(), event.getAppid(), event.getMetricName(), event.getValue(), expr, result);
         return result;
     }
@@ -114,24 +126,24 @@ public class AlertEvaluator {
         return trim;
     }
 
-    private boolean simpleEvaluate(String expr, MetricEvent event) {
+    private BreachResult simpleEvaluate(String expr, MetricEvent event) {
         Matcher m = SIMPLE_EXPR.matcher(expr);
         if (!m.matches()) {
-            return false;
+            return BreachResult.NOT_APPLICABLE;
         }
         String metricName = m.group(1);
         String op = m.group(2);
         double threshold = Double.parseDouble(m.group(3));
 
         if (event.getMetricName() == null || !metricName.equals(event.getMetricName())) {
-            log.debug("[Alerter] simpleEvaluate 指标名不匹配 - expect={}, actual={}", metricName, event.getMetricName());
-            return false;
+            log.trace("[Alerter] simpleEvaluate 指标名不匹配 - expect={}, actual={}", metricName, event.getMetricName());
+            return BreachResult.NOT_APPLICABLE;
         }
         Double value = event.getValue();
         if (value == null) {
-            return false;
+            return BreachResult.NOT_BREACHED;
         }
-        boolean result = switch (op) {
+        boolean cmp = switch (op) {
             case ">"  -> value >  threshold;
             case "<"  -> value <  threshold;
             case ">=" -> value >= threshold;
@@ -140,6 +152,7 @@ public class AlertEvaluator {
             case "!=" -> value != threshold;
             default   -> false;
         };
+        BreachResult result = cmp ? BreachResult.BREACHED : BreachResult.NOT_BREACHED;
         log.debug("[Alerter] simpleEvaluate - metric={}, op={}, threshold={}, value={}, result={}",
                 metricName, op, threshold, value, result);
         return result;

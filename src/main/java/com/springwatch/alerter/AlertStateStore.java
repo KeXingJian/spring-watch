@@ -3,12 +3,16 @@ package com.springwatch.alerter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.redis.core.Cursor;
+import org.springframework.data.redis.core.ScanOptions;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 @Slf4j
@@ -89,6 +93,62 @@ public class AlertStateStore {
         redis.delete(key(ruleId, appid));
         log.debug("[Alerter] 状态清除 - ruleId={}, appid={}", ruleId, appid);
     }
+
+    /**
+     * kxj: PENDING扫描器-游标扫所有状态键,过滤PENDING返回 [借鉴 HertzBeat PeriodicAlertRuleScheduler]
+     */
+    public List<PendingEntry> scanPending(long scanCount) {
+        List<PendingEntry> result = new ArrayList<>();
+        ScanOptions options = ScanOptions.scanOptions().match(KEY_PREFIX + "*").count(scanCount).build();
+        try (Cursor<String> cursor = redis.scan(options)) {
+            while (cursor.hasNext()) {
+                String key = cursor.next();
+                int firstColon = KEY_PREFIX.length();
+                int secondColon = key.indexOf(':', firstColon);
+                if (secondColon < 0) {
+                    continue;
+                }
+                Long ruleId;
+                Long appid;
+                try {
+                    ruleId = Long.parseLong(key.substring(firstColon, secondColon));
+                    appid = Long.parseLong(key.substring(secondColon + 1));
+                } catch (NumberFormatException e) {
+                    continue;
+                }
+                Map<Object, Object> entries = redis.opsForHash().entries(key);
+                Object stateVal = entries.get(FIELD_STATE);
+                if (stateVal == null || !AlertState.PENDING.name().equals(stateVal.toString())) {
+                    continue;
+                }
+                Object firstBreachVal = entries.get(FIELD_FIRST_BREACH_AT);
+                if (firstBreachVal == null) {
+                    continue;
+                }
+                Instant firstBreachAt;
+                try {
+                    firstBreachAt = Instant.ofEpochMilli(Long.parseLong(firstBreachVal.toString()));
+                } catch (NumberFormatException e) {
+                    continue;
+                }
+                long triggerCount = 0L;
+                Object countVal = entries.get(FIELD_TRIGGER_COUNT);
+                if (countVal != null) {
+                    try {
+                        triggerCount = Long.parseLong(countVal.toString());
+                    } catch (NumberFormatException ignored) {
+                    }
+                }
+                result.add(new PendingEntry(ruleId, appid, firstBreachAt, triggerCount));
+            }
+        } catch (Exception e) {
+            log.warn("[Alerter] 扫PENDING状态失败 - error={}", e.getMessage());
+        }
+        log.debug("[Alerter] scanPending 完成 - size={}", result.size());
+        return result;
+    }
+
+    public record PendingEntry(Long ruleId, Long appid, Instant firstBreachAt, long triggerCount) {}
 
     private String key(Long ruleId, Long appid) {
         return KEY_PREFIX + ruleId + ":" + appid;

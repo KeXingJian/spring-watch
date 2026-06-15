@@ -9,6 +9,7 @@ import java.time.Instant;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 @Slf4j
 class AlertEvaluatorTest {
@@ -66,6 +67,27 @@ class AlertEvaluatorTest {
         AlertRule rule = ruleOf("heap > 80");
         MetricEvent event = event("cpu", 95.0);
         assertFalse(evaluator.isBreached(rule, event));
+    }
+
+    @Test
+    void metricMismatch_returnsNotApplicable() {
+        AlertRule rule = ruleOf("heap > 80");
+        MetricEvent event = event("cpu", 95.0);
+        assertEquals(AlertEvaluator.BreachResult.NOT_APPLICABLE, evaluator.evaluate(rule, event));
+    }
+
+    @Test
+    void metricMatch_valueOver_returnsBreached() {
+        AlertRule rule = ruleOf("heap > 80");
+        MetricEvent event = event("heap", 85.0);
+        assertEquals(AlertEvaluator.BreachResult.BREACHED, evaluator.evaluate(rule, event));
+    }
+
+    @Test
+    void metricMatch_valueUnder_returnsNotBreached() {
+        AlertRule rule = ruleOf("heap > 80");
+        MetricEvent event = event("heap", 75.0);
+        assertEquals(AlertEvaluator.BreachResult.NOT_BREACHED, evaluator.evaluate(rule, event));
     }
 
     @Test
