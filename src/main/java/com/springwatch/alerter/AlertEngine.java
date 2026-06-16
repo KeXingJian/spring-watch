@@ -88,8 +88,7 @@ public class AlertEngine {
      */
     public void process(LogEvent event) {
         if (event == null || event.getAppid() == null) {
-            log.debug("[Alerter] process(LogEvent) 跳过 - event={}, appid={}",
-                    event, event == null ? null : event.getAppid());
+            log.debug("[Alerter] process(LogEvent) 跳过 - event={}", event);
             return;
         }
         List<AlertRule> rules = ruleCache.rulesFor(event.getAppid());
@@ -264,6 +263,15 @@ public class AlertEngine {
         }
 
         if (current == AlertState.FIRING) {
+            //TODO 临时补丁
+            // kxj: 仅当"触发告警的同一个 metric"再次出现且条件不满足时,才算真正恢复
+            // 否则路过的任意 metric(JEXL 评估自然返回 false)会误触发 resolve
+            String lastMetric = stateStore.getLastMetric(ruleId, appid);
+            if (lastMetric != null && !lastMetric.equals(event.getMetricName())) {
+                log.debug("[Alerter] 收到不相关事件, 跳过恢复 - ruleId={}, appid={}, lastMetric={}, currentMetric={}",
+                        ruleId, appid, lastMetric, event.getMetricName());
+                return;
+            }
             if (stateStore.tryResolve(ruleId, appid)) {
                 self.resolve(rule, event, now);
                 stateStore.clear(ruleId, appid);
