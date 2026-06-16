@@ -58,7 +58,7 @@ public class AlertEngine {
         }
         List<AlertRule> rules = ruleCache.rulesFor(event.getAppid());
         if (rules.isEmpty()) {
-            log.debug("[Alerter] process(MetricEvent) 无匹配规则 - appid={}, metric={}, value={}",
+            log.trace("[Alerter] process(MetricEvent) 无匹配规则 - appid={}, metric={}, value={}",
                     event.getAppid(), event.getMetricName(), event.getValue());
             return;
         }
@@ -97,7 +97,7 @@ public class AlertEngine {
                     event.getAppid(), event.getFingerprint(), event.getLevel());
             return;
         }
-        log.debug("[Alerter] process(LogEvent) 命中规则 - appid={}, fingerprint={}, level={}, rules={}",
+        log.trace("[Alerter] process(LogEvent) 命中规则 - appid={}, fingerprint={}, level={}, rules={}",
                 event.getAppid(), event.getFingerprint(), event.getLevel(), rules.size());
         for (AlertRule rule : rules) {
             String type = rule.getRuleType();

@@ -63,7 +63,7 @@ public class AsyncAlertExecutor {
         try {
             executor.submit(() -> {
                 try {
-                    log.debug("[Alerter] 评估任务开始 - appid={}, metric={}", event.getAppid(), event.getMetricName());
+                    log.trace("[Alerter] 评估任务开始 - appid={}, metric={}", event.getAppid(), event.getMetricName());
                     engine.process(event);
                 } catch (Throwable t) {
                     log.error("[Alerter] 评估异常 - appid={}, metric={}, error={}",
