@@ -191,8 +191,24 @@ class AlertNotifierTest {
         SimpleMailMessage sent = captureSent();
         String[] to = sent.getTo();
         assertNotNull(to);
-        assertEquals("a@x.com,b@x.com", String.join(",", to));
+        assertEquals(2, to.length);
+        assertEquals("a@x.com", to[0]);
+        assertEquals("b@x.com", to[1]);
         assertNotNull(result);
+    }
+
+    @Test
+    void multipleRecipients_withSpacesAndBlanks() {
+        AlertRule rule = ruleWith("critical", "alert!");
+        rule.setNotifyChannels("{\"email\":\"a@x.com , b@x.com, , c@x.com\"}");
+        notifier.notify(rule, event(), "firing");
+        SimpleMailMessage sent = captureSent();
+        String[] to = sent.getTo();
+        assertNotNull(to);
+        assertEquals(3, to.length);
+        assertEquals("a@x.com", to[0]);
+        assertEquals("b@x.com", to[1]);
+        assertEquals("c@x.com", to[2]);
     }
 
     @Test

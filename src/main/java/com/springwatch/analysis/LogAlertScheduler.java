@@ -27,8 +27,9 @@ public class LogAlertScheduler {
 
     /**
      * kxj: log_error_rate定时任务-每分钟查询窗口错误率,合成MetricEvent触发AlertEngine状态机
+     * 用 fixedRate(非 fixedDelay)避免执行慢时窗口出现间隙
      */
-    @Scheduled(fixedDelayString = "${spring-watch.log.alert.error-rate-interval-ms:60000}")
+    @Scheduled(fixedRateString = "${spring-watch.log.alert.error-rate-interval-ms:60000}")
     public void evaluateErrorRateRules() {
         log.debug("[spring-watch: LogAlertScheduler 调度开始 - window={}s", windowSeconds);
         List<AlertRule> rules;

@@ -6,8 +6,9 @@ import com.springwatch.model.entity.AlertRule;
 import com.springwatch.model.event.LogEvent;
 import com.springwatch.model.event.MetricEvent;
 import com.springwatch.repository.AlertHistoryRepository;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -19,7 +20,6 @@ import java.util.Map;
 
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class AlertEngine {
 
     private final AlertEvaluator evaluator;
@@ -28,6 +28,28 @@ public class AlertEngine {
     private final AlertNotifier notifier;
     private final AlertHistoryRepository historyRepository;
     private final LogAnomalyDetector anomalyDetector;
+
+    /**
+     * kxj: self代理,解决 @Transactional 内部调用不生效问题
+     */
+    private final AlertEngine self;
+
+    @Autowired
+    public AlertEngine(AlertEvaluator evaluator,
+                       AlertStateStore stateStore,
+                       AlertRuleCache ruleCache,
+                       AlertNotifier notifier,
+                       AlertHistoryRepository historyRepository,
+                       LogAnomalyDetector anomalyDetector,
+                       @Lazy AlertEngine self) {
+        this.evaluator = evaluator;
+        this.stateStore = stateStore;
+        this.ruleCache = ruleCache;
+        this.notifier = notifier;
+        this.historyRepository = historyRepository;
+        this.anomalyDetector = anomalyDetector;
+        this.self = self;
+    }
 
     public void process(MetricEvent event) {
         if (event == null || event.getAppid() == null) {
@@ -40,7 +62,7 @@ public class AlertEngine {
                     event.getAppid(), event.getMetricName(), event.getValue());
             return;
         }
-        log.debug("[Alerter] process(MetricEvent) 命中规则 - appid={}, metric={}, value={}, rules={}",
+        log.trace("[Alerter] process(MetricEvent) 命中规则 - appid={}, metric={}, value={}, rules={}",
                 event.getAppid(), event.getMetricName(), event.getValue(), rules.size());
         for (AlertRule rule : rules) {
             String type = rule.getRuleType();
@@ -123,23 +145,32 @@ public class AlertEngine {
         }
         log.debug("[Alerter] 日志规则评估结果 - ruleId={}, appid={}, type={}, breached={}",
                 rule.getId(), event.getAppid(), rule.getRuleType(), breached);
-        if (!breached) {
-            return;
-        }
 
         Long ruleId = rule.getId();
         Long appid = event.getAppid();
         Instant now = Instant.now();
         AlertState current = stateStore.getState(ruleId, appid);
-        if (current == AlertState.FIRING) {
-            log.trace("[Alerter] 日志告警持续中, 跳过 - ruleId={}, appid={}", ruleId, appid);
+        MetricEvent synthetic = toSyntheticMetric(rule, event);
+
+        if (breached) {
+            if (current == AlertState.FIRING) {
+                log.trace("[Alerter] 日志告警持续中, 跳过 - ruleId={}, appid={}", ruleId, appid);
+                return;
+            }
+            stateStore.setState(ruleId, appid, AlertState.FIRING, now, now);
+            log.debug("[Alerter] 日志规则构造合成指标 - ruleId={}, appid={}, metric={}, fingerprint={}",
+                    ruleId, appid, synthetic.getMetricName(), event.getFingerprint());
+            self.fire(rule, synthetic, now);
             return;
         }
-        stateStore.setState(ruleId, appid, AlertState.FIRING, now, now);
-        MetricEvent synthetic = toSyntheticMetric(rule, event);
-        log.debug("[Alerter] 日志规则构造合成指标 - ruleId={}, appid={}, metric={}, fingerprint={}",
-                ruleId, appid, synthetic.getMetricName(), event.getFingerprint());
-        fire(rule, synthetic, now);
+
+        if (current == AlertState.FIRING) {
+            log.info("[Alerter] 日志告警恢复 - ruleId={}, appid={}, fingerprint={}",
+                    ruleId, appid, event.getFingerprint());
+            stateStore.setState(ruleId, appid, AlertState.RESOLVED, null, null);
+            self.resolve(rule, synthetic, now);
+            stateStore.clear(ruleId, appid);
+        }
     }
 
     private MetricEvent toSyntheticMetric(AlertRule rule, LogEvent event) {
@@ -199,19 +230,18 @@ public class AlertEngine {
             long count = 0L;
             if (times > 1) {
                 count = stateStore.incrementTriggerCount(ruleId, appid);
-                if (count >= times) {
-                    stateStore.setState(ruleId, appid, AlertState.FIRING, firstBreach, now);
-                    stateStore.clearTriggerCount(ruleId, appid);
-                    fire(rule, event, now);
-                    return;
-                }
             }
 
             long elapsed = Duration.between(firstBreach, now).toMillis();
-            if (elapsed >= durationSec * 1000L) {
-                stateStore.setState(ruleId, appid, AlertState.FIRING, firstBreach, now);
-                stateStore.clearTriggerCount(ruleId, appid);
-                fire(rule, event, now);
+            boolean timesMet = times <= 1 || count >= times;
+            boolean durationMet = elapsed >= durationSec * 1000L;
+            if (timesMet && durationMet) {
+                if (stateStore.tryFire(ruleId, appid, firstBreach, now)) {
+                    stateStore.clearTriggerCount(ruleId, appid);
+                    self.fire(rule, event, now);
+                } else {
+                    log.debug("[Alerter] CAS抢占FIRING失败, 已被其他线程触发 - ruleId={}, appid={}", ruleId, appid);
+                }
             } else {
                 log.trace("[Alerter] 条件持续中, 未达触发条件 - ruleId={}, appid={}, count={}/{}, elapsed={}ms, duration={}ms",
                         ruleId, appid, count, times, elapsed, durationSec * 1000L);
@@ -234,17 +264,24 @@ public class AlertEngine {
         }
 
         if (current == AlertState.FIRING) {
-            stateStore.setState(ruleId, appid, AlertState.RESOLVED, null, null);
-            resolve(rule, event, now);
-            stateStore.clear(ruleId, appid);
+            if (stateStore.tryResolve(ruleId, appid)) {
+                self.resolve(rule, event, now);
+                stateStore.clear(ruleId, appid);
+            } else {
+                log.debug("[Alerter] CAS抢占RESOLVED失败, 已被其他线程恢复 - ruleId={}, appid={}", ruleId, appid);
+            }
         }
     }
 
     @Transactional
-    protected void fire(AlertRule rule, MetricEvent event, Instant now) {
+    public void fire(AlertRule rule, MetricEvent event, Instant now) {
         log.info("[Alerter] 告警触发 - ruleId={}, appid={}, metric={}, value={}, expression={}",
                 rule.getId(), event.getAppid(), event.getMetricName(),
                 event.getValue(), rule.getExpression());
+        if (event.getMetricName() != null) {
+            stateStore.recordLastEvent(rule.getId(), event.getAppid(),
+                    event.getValue(), event.getMetricName(), null);
+        }
 
         AlertHistory history = AlertHistory.builder()
                 .rule(rule)
@@ -261,7 +298,7 @@ public class AlertEngine {
     }
 
     @Transactional
-    protected void resolve(AlertRule rule, MetricEvent event, Instant now) {
+    public void resolve(AlertRule rule, MetricEvent event, Instant now) {
         log.info("[Alerter] 告警恢复 - ruleId={}, appid={}, metric={}",
                 rule.getId(), event.getAppid(), event.getMetricName());
 
@@ -300,28 +337,52 @@ public class AlertEngine {
         }
         int times = rule.getTimes() == null ? 1 : rule.getTimes();
         int durationSec = rule.getDurationSeconds() == null ? 60 : rule.getDurationSeconds();
-        if (times > 1 && triggerCount < times) {
+        long elapsed = Duration.between(firstBreachAt, now).toMillis();
+        boolean timesMet = times <= 1 || triggerCount >= times;
+        boolean durationMet = elapsed >= durationSec * 1000L;
+        if (!timesMet) {
             log.debug("[Alerter] 扫描触发但times未达 - ruleId={}, appid={}, count={}/{}",
                     rule.getId(), appid, triggerCount, times);
             return;
         }
-        if (Duration.between(firstBreachAt, now).toMillis() < durationSec * 1000L) {
+        if (!durationMet) {
             log.debug("[Alerter] 扫描触发但duration未达 - ruleId={}, appid={}, elapsed={}ms, duration={}ms",
-                    rule.getId(), appid,
-                    Duration.between(firstBreachAt, now).toMillis(), durationSec * 1000L);
+                    rule.getId(), appid, elapsed, durationSec * 1000L);
             return;
         }
+        String lastMetric = stateStore.getLastMetric(rule.getId(), appid);
+        String lastValueStr = stateStore.getLastValue(rule.getId(), appid);
+        Double lastValue = null;
+        if (lastValueStr != null) {
+            try {
+                lastValue = Double.parseDouble(lastValueStr);
+            } catch (NumberFormatException ignored) {
+            }
+        }
+        Map<String, String> tags = new HashMap<>();
+        tags.put("trigger", "scanner");
         MetricEvent synthetic = MetricEvent.builder()
                 .appid(appid)
-                .metricName(rule.getRuleType())
-                .value(0.0)
+                .metricName(lastMetric != null ? lastMetric : rule.getRuleType())
+                .value(lastValue != null ? lastValue : 1.0)
                 .timestamp(now)
+                .tags(tags)
                 .build();
-        stateStore.setState(rule.getId(), appid, AlertState.FIRING, firstBreachAt, now);
-        stateStore.clearTriggerCount(rule.getId(), appid);
-        log.info("[Alerter] 扫描器触发FIRING - ruleId={}, appid={}, firstBreachAt={}, triggerCount={}",
-                rule.getId(), appid, firstBreachAt, triggerCount);
-        fire(rule, synthetic, now);
+        AlertState recheck = stateStore.getState(rule.getId(), appid);
+        if (recheck != AlertState.PENDING) {
+            log.debug("[Alerter] 扫描器二次校验时状态已变更, 放弃FIRING - ruleId={}, appid={}, current={}",
+                    rule.getId(), appid, recheck);
+            return;
+        }
+        if (stateStore.tryFire(rule.getId(), appid, firstBreachAt, now)) {
+            stateStore.clearTriggerCount(rule.getId(), appid);
+            log.info("[Alerter] 扫描器触发FIRING - ruleId={}, appid={}, firstBreachAt={}, triggerCount={}, metric={}, value={}",
+                    rule.getId(), appid, firstBreachAt, triggerCount, synthetic.getMetricName(), synthetic.getValue());
+            self.fire(rule, synthetic, now);
+        } else {
+            log.debug("[Alerter] 扫描器CAS抢占FIRING失败, 已被实时事件触发 - ruleId={}, appid={}",
+                    rule.getId(), appid);
+        }
     }
 
     private String determineLevel(MetricEvent event, AlertRule rule) {

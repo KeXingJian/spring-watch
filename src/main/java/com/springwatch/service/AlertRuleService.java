@@ -1,5 +1,6 @@
 package com.springwatch.service;
 
+import com.springwatch.alerter.AlertRuleCache;
 import com.springwatch.model.entity.AlertHistory;
 import com.springwatch.model.entity.AlertRule;
 import com.springwatch.model.entity.MonitorApp;
@@ -22,6 +23,7 @@ public class AlertRuleService {
     private final AlertRuleRepository alertRuleRepository;
     private final AlertHistoryRepository alertHistoryRepository;
     private final MonitorAppRepository monitorAppRepository;
+    private final AlertRuleCache ruleCache;
 
     @Transactional
     public AlertRule createRule(Long appid, String ruleName, String ruleType,
@@ -43,6 +45,7 @@ public class AlertRuleService {
                 .build();
 
         AlertRule saved = alertRuleRepository.save(rule);
+        ruleCache.refresh();
         log.info("[spring-watch: 创建告警规则 - appid={}, app={}, rule={}, type={}]",
                 appid, app.getAppName(), ruleName, ruleType);
         return saved;
@@ -88,15 +91,18 @@ public class AlertRuleService {
         if (status != null) {
             rule.setStatus(status);
         }
-        log.info("[spring-watch: 更新告警规则 - id={}, rule={}]", id, rule.getRuleName());
-        return alertRuleRepository.save(rule);
+        AlertRule saved = alertRuleRepository.save(rule);
+        ruleCache.refresh();
+        log.info("[spring-watch: 更新告警规则 - id={}, rule={}]", id, saved.getRuleName());
+        return saved;
     }
 
     @Transactional
     public void deleteRule(Long id) {
         AlertRule rule = getById(id);
-        log.info("[spring-watch: 删除告警规则 - id={}, rule={}]", id, rule.getRuleName());
         alertRuleRepository.delete(rule);
+        ruleCache.refresh();
+        log.info("[spring-watch: 删除告警规则 - id={}, rule={}]", id, rule.getRuleName());
     }
 
     public List<AlertHistory> listAlertHistory(Long appid) {

@@ -50,11 +50,14 @@ spring:
   application:
     name: spring-watch
 
+  config:
+    import: optional:file:.env[.properties]
+
   mail:
     host: smtp.qq.com
     port: 587
     username: 2787901285@qq.com
-    password: xekbwqmunbxedfgc #已失效
+    password: ${MAIL_AUTH_CODE}
     properties:
       mail:
         smtp:

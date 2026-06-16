@@ -27,9 +27,6 @@ public class PendingStateScanner {
     private final AlertRuleRepository ruleRepository;
     private final AsyncAlertExecutor alertExecutor;
 
-    @Value("${spring-watch.alert.scan.enabled:true}")
-    private boolean enabled;
-
     @Value("${spring-watch.alert.scan.batch-size:200}")
     private long batchSize;
 
@@ -39,7 +36,7 @@ public class PendingStateScanner {
     void init() {
         ThreadFactory tf = Thread.ofVirtual().name("pending-scanner-", 0).factory();
         this.scanExecutor = Executors.newSingleThreadExecutor(tf);
-        log.info("[Alerter] PENDING扫描器初始化 - enabled={}, batchSize={}, threadType=virtual", enabled, batchSize);
+        log.info("[Alerter] PENDING扫描器初始化 - batchSize={}, threadType=virtual", batchSize);
     }
 
     @PreDestroy
@@ -63,9 +60,7 @@ public class PendingStateScanner {
      */
     @Scheduled(fixedDelayString = "${spring-watch.alert.scan.interval-ms:5000}")
     public void scan() {
-        if (!enabled) {
-            return;
-        }
+
         if (scanExecutor == null) {
             log.warn("[Alerter] 扫描线程池未初始化, 同步执行");
             doScan();

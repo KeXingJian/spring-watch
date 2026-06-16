@@ -14,6 +14,7 @@ import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
 
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -100,21 +101,29 @@ public class AlertNotifier {
     }
 
     private String sendEmail(String to, AlertRule rule, MetricEvent event, String type) {
+        String[] toArr = Arrays.stream(to.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .toArray(String[]::new);
+        if (toArr.length == 0) {
+            log.warn("[Alerter] 邮件收件人解析为空 - to={}", to);
+            return "{\"status\":\"failed\",\"channel\":\"email\",\"error\":\"empty_recipients\"}";
+        }
         String subject = buildSubject(rule, event, type);
         String body = buildBody(rule, event, type);
-        log.debug("[Alerter] sendEmail - to={}, type={}, subject={}", to, type, subject);
+        log.debug("[Alerter] sendEmail - to={}, type={}, subject={}", Arrays.toString(toArr), type, subject);
         try {
             SimpleMailMessage msg = new SimpleMailMessage();
             msg.setFrom(from);
-            msg.setTo(to);
+            msg.setTo(toArr);
             msg.setSubject(subject);
             msg.setText(body);
             mailSender.send(msg);
             log.info("[Alerter] 邮件发送成功 - to={}, type={}, ruleId={}, appid={}",
-                    to, type, rule.getId(), event.getAppid());
+                    Arrays.toString(toArr), type, rule.getId(), event.getAppid());
             return "{\"status\":\"ok\",\"channel\":\"email\",\"to\":\"" + to + "\"}";
         } catch (Exception e) {
-            log.warn("[Alerter] 邮件发送失败 - to={}, type={}, error={}", to, type, e.getMessage());
+            log.warn("[Alerter] 邮件发送失败 - to={}, type={}, error={}", Arrays.toString(toArr), type, e.getMessage());
             return "{\"status\":\"failed\",\"channel\":\"email\",\"error\":\"" + e.getMessage().replace("\"", "'") + "\"}";
         }
     }

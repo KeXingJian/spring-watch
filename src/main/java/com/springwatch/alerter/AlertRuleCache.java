@@ -41,11 +41,18 @@ public class AlertRuleCache {
     public void refresh() {
         try {
             List<AlertRule> all = repository.findByStatus("enabled");
-            Map<Long, List<AlertRule>> grouped = all.stream()
+            long total = all.size();
+            List<AlertRule> valid = all.stream()
                     .filter(r -> r.getApp() != null && r.getApp().getAppid() != null)
+                    .toList();
+            if (total != valid.size()) {
+                log.warn("[Alerter] 规则缓存过滤了 app/appid 为空的规则 - total={}, kept={}, dropped={}",
+                        total, valid.size(), total - valid.size());
+            }
+            Map<Long, List<AlertRule>> grouped = valid.stream()
                     .collect(Collectors.groupingBy(r -> r.getApp().getAppid()));
             cache.set(grouped);
-            log.debug("[Alerter] 规则缓存刷新 - rules={}, apps={}", all.size(), grouped.size());
+            log.debug("[Alerter] 规则缓存刷新 - rules={}, apps={}", valid.size(), grouped.size());
         } catch (Exception e) {
             log.warn("[Alerter] 规则缓存刷新失败, 继续用旧缓存 - error={}", e.getMessage());
         }
