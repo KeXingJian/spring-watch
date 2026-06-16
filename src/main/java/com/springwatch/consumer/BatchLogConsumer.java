@@ -62,7 +62,6 @@ public class BatchLogConsumer {
                 }
 
 
-
                 logParser.enrich(event, event.getHost(), defaultEnv);
                 sanitizer.mask(event);
                 String fp = fingerprinter.fingerprint(event);

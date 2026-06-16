@@ -21,9 +21,9 @@ public class LogParser {
     /**
      * kxj: 摄入管道-字段补全 host/service/method/env
      */
-    public LogEvent enrich(LogEvent event, String remoteHost, String env) {
+    public void enrich(LogEvent event, String remoteHost, String env) {
         if (event == null) {
-            return null;
+            return;
         }
         if (event.getService() == null && event.getLogger() != null) {
             String logger = event.getLogger();
@@ -49,6 +49,5 @@ public class LogParser {
         if (event.getEnv() == null && env != null) {
             event.setEnv(env);
         }
-        return event;
     }
 }
