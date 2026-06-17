@@ -3,145 +3,165 @@ server:
 
 spring-watch:
   collector:
-    pool-size: 32
-    per-host-concurrent: 4
-    jitter-percent: 10
+    pool-size: 32 # 采集线程池大小
+    per-host-concurrent: 4 # 同一目标主机的最大并发数
+    jitter-percent: 10 # 采集时间抖动百分比（避免雪崩）
+    http:
+      connect-timeout-ms: 3000 # HTTP 连接超时（毫秒）
+      read-timeout-ms: 10000 # HTTP 读取超时（毫秒）
     retry:
-      drainer-count: 2
-      max-attempts: 5
+      drainer-count: 2 # 重试排空线程数
+      max-attempts: 5 # 单次请求最大重试次数
+      max-queue-size: 1000 # 重试队列最大容量
   agent:
-    prometheus-host: 0.0.0.0
+    prometheus-host: 0.0.0.0 # Prometheus Agent 监听地址
   alert:
+    enabled: true # 是否开启告警
     mail:
-      from: 2787901285@qq.com
-      from-name: spring-watch
+      from: 2787901285@qq.com # 发件人邮箱
+      from-name: spring-watch # 发件人显示名称
     state-store:
-      ttl-hours: 24
+      ttl-hours: 24 # 告警状态存储 TTL（小时）
     rule-cache:
-      refresh-interval-ms: 30000
+      refresh-interval-ms: 30000 # 告警规则缓存刷新间隔（毫秒）
     executor:
-      pool-size: 8
+      pool-size: 8 # 告警执行线程池大小
     scan:
-      enabled: true
-      interval-ms: 5000
-      batch-size: 200
+      enabled: true # 是否开启数据库扫描触发告警
+      interval-ms: 5000 # 扫描间隔（毫秒）
+      batch-size: 200 # 每批扫描条数
   kafka:
     fallback-queue:
-      capacity: 50000
-      drain-interval-ms: 5000
-      send-timeout-ms: 2000
-      alert-threshold: 1000
+      capacity: 50000 # 兜底内存队列容量
+      drain-interval-ms: 5000 # 队列排空间隔（毫秒）
+      send-timeout-ms: 2000 # 单条发送超时（毫秒）
+      alert-threshold: 1000 # 积压告警阈值
   log:
-    env: dev
+    env: dev # 当前环境标识（影响链路关联等行为）
     dedup:
-      window-seconds: 60
-      count-ttl-seconds: 3600
+      window-seconds: 60 # 去重窗口（秒）
+      count-ttl-seconds: 3600 # 计数缓存 TTL（秒）
+      flush-interval-ms: 30000 # 计数刷新间隔（毫秒）
+    query:
+      cache-enabled: true # 是否开启查询缓存
+      cache-ttl-seconds: 15 # 查询缓存 TTL（秒）
     anomaly:
-      rate-ttl-seconds: 600
-      pattern-ttl-hours: 168
-      min-base-rate: 0.01
+      rate-ttl-seconds: 600 # 异常率窗口 TTL（秒）
+      pattern-ttl-hours: 168 # 异常模式 TTL（小时）
+      min-base-rate: 0.01 # 触发异常的最小基准率
     alert:
-      error-rate-window-seconds: 60
-      error-rate-interval-ms: 60000
+      error-rate-window-seconds: 60 # 错误率计算窗口（秒）
+      error-rate-interval-ms: 60000 # 错误率计算间隔（毫秒）
     linker:
-      default-metric: jvm_memory_used_bytes
+      default-metric: jvm_memory_used_bytes # 关联时使用的默认指标
 
 spring:
   application:
     name: spring-watch
 
   config:
-    import: optional:file:.env[.properties]
+    import: optional:file:.env[.properties] # 加载外部 .env 属性文件（可选）
 
   mail:
-    host: smtp.qq.com
-    port: 587
-    username: 2787901285@qq.com
-    password: ${MAIL_AUTH_CODE}
+    host: smtp.qq.com # SMTP 服务器地址
+    port: 587 # SMTP 端口
+    username: 2787901285@qq.com # 登录账号
+    password: ${MAIL_AUTH_CODE} # 登录授权码（从环境变量读取）
     properties:
       mail:
         smtp:
-          auth: true
+          auth: true # 启用认证
           starttls:
-            enable: true
-            required: true
-          connectiontimeout: 5000
-          timeout: 5000
-          writetimeout: 5000
+            enable: true # 启用 STARTTLS
+            required: true # 强制要求 STARTTLS
+          connectiontimeout: 5000 # 连接超时（毫秒）
+          timeout: 5000 # 读超时（毫秒）
+          writetimeout: 5000 # 写超时（毫秒）
 
   datasource:
-    url: jdbc:postgresql://localhost:5432/spring_collector
-    username: root
-    password: 123456
-    driver-class-name: org.postgresql.Driver
+    url: jdbc:postgresql://localhost:5432/spring_collector # PostgreSQL JDBC 地址
+    username: root # 数据库账号
+    password: 123456 # 数据库密码
+    driver-class-name: org.postgresql.Driver # JDBC 驱动
 
   jpa:
     hibernate:
-      ddl-auto: none
-    show-sql: false
+      ddl-auto: none # 不由 JPA 维护表结构
+    show-sql: false # 是否打印 SQL
     properties:
       hibernate:
-        dialect: org.hibernate.dialect.PostgreSQLDialect
+        dialect: org.hibernate.dialect.PostgreSQLDialect # Hibernate 方言
 
   kafka:
-    bootstrap-servers: localhost:9092
+    bootstrap-servers: localhost:9092 # Kafka Broker 地址
     consumer:
-      group-id: spring-watch
-      auto-offset-reset: earliest
-      max-poll-records: 500
-      fetch-min-size: 1024
-      fetch-max-wait: 200
-      max-poll-interval-ms: 300000
+      group-id: spring-watch # 消费者组
+      auto-offset-reset: earliest # 偏移量重置策略
+      max-poll-records: 500 # 单次 poll 最大条数
+      fetch-min-size: 1024 # 最小拉取字节数
+      fetch-max-wait: 200 # 拉取最大等待（毫秒）
+      max-poll-interval-ms: 300000 # 两次 poll 最大间隔（毫秒）
     producer:
-      acks: all
-      compression-type: lz4
-      batch-size: 65536
-      linger-ms: 30
-      buffer-memory: 134217728
-      delivery-timeout-ms: 120000
-      request-timeout-ms: 30000
+      acks: all # 副本全部确认
+      compression-type: lz4 # 压缩算法
+      batch-size: 65536 # 批大小（字节）
+      linger-ms: 30 # 批等待时间（毫秒）
+      buffer-memory: 134217728 # 客户端总缓冲（字节，128MB）
+      delivery-timeout-ms: 120000 # 投递总超时（毫秒）
+      request-timeout-ms: 30000 # 单次请求超时（毫秒）
     listener:
-      concurrency: 3
-      poll-timeout: 200
+      concurrency: 3 # 消费者并发数
+      poll-timeout: 200 # poll 超时（毫秒）
     topics:
-      metrics: monitor-metrics
-      logs: monitor-logs
-      heartbeat: monitor-heartbeat
-      metrics-partitions: 12
-      logs-partitions: 6
-      heartbeat-partitions: 3
-      dlq-partitions: 3
-      replication-factor: 1
+      metrics: monitor-metrics # 指标 topic
+      logs: monitor-logs # 日志 topic
+      heartbeat: monitor-heartbeat # 心跳 topic
+      metrics-partitions: 12 # 指标 topic 分区数
+      logs-partitions: 6 # 日志 topic 分区数
+      heartbeat-partitions: 3 # 心跳 topic 分区数
+      dlq-partitions: 3 # 死信队列分区数
+      replication-factor: 1 # 副本因子（单节点环境为 1）
     dlq:
-      retry-max-attempts: 5
-      retry-initial-interval: 200
-      retry-multiplier: 2.0
-      retry-max-interval: 5000
+      retry-max-attempts: 5 # 死信最大重试次数
+      retry-initial-interval: 200 # 初始重试间隔（毫秒）
+      retry-multiplier: 2.0 # 重试间隔倍数
+      retry-max-interval: 5000 # 最大重试间隔（毫秒）
 
   data:
     redis:
-      host: localhost
-      port: 6379
+      host: localhost # Redis 地址
+      port: 6379 # Redis 端口
 
 
 influxdb:
-  url: http://localhost:8086
-  token: sw-token-2024
-  org: spring-watch
-  metrics-bucket: metrics
-  log-bucket: logs
+  url: http://localhost:8086 # InfluxDB 地址
+  token: sw-token-2024 # 访问令牌
+  org: spring-watch # 组织名
+  metrics-bucket: metrics # 原始指标桶
+  log-bucket: logs # 原始日志桶
+  metrics-downsample-bucket: metrics_5m # 5 分钟降采样指标桶
+  log-downsample-bucket: logs_5m # 5 分钟降采样日志桶
+  retention:
+    metrics-seconds: 2592000 # 原始指标保留时长（秒，30 天）
+    log-seconds: 604800 # 原始日志保留时长（秒，7 天）
+    downsample-seconds: 31536000 # 降采样数据保留时长（秒，365 天）
+  downsample:
+    enabled: true # 是否开启降采样
+    every: 5m # 降采样执行频率
+    window: 5m # 降采样窗口大小
+    task-every: 1h # 任务调度频率
   write:
-    batch-size: 1000
-    flush-interval-ms: 1000
-    buffer-limit: 100000
-    retry-interval-ms: 1000
-    max-retries: 3
-    max-retry-delay-ms: 5000
-    max-retry-time-ms: 60000
-    jitter-interval-ms: 200
+    batch-size: 1000 # 每批写入条数
+    flush-interval-ms: 1000 # 刷新间隔（毫秒）
+    buffer-limit: 100000 # 内存缓冲上限
+    retry-interval-ms: 1000 # 写入失败重试间隔（毫秒）
+    max-retries: 3 # 最大重试次数
+    max-retry-delay-ms: 5000 # 单次重试最大延迟（毫秒）
+    max-retry-time-ms: 60000 # 整体重试最大耗时（毫秒）
+    jitter-interval-ms: 200 # 重试抖动（毫秒）
 
 logging:
   level:
-    com.springwatch: debug
+    com.springwatch: debug # 自定义包日志级别
   file:
-    path: ./.log
+    path: ./.log # 日志输出目录

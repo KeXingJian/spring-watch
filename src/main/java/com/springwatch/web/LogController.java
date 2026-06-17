@@ -4,6 +4,8 @@ import com.springwatch.analysis.LogAggregator;
 import com.springwatch.analysis.LogAnomalyDetector;
 import com.springwatch.analysis.LogMetricsLinker;
 import com.springwatch.model.dto.ApiResponse;
+import com.springwatch.model.entity.LogDedupCount;
+import com.springwatch.repository.LogDedupCountRepository;
 import com.springwatch.service.LogQueryService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -28,6 +30,7 @@ public class LogController {
     private final LogAggregator logAggregator;
     private final LogAnomalyDetector anomalyDetector;
     private final LogMetricsLinker metricsLinker;
+    private final LogDedupCountRepository dedupCountRepository;
 
     /**
      * kxj: 关键字检索-message/throwable全文匹配
@@ -109,6 +112,27 @@ public class LogController {
     }
 
     /**
+     * kxj: P0 无上下文查询 - 给定一条日志的 anchor 时间戳,按 thread/host/logger
+     * 任一维度拉取 ±N 秒相邻日志,用于排障"在 Kibana 里看上下文"的场景
+     * 至少传一个 threadName/host/logger,否则拒绝全表扫
+     */
+    @GetMapping("/context")
+    public ApiResponse<List<Map<String, Object>>> context(
+            @RequestParam Long appid,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant anchor,
+            @RequestParam(required = false) String threadName,
+            @RequestParam(required = false) String host,
+            @RequestParam(required = false) String logger,
+            @RequestParam(defaultValue = "30") int before,
+            @RequestParam(defaultValue = "30") int after,
+            @RequestParam(defaultValue = "100") int limit) {
+        log.info("[kxj: LogController context - appid={}, anchor={}, thread={}, host={}, logger={}, ±{}s/{}s]",
+                appid, anchor, threadName, host, logger, before, after);
+        return ApiResponse.ok(logQueryService.getContext(
+                appid, anchor, threadName, host, logger, before, after, limit));
+    }
+
+    /**
      * kxj: 同模式样本-按fingerprint回查
      */
     @GetMapping("/fingerprint/{fingerprint}")
@@ -135,5 +159,19 @@ public class LogController {
 
     public record AnomalyReport(Long appid, LogAggregator.ErrorRateStats stats,
                                  boolean spiking, double multiplier) {
+    }
+
+    /**
+     * kxj: P0 dedup 双写落地 - 从持久化的 log_dedup_count 表查某 appid 的 dedup 计数 Top N
+     * 用于看板上"哪些模式被频繁去重(噪声)"展示
+     */
+    @GetMapping("/dedup/top")
+    public ApiResponse<List<LogDedupCount>> topDedup(
+            @RequestParam Long appid,
+            @RequestParam(defaultValue = "20") int limit) {
+        int safe = limit > 0 && limit <= 200 ? limit : 20;
+        log.debug("[kxj: LogController topDedup - appid={}, limit={}]", appid, safe);
+        return ApiResponse.ok(dedupCountRepository.findByAppidOrderByDedupCountDesc(appid)
+                .stream().limit(safe).toList());
     }
 }

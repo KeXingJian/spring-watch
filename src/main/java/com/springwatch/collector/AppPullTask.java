@@ -11,7 +11,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
-import java.net.HttpURLConnection;
 import java.net.URI;
 import java.time.Instant;
 
@@ -26,6 +25,7 @@ public class AppPullTask {
     private final KafkaProducerBridge kafkaProducerBridge;
     private final HostThrottler hostThrottler;
     private final PullRetryQueue pullRetryQueue;
+    private final AgentHttpClient agentHttpClient;
 
     public void run(Long appid) {
         long start = System.nanoTime();
@@ -129,24 +129,10 @@ public class AppPullTask {
         int port = app.getMetricsPort() != null ? app.getMetricsPort() : 9464;
         String host = extractHost(app);
         String url = "http://" + host + ":" + port + "/metrics";
-        long start = System.nanoTime();
-        try {
-            HttpURLConnection conn = (HttpURLConnection) URI.create(url).toURL().openConnection();
-            conn.setRequestMethod("GET");
-            conn.setConnectTimeout(3000);
-            conn.setReadTimeout(3000);
-            int code = conn.getResponseCode();
-            long costMs = (System.nanoTime() - start) / 1_000_000L;
-            log.debug("[spring-watch: 可达性探测 - appid={}, url={}, status={}, costMs={}]",
-                    app.getAppid(), url, code, costMs);
-            conn.disconnect();
-            return code == 200;
-        } catch (Exception e) {
-            long costMs = (System.nanoTime() - start) / 1_000_000L;
-            log.debug("[spring-watch: Agent端口不可达 - appid={}, app={}, url={}, costMs={}, error={}]",
-                    app.getAppid(), app.getAppName(), url, costMs, e.getMessage());
-            return false;
-        }
+        boolean ok = agentHttpClient.reachable(url, 3000);
+        log.debug("[spring-watch: 可达性探测 - appid={}, url={}, reachable={}]",
+                app.getAppid(), url, ok);
+        return ok;
     }
 
     private String extractHost(MonitorApp app) {

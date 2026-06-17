@@ -6,12 +6,16 @@ import com.influxdb.client.domain.WritePrecision;
 import com.influxdb.client.write.Point;
 import com.influxdb.client.write.WriteParameters;
 import com.springwatch.model.event.MetricEvent;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.ObjectMapper;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -23,6 +27,32 @@ public class BatchMetricConsumer {
     private final WriteApi writeApi;
     private final ObjectMapper objectMapper;
     private final WriteParameters metricsWriteParameters;
+    private final MeterRegistry meterRegistry;
+
+    private Counter receivedCounter;
+    private Counter keptCounter;
+    private Counter parseFailCounter;
+    private Counter writeFailCounter;
+    private Timer writeTimer;
+
+    @jakarta.annotation.PostConstruct
+    void initMetrics() {
+        this.receivedCounter = Counter.builder("spring.watch.consumer.metric.received")
+                .description("指标消费条数")
+                .register(meterRegistry);
+        this.keptCounter = Counter.builder("spring.watch.consumer.metric.kept")
+                .description("指标实际写入 InfluxDB 条数")
+                .register(meterRegistry);
+        this.parseFailCounter = Counter.builder("spring.watch.consumer.metric.parse_fail")
+                .description("指标反序列化失败条数")
+                .register(meterRegistry);
+        this.writeFailCounter = Counter.builder("spring.watch.consumer.metric.write_fail")
+                .description("指标写 InfluxDB 失败次数")
+                .register(meterRegistry);
+        this.writeTimer = Timer.builder("spring.watch.consumer.metric.write")
+                .description("指标批写 InfluxDB 耗时")
+                .register(meterRegistry);
+    }
 
     @KafkaListener(
             topics = "monitor-metrics",
@@ -33,6 +63,7 @@ public class BatchMetricConsumer {
         if (messages == null || messages.isEmpty()) {
             return;
         }
+        receivedCounter.increment(messages.size());
         List<Point> points = new ArrayList<>(messages.size());
         int failed = 0;
         for (String message : messages) {
@@ -41,19 +72,23 @@ public class BatchMetricConsumer {
                 points.add(toPoint(event));
             } catch (Exception e) {
                 failed++;
-                log.warn("[spring-watch: BatchMetricConsumer 反序列化失败 - error={}, payload={}", 
+                parseFailCounter.increment();
+                log.warn("[spring-watch: BatchMetricConsumer 反序列化失败 - error={}, payload={}",
                         e.getMessage(), message);
             }
         }
         if (!points.isEmpty()) {
             try {
+                long start = System.nanoTime();
                 writeApi.writePoints(points, metricsWriteParameters);
-                log.info("[spring-watch: BatchMetricConsumer 写入InfluxDB - size={}, failed={}", 
+                writeTimer.record(Duration.ofNanos(System.nanoTime() - start));
+                keptCounter.increment(points.size());
+                log.info("[spring-watch: BatchMetricConsumer 写入InfluxDB - size={}, failed={}",
                         points.size(), failed);
             } catch (Exception e) {
-                log.error("[spring-watch: BatchMetricConsumer 写InfluxDB失败 - size={}, error={}", 
-                        points.size(), e.getMessage(), e);
-                throw new RuntimeException(e);
+                writeFailCounter.increment();
+                log.error("[spring-watch: BatchMetricConsumer 写InfluxDB失败 - size={}, error={}], 本批丢弃,不重投]",
+                        points.size(), e.getMessage());
             }
         }
     }

@@ -28,7 +28,8 @@ public class AlertRuleService {
     @Transactional
     public AlertRule createRule(Long appid, String ruleName, String ruleType,
                                  String expression, Double thresholdValue, Integer durationSeconds,
-                                 String notifyChannels) {
+                                 String notifyChannels,
+                                 String level, Integer times, String template) {
         MonitorApp app = monitorAppRepository.findByAppid(appid)
                 .orElseThrow(() -> new IllegalArgumentException("应用不存在: appid=" + appid));
 
@@ -40,14 +41,18 @@ public class AlertRuleService {
                 .thresholdValue(thresholdValue)
                 .durationSeconds(durationSeconds != null ? durationSeconds : 60)
                 .notifyChannels(notifyChannels)
+                .level(level != null && !level.isBlank() ? level : "warning")
+                .times(times != null ? times : 1)
+                .template(template)
                 .status("enabled")
                 .createdAt(Instant.now())
                 .build();
 
         AlertRule saved = alertRuleRepository.save(rule);
         ruleCache.refresh();
-        log.info("[spring-watch: 创建告警规则 - appid={}, app={}, rule={}, type={}]",
-                appid, app.getAppName(), ruleName, ruleType);
+        log.info("[spring-watch: 创建告警规则 - appid={}, app={}, rule={}, type={}, level={}, times={}, hasTemplate={}]",
+                appid, app.getAppName(), ruleName, ruleType,
+                rule.getLevel(), rule.getTimes(), rule.getTemplate() != null);
         return saved;
     }
 
@@ -77,7 +82,8 @@ public class AlertRuleService {
 
     @Transactional
     public AlertRule updateRule(Long id, String expression, Double thresholdValue,
-                                 String notifyChannels, String status) {
+                                 String notifyChannels, String status,
+                                 String level, Integer times, String template) {
         AlertRule rule = getById(id);
         if (expression != null) {
             rule.setExpression(expression);
@@ -91,9 +97,20 @@ public class AlertRuleService {
         if (status != null) {
             rule.setStatus(status);
         }
+        if (level != null && !level.isBlank()) {
+            rule.setLevel(level);
+        }
+        if (times != null) {
+            rule.setTimes(times);
+        }
+        if (template != null) {
+            rule.setTemplate(template);
+        }
         AlertRule saved = alertRuleRepository.save(rule);
         ruleCache.refresh();
-        log.info("[spring-watch: 更新告警规则 - id={}, rule={}]", id, saved.getRuleName());
+        log.info("[spring-watch: 更新告警规则 - id={}, rule={}, level={}, times={}, hasTemplate={}]",
+                id, saved.getRuleName(), saved.getLevel(), saved.getTimes(),
+                saved.getTemplate() != null);
         return saved;
     }
 

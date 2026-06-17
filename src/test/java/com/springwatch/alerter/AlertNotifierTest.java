@@ -40,6 +40,7 @@ class AlertNotifierTest {
         when(notifyConfigRepository.findByAppidAndStatus(any(Long.class), eq("enabled")))
                 .thenReturn(Collections.emptyList());
         notifier = new AlertNotifier(mailSender, objectMapper, notifyConfigRepository);
+        org.springframework.test.util.ReflectionTestUtils.setField(notifier, "alertEnabled", true);
     }
 
     @Test

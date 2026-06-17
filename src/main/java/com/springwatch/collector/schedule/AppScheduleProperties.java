@@ -21,5 +21,6 @@ public class AppScheduleProperties {
     public static class Retry {
         private int drainerCount = 2;
         private int maxAttempts = 5;
+        private int maxQueueSize = 1000;
     }
 }

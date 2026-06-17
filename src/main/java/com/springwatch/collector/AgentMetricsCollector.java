@@ -5,10 +5,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.net.HttpURLConnection;
-import java.net.URI;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
@@ -19,60 +15,52 @@ import java.util.Map;
 public class AgentMetricsCollector {
 
     private final KafkaProducerBridge kafkaProducerBridge;
+    private final AgentHttpClient agentHttpClient;
 
     public void collect(MonitorTarget target) {
         String metricsUrl = buildMetricsUrl(target);
-        long start = System.nanoTime();
 
-        try {
-            HttpURLConnection conn = (HttpURLConnection) URI.create(metricsUrl).toURL().openConnection();
-            conn.setRequestMethod("GET");
-            conn.setConnectTimeout(5000);
-            conn.setReadTimeout(10000);
-            int statusCode = conn.getResponseCode();
-            long costMs = (System.nanoTime() - start) / 1_000_000;
-
-            if (statusCode == 200) {
-                BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()));
-                String line;
-                int metricCount = 0;
-
-                while ((line = reader.readLine()) != null) {
-                    if (line.startsWith("#") || line.isBlank()) {
-                        continue;
-                    }
-                    ParsedMetric parsed = parsePrometheusLine(line);
-                    if (parsed != null) {
-                        Map<String, String> tags = new HashMap<>(parsed.tags);
-                        tags.put("source", "java_agent");
-                        tags.put("statusCode", String.valueOf(statusCode));
-
-                        MetricEvent event = MetricEvent.builder()
-                                .appid(target.appid())
-                                .metricName(parsed.name)
-                                .method("agent_pull")
-                                .value(parsed.value)
-                                .timestamp(Instant.now())
-                                .tags(tags)
-                                .build();
-                        kafkaProducerBridge.sendMetric(event);
-                        metricCount++;
-                    }
-                }
-                reader.close();
-                log.info("[spring-watch: Agent拉取成功 - appid={}, app={}, url={}, metrics={}, cost={}ms]",
-                        target.appid(), target.appName(), metricsUrl, metricCount, costMs);
-            } else {
-                log.warn("[spring-watch: Agent拉取非200 - appid={}, app={}, url={}, status={}, cost={}ms]",
-                        target.appid(), target.appName(), metricsUrl, statusCode, costMs);
-            }
-            conn.disconnect();
-
-        } catch (Exception e) {
-            long costMs = (System.nanoTime() - start) / 1_000_000;
-            log.warn("[spring-watch: Agent拉取失败 - appid={}, app={}, url={}, error={}, cost={}ms]",
-                    target.appid(), target.appName(), metricsUrl, e.getMessage(), costMs);
+        AgentHttpClient.Result result = agentHttpClient.get(metricsUrl);
+        if (!result.isOk()) {
+            log.warn("[spring-watch: Agent拉取失败 - appid={}, app={}, url={}, error={}]",
+                    target.appid(), target.appName(), metricsUrl, result.error());
+            return;
         }
+        if (result.status() != 200) {
+            log.warn("[spring-watch: Agent拉取非200 - appid={}, app={}, url={}, status={}]",
+                    target.appid(), target.appName(), metricsUrl, result.status());
+            return;
+        }
+        String body = result.body();
+        if (body == null || body.isEmpty()) {
+            return;
+        }
+        int metricCount = 0;
+        for (String line : body.split("\\R")) {
+            if (line.isBlank() || line.startsWith("#")) {
+                continue;
+            }
+            ParsedMetric parsed = parsePrometheusLine(line);
+            if (parsed == null) {
+                continue;
+            }
+            Map<String, String> tags = new HashMap<>(parsed.tags);
+            tags.put("source", "java_agent");
+            tags.put("statusCode", String.valueOf(result.status()));
+
+            MetricEvent event = MetricEvent.builder()
+                    .appid(target.appid())
+                    .metricName(parsed.name)
+                    .method("agent_pull")
+                    .value(parsed.value)
+                    .timestamp(Instant.now())
+                    .tags(tags)
+                    .build();
+            kafkaProducerBridge.sendMetric(event);
+            metricCount++;
+        }
+        log.info("[spring-watch: Agent拉取成功 - appid={}, app={}, url={}, metrics={}]",
+                target.appid(), target.appName(), metricsUrl, metricCount);
     }
 
     private String buildMetricsUrl(MonitorTarget target) {
@@ -83,7 +71,22 @@ public class AgentMetricsCollector {
                 ? target.endpoint().substring(0, target.endpoint().length() - 1)
                 : target.endpoint();
         String host = base.replaceFirst(":\\d+", "");
-        return host + ":" + target.metricsPort() + "/metrics";
+        return normalizeBaseUrl(host) + ":" + target.metricsPort() + "/metrics";
+    }
+
+    /**
+     * kxj: 统一补全 scheme - endpoint 可能是 "host:port" 或 "http://host:port",
+     * 喂给 HttpClient 之前必须保证有 scheme,否则报 "invalid URI scheme"
+     */
+    private static String normalizeBaseUrl(String hostOrUrl) {
+        if (hostOrUrl == null || hostOrUrl.isBlank()) {
+            return "http://localhost";
+        }
+        String lower = hostOrUrl.toLowerCase();
+        if (lower.startsWith("http://") || lower.startsWith("https://")) {
+            return hostOrUrl;
+        }
+        return "http://" + hostOrUrl;
     }
 
     ParsedMetric parsePrometheusLine(String line) {

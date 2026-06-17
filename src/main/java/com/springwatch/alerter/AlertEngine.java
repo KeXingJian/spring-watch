@@ -8,6 +8,7 @@ import com.springwatch.model.event.MetricEvent;
 import com.springwatch.repository.AlertHistoryRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -21,6 +22,9 @@ import java.util.Map;
 @Slf4j
 @Component
 public class AlertEngine {
+
+    @Value("${spring-watch.alert.enabled:true}")
+    private boolean alertEnabled;
 
     private final AlertEvaluator evaluator;
     private final AlertStateStore stateStore;
@@ -52,6 +56,11 @@ public class AlertEngine {
     }
 
     public void process(MetricEvent event) {
+        if (!alertEnabled) {
+            log.trace("[Alerter] process(MetricEvent) 跳过 - alert.enabled=false, appid={}",
+                    event != null ? event.getAppid() : null);
+            return;
+        }
         if (event == null || event.getAppid() == null) {
             log.debug("[Alerter] process(MetricEvent) 跳过 - event={}", event);
             return;
@@ -87,6 +96,11 @@ public class AlertEngine {
      * kxj: 日志规则评估入口-处理log_keyword/log_new_pattern两类规则
      */
     public void process(LogEvent event) {
+        if (!alertEnabled) {
+            log.trace("[Alerter] process(LogEvent) 跳过 - alert.enabled=false, appid={}",
+                    event != null ? event.getAppid() : null);
+            return;
+        }
         if (event == null || event.getAppid() == null) {
             log.debug("[Alerter] process(LogEvent) 跳过 - event={}", event);
             return;
@@ -334,6 +348,9 @@ public class AlertEngine {
      * 必须在虚拟线程池内调用,避免阻塞扫描器
      */
     public void fireFromScanner(AlertRule rule, Long appid, Instant firstBreachAt, long triggerCount, Instant now) {
+        if (!alertEnabled) {
+            return;
+        }
         if (rule == null || appid == null) {
             return;
         }

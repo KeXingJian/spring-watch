@@ -1,14 +1,18 @@
 package com.springwatch.analysis;
 
-import com.influxdb.client.InfluxDBClient;
 import com.influxdb.client.QueryApi;
 import com.influxdb.query.FluxRecord;
 import com.influxdb.query.FluxTable;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -18,13 +22,47 @@ import java.util.List;
 @RequiredArgsConstructor
 public class LogAggregator {
 
-    private final InfluxDBClient influxDBClient;
+    private final QueryApi queryApi;
+    private final MeterRegistry meterRegistry;
 
     @Value("${influxdb.log-bucket}")
     private String logBucket;
 
     @Value("${influxdb.org}")
     private String influxOrg;
+
+    private Counter errorRateQueryCounter;
+    private Counter topPatternsQueryCounter;
+    private Counter errorRateSeriesQueryCounter;
+    private Counter queryFailCounter;
+    private Timer errorRateTimer;
+    private Timer topPatternsTimer;
+    private Timer errorRateSeriesTimer;
+
+    @PostConstruct
+    void initMetrics() {
+        this.errorRateQueryCounter = Counter.builder("spring.watch.aggregator.log.error_rate.query")
+                .description("错误率聚合查询次数")
+                .register(meterRegistry);
+        this.topPatternsQueryCounter = Counter.builder("spring.watch.aggregator.log.top_patterns.query")
+                .description("TopN 模式查询次数")
+                .register(meterRegistry);
+        this.errorRateSeriesQueryCounter = Counter.builder("spring.watch.aggregator.log.error_rate_series.query")
+                .description("错误率时序查询次数")
+                .register(meterRegistry);
+        this.queryFailCounter = Counter.builder("spring.watch.aggregator.log.query_fail")
+                .description("InfluxDB 查询失败次数")
+                .register(meterRegistry);
+        this.errorRateTimer = Timer.builder("spring.watch.aggregator.log.error_rate.latency")
+                .description("错误率聚合查询耗时")
+                .register(meterRegistry);
+        this.topPatternsTimer = Timer.builder("spring.watch.aggregator.log.top_patterns.latency")
+                .description("TopN 模式查询耗时")
+                .register(meterRegistry);
+        this.errorRateSeriesTimer = Timer.builder("spring.watch.aggregator.log.error_rate_series.latency")
+                .description("错误率时序查询耗时")
+                .register(meterRegistry);
+    }
 
     /**
      * kxj: 错误率聚合-某appid指定窗口内的total/error/warn计数
@@ -44,8 +82,9 @@ public class LogAggregator {
         long total = 0;
         long error = 0;
         long warn = 0;
+        errorRateQueryCounter.increment();
+        long start = System.nanoTime();
         try {
-            QueryApi queryApi = influxDBClient.getQueryApi();
             List<FluxTable> tables = queryApi.query(flux, influxOrg);
             for (FluxTable t : tables) {
                 for (FluxRecord r : t.getRecords()) {
@@ -65,7 +104,10 @@ public class LogAggregator {
                 }
             }
         } catch (Exception e) {
+            queryFailCounter.increment();
             log.warn("[spring-watch: LogAggregator errorRate查询失败 - appid={}, error={}]", appid, e.getMessage());
+        } finally {
+            errorRateTimer.record(Duration.ofNanos(System.nanoTime() - start));
         }
         double rate = total == 0 ? 0.0 : (double) error / total;
         log.debug("[spring-watch: LogAggregator errorRate - appid={}, total={}, error={}, warn={}, rate={}]",
@@ -93,8 +135,9 @@ public class LogAggregator {
                 """, logBucket, from, to, appid, safeTop);
 
         List<PatternStats> result = new ArrayList<>();
+        topPatternsQueryCounter.increment();
+        long start = System.nanoTime();
         try {
-            QueryApi queryApi = influxDBClient.getQueryApi();
             List<FluxTable> tables = queryApi.query(flux, influxOrg);
             for (FluxTable t : tables) {
                 for (FluxRecord r : t.getRecords()) {
@@ -111,8 +154,11 @@ public class LogAggregator {
                 }
             }
         } catch (Exception e) {
+            queryFailCounter.increment();
             log.warn("[spring-watch: LogAggregator topPatterns查询失败 - appid={}, error={}]",
                     appid, e.getMessage());
+        } finally {
+            topPatternsTimer.record(Duration.ofNanos(System.nanoTime() - start));
         }
         log.debug("[spring-watch: LogAggregator topPatterns - appid={}, topN={}, returned={}]",
                 appid, safeTop, result.size());
@@ -136,8 +182,9 @@ public class LogAggregator {
                 """, logBucket, from, to, appid, window);
 
         List<ErrorRatePoint> series = new ArrayList<>();
+        errorRateSeriesQueryCounter.increment();
+        long start = System.nanoTime();
         try {
-            QueryApi queryApi = influxDBClient.getQueryApi();
             List<FluxTable> tables = queryApi.query(flux, influxOrg);
             for (FluxTable t : tables) {
                 for (FluxRecord r : t.getRecords()) {
@@ -150,8 +197,10 @@ public class LogAggregator {
                 }
             }
         } catch (Exception e) {
-            log.warn("[spring-watch: LogAggregator errorRateSeries查询失败 - appid={}, error={}]",
-                    appid, e.getMessage());
+            queryFailCounter.increment();
+            log.warn("[spring-watch: LogAggregator errorRateSeries查询失败 - appid={}, error={}]", appid, e.getMessage());
+        } finally {
+            errorRateSeriesTimer.record(Duration.ofNanos(System.nanoTime() - start));
         }
         log.debug("[spring-watch: LogAggregator errorRateSeries - appid={}, points={}]", appid, series.size());
         return series;

@@ -24,6 +24,9 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class AlertNotifier {
 
+    @Value("${spring-watch.alert.enabled:true}")
+    private boolean alertEnabled;
+
     private final JavaMailSender mailSender;
     private final ObjectMapper objectMapper;
     private final AlertNotificationConfigRepository notifyConfigRepository;
@@ -37,6 +40,11 @@ public class AlertNotifier {
     private static final String INVALID_CHANNELS_MARKER = "__INVALID_CHANNELS__";
 
     public String notify(AlertRule rule, MetricEvent event, String type) {
+        if (!alertEnabled) {
+            log.debug("[Alerter] notify 跳过 - alert.enabled=false, ruleId={}, appid={}",
+                    rule != null ? rule.getId() : null, event.getAppid());
+            return "{\"status\":\"skipped\",\"reason\":\"alert_disabled\"}";
+        }
         log.debug("[Alerter] notify 入口 - ruleId={}, appid={}, type={}", rule.getId(), event.getAppid(), type);
         String email = resolveEmail(rule, event);
         if (INVALID_CHANNELS_MARKER.equals(email)) {

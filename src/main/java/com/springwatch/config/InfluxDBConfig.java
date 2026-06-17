@@ -2,6 +2,7 @@ package com.springwatch.config;
 
 import com.influxdb.client.InfluxDBClient;
 import com.influxdb.client.InfluxDBClientFactory;
+import com.influxdb.client.QueryApi;
 import com.influxdb.client.WriteApi;
 import com.influxdb.client.WriteOptions;
 import com.influxdb.client.domain.WritePrecision;
@@ -56,7 +57,7 @@ public class InfluxDBConfig {
     @Value("${influxdb.write.jitter-interval-ms:200}")
     private int writeJitterIntervalMs;
 
-    @Bean
+    @Bean(destroyMethod = "close")
     public InfluxDBClient influxDBClient() {
         log.info("[spring-watch: InfluxDBClient 初始化 - url={}, org={}]",
                 url, influxOrg);
@@ -89,5 +90,15 @@ public class InfluxDBConfig {
                 writeBatchSize, writeFlushIntervalMs, writeBufferLimit,
                 writeMaxRetries, writeMaxRetryTimeMs);
         return client.makeWriteApi(options);
+    }
+
+    /**
+     * kxj: 共享 QueryApi 池 - InfluxDBClient.getQueryApi() 内部基于 OkHttp/Retrofit 共享连接池,
+     * 反复 getQueryApi() 仅新建轻量包装,但统一单例更利于连接复用与监控埋点
+     */
+    @Bean
+    public QueryApi queryApi(InfluxDBClient client) {
+        log.info("[spring-watch: QueryApi 初始化(单例共享) - org={}]", influxOrg);
+        return client.getQueryApi();
     }
 }
