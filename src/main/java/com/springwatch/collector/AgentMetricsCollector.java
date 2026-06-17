@@ -6,8 +6,11 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
+import java.util.AbstractMap;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Objects;
 
 @Slf4j
 @Component
@@ -35,32 +38,32 @@ public class AgentMetricsCollector {
         if (body == null || body.isEmpty()) {
             return;
         }
-        int metricCount = 0;
-        for (String line : body.split("\\R")) {
-            if (line.isBlank() || line.startsWith("#")) {
-                continue;
-            }
-            ParsedMetric parsed = parsePrometheusLine(line);
-            if (parsed == null) {
-                continue;
-            }
-            Map<String, String> tags = new HashMap<>(parsed.tags);
-            tags.put("source", "java_agent");
-            tags.put("statusCode", String.valueOf(result.status()));
-
-            MetricEvent event = MetricEvent.builder()
-                    .appid(target.appid())
-                    .metricName(parsed.name)
-                    .method("agent_pull")
-                    .value(parsed.value)
-                    .timestamp(Instant.now())
-                    .tags(tags)
-                    .build();
-            kafkaProducerBridge.sendMetric(event);
-            metricCount++;
-        }
+        long[] metricCount = {0}; //TODO 咱们java非闭包是这样的
+        body.lines()
+                .filter(line -> !line.isBlank() && !line.startsWith("#"))
+                .map(this::parsePrometheusLine)
+                .filter(Objects::nonNull)
+                .map(parsed -> toMetricEvent(target, parsed, result.status()))
+                .forEach(event -> {
+                    kafkaProducerBridge.sendMetric(event);
+                    metricCount[0]++;
+                });
         log.info("[spring-watch: Agent拉取成功 - appid={}, app={}, url={}, metrics={}]",
-                target.appid(), target.appName(), metricsUrl, metricCount);
+                target.appid(), target.appName(), metricsUrl, metricCount[0]);
+    }
+
+    private MetricEvent toMetricEvent(MonitorTarget target, ParsedMetric parsed, int status) {
+        Map<String, String> tags = new HashMap<>(parsed.tags);
+        tags.put("source", "java_agent");
+        tags.put("statusCode", String.valueOf(status));
+        return MetricEvent.builder()
+                .appid(target.appid())
+                .metricName(parsed.name)
+                .method("agent_pull")
+                .value(parsed.value)
+                .timestamp(Instant.now())
+                .tags(tags)
+                .build();
     }
 
     private String buildMetricsUrl(MonitorTarget target) {
@@ -108,17 +111,10 @@ public class AgentMetricsCollector {
             if (braceStart > 0 && braceEnd > braceStart) {
                 metricName = metricAndTags.substring(0, braceStart);
                 String tagsStr = metricAndTags.substring(braceStart + 1, braceEnd);
-                for (String pair : tagsStr.split(",")) {
-                    int eqIdx = pair.indexOf('=');
-                    if (eqIdx > 0) {
-                        String key = pair.substring(0, eqIdx).trim();
-                        String val = pair.substring(eqIdx + 1).trim();
-                        if (val.startsWith("\"") && val.endsWith("\"")) {
-                            val = val.substring(1, val.length() - 1);
-                        }
-                        tags.put(key, val);
-                    }
-                }
+                Arrays.stream(tagsStr.split(","))
+                        .map(AgentMetricsCollector::parseTagPair)
+                        .filter(Objects::nonNull)
+                        .forEach(e -> tags.put(e.getKey(), e.getValue()));
             } else {
                 metricName = metricAndTags;
             }
@@ -132,4 +128,15 @@ public class AgentMetricsCollector {
 
     public record ParsedMetric(String name, Map<String, String> tags, double value) {}
     public record MonitorTarget(Long appid, String appName, String endpoint, Integer metricsPort) {}
+
+    private static AbstractMap.SimpleEntry<String, String> parseTagPair(String pair) {
+        int eqIdx = pair.indexOf('=');
+        if (eqIdx <= 0) return null;
+        String key = pair.substring(0, eqIdx).trim();
+        String val = pair.substring(eqIdx + 1).trim();
+        if (val.startsWith("\"") && val.endsWith("\"")) {
+            val = val.substring(1, val.length() - 1);
+        }
+        return new AbstractMap.SimpleEntry<>(key, val);
+    }
 }

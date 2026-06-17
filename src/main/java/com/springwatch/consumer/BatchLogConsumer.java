@@ -142,10 +142,10 @@ public class BatchLogConsumer {
             log.info("[spring-watch: BatchLogConsumer 全部丢弃 - total={}, deduped={}, failed={}]",
                     messages.size(), deduped, failed);
         }
-        for (LogEvent candidate : alertCandidates) {
+        alertCandidates.forEach(candidate -> {
             alertExecutor.submit(candidate);
             alertCandidateCounter.increment();
-        }
+        });
     }
 
     private Point toPoint(LogEvent event) {

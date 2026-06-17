@@ -46,33 +46,37 @@ public class LogAlertScheduler {
         log.debug("[spring-watch: LogAlertScheduler 加载规则 - rules={}", rules.size());
         Instant now = Instant.now();
         Instant from = now.minusSeconds(windowSeconds);
-        int submitted = 0;
-        for (AlertRule rule : rules) {
-            try {
-                if (rule.getApp() == null || rule.getApp().getAppid() == null) {
-                    continue;
-                }
-                long appid = rule.getApp().getAppid();
-                LogAggregator.ErrorRateStats stats = aggregator.errorRate(appid, from, now);
-                double percent = stats.errorRate() * 100.0;
-                MetricEvent synthetic = MetricEvent.builder()
-                        .appid(appid)
-                        .metricName("log_error_rate")
-                        .value(percent)
-                        .timestamp(now)
-                        .build();
-                alertExecutor.submit(synthetic);
-                submitted++;
-                log.debug("[spring-watch: LogAlertScheduler 规则评估提交 - ruleId={}, appid={}, percent={}, threshold={}]",
-                        rule.getId(), appid, percent, rule.getThresholdValue());
-            } catch (Exception e) {
-                log.warn("[spring-watch: LogAlertScheduler 规则评估异常 - ruleId={}, error={}]",
-                        rule.getId(), e.getMessage());
-            }
-        }
+        long submitted = rules.stream()
+                .filter(rule -> rule.getApp() != null && rule.getApp().getAppid() != null)
+                .mapToLong(rule -> {
+                    try {
+                        submitErrorRate(rule, from, now);
+                        return 1L;
+                    } catch (Exception e) {
+                        log.warn("[spring-watch: LogAlertScheduler 规则评估异常 - ruleId={}, error={}]",
+                                rule.getId(), e.getMessage());
+                        return 0L;
+                    }
+                })
+                .sum();
         if (submitted > 0) {
             log.info("[spring-watch: LogAlertScheduler 评估完成 - rules={}, submitted={}, window={}s]",
                     rules.size(), submitted, windowSeconds);
         }
+    }
+
+    private void submitErrorRate(AlertRule rule, Instant from, Instant now) {
+        long appid = rule.getApp().getAppid();
+        LogAggregator.ErrorRateStats stats = aggregator.errorRate(appid, from, now);
+        double percent = stats.errorRate() * 100.0;
+        MetricEvent synthetic = MetricEvent.builder()
+                .appid(appid)
+                .metricName("log_error_rate")
+                .value(percent)
+                .timestamp(now)
+                .build();
+        alertExecutor.submit(synthetic);
+        log.debug("[spring-watch: LogAlertScheduler 规则评估提交 - ruleId={}, appid={}, percent={}, threshold={}]",
+                rule.getId(), appid, percent, rule.getThresholdValue());
     }
 }

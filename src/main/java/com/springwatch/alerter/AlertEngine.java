@@ -73,22 +73,27 @@ public class AlertEngine {
         }
         log.trace("[Alerter] process(MetricEvent) 命中规则 - appid={}, metric={}, value={}, rules={}",
                 event.getAppid(), event.getMetricName(), event.getValue(), rules.size());
-        for (AlertRule rule : rules) {
-            String type = rule.getRuleType();
-            if (!"metric".equals(type) && !"log_error_rate".equals(type)) {
-                continue;
-            }
-            if ("log_error_rate".equals(type) && !"log_error_rate".equals(event.getMetricName())) {
-                continue;
-            }
-            try {
-                log.debug("[Alerter] 规则评估开始 - ruleId={}, appid={}, type={}, metric={}, value={}",
-                        rule.getId(), event.getAppid(), type, event.getMetricName(), event.getValue());
-                evaluateRule(rule, event);
-            } catch (Exception e) {
-                log.warn("[Alerter] 规则评估异常 - ruleId={}, appid={}, error={}",
-                        rule.getId(), event.getAppid(), e.getMessage(), e);
-            }
+        rules.stream()
+                .filter(rule -> isApplicableMetricRule(rule, event))
+                .forEach(rule -> evaluateRuleSafely(rule, event));
+    }
+
+    private boolean isApplicableMetricRule(AlertRule rule, MetricEvent event) {
+        String type = rule.getRuleType();
+        if (!"metric".equals(type) && !"log_error_rate".equals(type)) {
+            return false;
+        }
+        return !"log_error_rate".equals(type) || "log_error_rate".equals(event.getMetricName());
+    }
+
+    private void evaluateRuleSafely(AlertRule rule, MetricEvent event) {
+        try {
+            log.debug("[Alerter] 规则评估开始 - ruleId={}, appid={}, type={}, metric={}, value={}",
+                    rule.getId(), event.getAppid(), rule.getRuleType(), event.getMetricName(), event.getValue());
+            evaluateRule(rule, event);
+        } catch (Exception e) {
+            log.warn("[Alerter] 规则评估异常 - ruleId={}, appid={}, error={}",
+                    rule.getId(), event.getAppid(), e.getMessage(), e);
         }
     }
 
@@ -113,19 +118,22 @@ public class AlertEngine {
         }
         log.trace("[Alerter] process(LogEvent) 命中规则 - appid={}, fingerprint={}, level={}, rules={}",
                 event.getAppid(), event.getFingerprint(), event.getLevel(), rules.size());
-        for (AlertRule rule : rules) {
-            String type = rule.getRuleType();
-            if (!"log_keyword".equals(type) && !"log_new_pattern".equals(type)) {
-                continue;
-            }
-            try {
-                log.debug("[Alerter] 日志规则评估开始 - ruleId={}, appid={}, type={}, fingerprint={}",
-                        rule.getId(), event.getAppid(), type, event.getFingerprint());
-                evaluateLogRule(rule, event);
-            } catch (Exception e) {
-                log.warn("[Alerter] 日志规则评估异常 - ruleId={}, appid={}, error={}",
-                        rule.getId(), event.getAppid(), e.getMessage(), e);
-            }
+        rules.stream()
+                .filter(rule -> {
+                    String type = rule.getRuleType();
+                    return "log_keyword".equals(type) || "log_new_pattern".equals(type);
+                })
+                .forEach(rule -> evaluateLogRuleSafely(rule, event));
+    }
+
+    private void evaluateLogRuleSafely(AlertRule rule, LogEvent event) {
+        try {
+            log.debug("[Alerter] 日志规则评估开始 - ruleId={}, appid={}, type={}, fingerprint={}",
+                    rule.getId(), event.getAppid(), rule.getRuleType(), event.getFingerprint());
+            evaluateLogRule(rule, event);
+        } catch (Exception e) {
+            log.warn("[Alerter] 日志规则评估异常 - ruleId={}, appid={}, error={}",
+                    rule.getId(), event.getAppid(), e.getMessage(), e);
         }
     }
 

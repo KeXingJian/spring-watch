@@ -19,6 +19,7 @@ import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -251,19 +252,20 @@ public class LogQueryService {
         }
 
         List<Map<String, Object>> results = new ArrayList<>();
-        for (FluxTable table : tables) {
-            for (FluxRecord record : table.getRecords()) {
-                Map<String, Object> row = new LinkedHashMap<>();
-                row.put("time", record.getTime());
-                record.getValues().forEach((k, v) -> {
-                    if (k.startsWith("_") || "result".equals(k) || "table".equals(k)) {
-                        return;
-                    }
-                    row.put(k, v);
-                });
-                results.add(row);
-            }
-        }
+        tables.stream()
+                .flatMap(table -> table.getRecords().stream())
+                .map(record -> {
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    row.put("time", record.getTime());
+                    record.getValues().forEach((k, v) -> {
+                        if (k.startsWith("_") || "result".equals(k) || "table".equals(k)) {
+                            return;
+                        }
+                        row.put(k, v);
+                    });
+                    return row;
+                })
+                .forEach(results::add);
         log.info("[spring-watch: InfluxDB查询完成 - rows={}]", results.size());
         return results;
     }
@@ -306,13 +308,7 @@ public class LogQueryService {
         try {
             MessageDigest md = MessageDigest.getInstance("SHA-1");
             byte[] bytes = md.digest(input.getBytes(StandardCharsets.UTF_8));
-            StringBuilder hex = new StringBuilder(bytes.length * 2);
-            for (byte b : bytes) {
-                String h = Integer.toHexString(b & 0xff);
-                if (h.length() == 1) hex.append('0');
-                hex.append(h);
-            }
-            return hex.toString();
+            return HexFormat.of().formatHex(bytes);
         } catch (Exception e) {
             return Integer.toHexString(input.hashCode());
         }

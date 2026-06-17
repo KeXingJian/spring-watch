@@ -7,6 +7,7 @@ import org.springframework.stereotype.Component;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 import java.util.regex.Pattern;
 
 @Slf4j
@@ -83,15 +84,7 @@ public class LogFingerprinter {
         try {
             MessageDigest md = MessageDigest.getInstance("SHA-1");
             byte[] bytes = md.digest(input.getBytes(StandardCharsets.UTF_8));
-            StringBuilder hex = new StringBuilder(bytes.length * 2);
-            for (byte b : bytes) {
-                String h = Integer.toHexString(b & 0xff);
-                if (h.length() == 1) {
-                    hex.append('0');
-                }
-                hex.append(h);
-            }
-            return hex.toString();
+            return HexFormat.of().formatHex(bytes);
         } catch (NoSuchAlgorithmException e) {
             log.warn("[spring-watch: LogFingerprinter SHA-1 不可用 - error={}]", e.getMessage());
             return Integer.toHexString(input.hashCode());

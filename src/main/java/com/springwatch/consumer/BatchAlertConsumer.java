@@ -44,7 +44,6 @@ public class BatchAlertConsumer {
                     }
                     continue;
                 }
-//                log.warn("{},{}",event.getMetricName(),event.getTags());
                 executor.submit(event);
                 submitted++;
             } catch (Exception e) {

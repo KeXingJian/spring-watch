@@ -69,12 +69,8 @@ public class CollectScheduleRegistry implements ApplicationRunner {
         log.info("[spring-watch: 启动加载全部应用开始]");
         List<MonitorApp> allApps = repository.findAll();
         log.info("[spring-watch: 启动加载全部应用 - dbCount={}]", allApps.size());
-        int registered = 0;
-        for (MonitorApp app : allApps) {
-            upsert(app);
-            registered++;
-        }
-        log.info("[spring-watch: 启动加载完成 - 已注册任务数={}/{}]", registered, allApps.size());
+        allApps.forEach(this::upsert);
+        log.info("[spring-watch: 启动加载完成 - 已注册任务数={}/{}]", allApps.size(), allApps.size());
     }
 
     public synchronized void upsert(MonitorApp app) {

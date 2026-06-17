@@ -16,6 +16,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicLong;
 
 @Slf4j
 @Component
@@ -79,40 +80,40 @@ public class LogAggregator {
                   |> count()
                 """, logBucket, from, to, appid);
 
-        long total = 0;
-        long error = 0;
-        long warn = 0;
+        AtomicLong total = new AtomicLong();
+        AtomicLong error = new AtomicLong();
+        AtomicLong warn = new AtomicLong();
         errorRateQueryCounter.increment();
         long start = System.nanoTime();
         try {
             List<FluxTable> tables = queryApi.query(flux, influxOrg);
-            for (FluxTable t : tables) {
-                for (FluxRecord r : t.getRecords()) {
-                    Object value = r.getValue();
-                    if (!(value instanceof Number)) {
-                        continue;
-                    }
-                    long cnt = ((Number) value).longValue();
-                    total += cnt;
-                    Object levelObj = r.getValueByKey("level");
-                    String level = levelObj == null ? "" : levelObj.toString();
-                    if ("ERROR".equals(level)) {
-                        error += cnt;
-                    } else if ("WARN".equals(level)) {
-                        warn += cnt;
-                    }
-                }
-            }
+            tables.stream()
+                    .flatMap(t -> t.getRecords().stream())
+                    .filter(r -> r.getValue() instanceof Number)
+                    .forEach(r -> {
+                        long cnt = ((Number) r.getValue()).longValue();
+                        total.addAndGet(cnt);
+                        Object levelObj = r.getValueByKey("level");
+                        String level = levelObj == null ? "" : levelObj.toString();
+                        if ("ERROR".equals(level)) {
+                            error.addAndGet(cnt);
+                        } else if ("WARN".equals(level)) {
+                            warn.addAndGet(cnt);
+                        }
+                    });
         } catch (Exception e) {
             queryFailCounter.increment();
             log.warn("[spring-watch: LogAggregator errorRate查询失败 - appid={}, error={}]", appid, e.getMessage());
         } finally {
             errorRateTimer.record(Duration.ofNanos(System.nanoTime() - start));
         }
-        double rate = total == 0 ? 0.0 : (double) error / total;
+        long totalVal = total.get();
+        long errorVal = error.get();
+        long warnVal = warn.get();
+        double rate = totalVal == 0 ? 0.0 : (double) errorVal / totalVal;
         log.debug("[spring-watch: LogAggregator errorRate - appid={}, total={}, error={}, warn={}, rate={}]",
-                appid, total, error, warn, rate);
-        return new ErrorRateStats(total, error, warn, rate);
+                appid, totalVal, errorVal, warnVal, rate);
+        return new ErrorRateStats(totalVal, errorVal, warnVal, rate);
     }
 
     /**
@@ -139,20 +140,18 @@ public class LogAggregator {
         long start = System.nanoTime();
         try {
             List<FluxTable> tables = queryApi.query(flux, influxOrg);
-            for (FluxTable t : tables) {
-                for (FluxRecord r : t.getRecords()) {
-                    Object value = r.getValue();
-                    if (!(value instanceof Number)) {
-                        continue;
-                    }
-                    long count = ((Number) value).longValue();
-                    Object fp = r.getValueByKey("fingerprint");
-                    result.add(new PatternStats(
-                            fp == null ? "unknown" : fp.toString(),
-                            null,
-                            count));
-                }
-            }
+            tables.stream()
+                    .flatMap(t -> t.getRecords().stream())
+                    .filter(r -> r.getValue() instanceof Number)
+                    .map(r -> {
+                        long count = ((Number) r.getValue()).longValue();
+                        Object fp = r.getValueByKey("fingerprint");
+                        return new PatternStats(
+                                fp == null ? "unknown" : fp.toString(),
+                                null,
+                                count);
+                    })
+                    .forEach(result::add);
         } catch (Exception e) {
             queryFailCounter.increment();
             log.warn("[spring-watch: LogAggregator topPatterns查询失败 - appid={}, error={}]",
@@ -186,16 +185,16 @@ public class LogAggregator {
         long start = System.nanoTime();
         try {
             List<FluxTable> tables = queryApi.query(flux, influxOrg);
-            for (FluxTable t : tables) {
-                for (FluxRecord r : t.getRecords()) {
-                    Instant time = r.getTime();
-                    Object value = r.getValue();
-                    long cnt = value instanceof Number ? ((Number) value).longValue() : 0L;
-                    Object levelObj = r.getValueByKey("level");
-                    String level = levelObj == null ? "" : levelObj.toString();
-                    series.add(new ErrorRatePoint(time, level, cnt));
-                }
-            }
+            tables.stream()
+                    .flatMap(t -> t.getRecords().stream())
+                    .map(r -> {
+                        Object value = r.getValue();
+                        long cnt = value instanceof Number ? ((Number) value).longValue() : 0L;
+                        Object levelObj = r.getValueByKey("level");
+                        String level = levelObj == null ? "" : levelObj.toString();
+                        return new ErrorRatePoint(r.getTime(), level, cnt);
+                    })
+                    .forEach(series::add);
         } catch (Exception e) {
             queryFailCounter.increment();
             log.warn("[spring-watch: LogAggregator errorRateSeries查询失败 - appid={}, error={}]", appid, e.getMessage());

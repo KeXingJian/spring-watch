@@ -57,15 +57,16 @@ public class LogMetricsLinker {
         try {
             QueryApi queryApi = influxDBClient.getQueryApi();
             List<FluxTable> tables = queryApi.query(flux, influxOrg);
-            for (FluxTable t : tables) {
-                for (FluxRecord r : t.getRecords()) {
-                    Object value = r.getValue();
-                    if (value instanceof Number) {
-                        result = ((Number) value).doubleValue();
-                        log.debug("[spring-watch: LogMetricsLinker 指标均值 - appid={}, metric={}, mean={}", appid, metricName, result);
-                        return result;
-                    }
-                }
+            Double found = tables.stream()
+                    .flatMap(t -> t.getRecords().stream())
+                    .filter(r -> r.getValue() instanceof Number)
+                    .map(r -> ((Number) r.getValue()).doubleValue())
+                    .findFirst()
+                    .orElse(null);
+            if (found != null) {
+                result = found;
+                log.debug("[spring-watch: LogMetricsLinker 指标均值 - appid={}, metric={}, mean={}", appid, metricName, result);
+                return result;
             }
         } catch (Exception e) {
             log.warn("[spring-watch: LogMetricsLinker 指标均值查询失败 - appid={}, metric={}, error={}]",

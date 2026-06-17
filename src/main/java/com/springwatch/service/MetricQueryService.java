@@ -48,22 +48,23 @@ public class MetricQueryService {
         List<FluxTable> tables = queryApi.query(flux.toString(), influxOrg);
 
         List<Map<String, Object>> results = new ArrayList<>();
-        for (FluxTable table : tables) {
-            for (FluxRecord record : table.getRecords()) {
-                Map<String, Object> row = new LinkedHashMap<>();
-                row.put("time", record.getTime());
-                row.put("measurement", record.getMeasurement());
-                row.put("field", record.getField());
-                row.put("value", record.getValue());
-                record.getValues().forEach((k, v) -> {
-                    if (k.startsWith("_") || "result".equals(k) || "table".equals(k)) {
-                        return;
-                    }
-                    row.put(k, v);
-                });
-                results.add(row);
-            }
-        }
+        tables.stream()
+                .flatMap(table -> table.getRecords().stream())
+                .map(record -> {
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    row.put("time", record.getTime());
+                    row.put("measurement", record.getMeasurement());
+                    row.put("field", record.getField());
+                    row.put("value", record.getValue());
+                    record.getValues().forEach((k, v) -> {
+                        if (k.startsWith("_") || "result".equals(k) || "table".equals(k)) {
+                            return;
+                        }
+                        row.put(k, v);
+                    });
+                    return row;
+                })
+                .forEach(results::add);
         log.info("[spring-watch: InfluxDB查询完成 - appid={}, metric={}, records={}]",
                 appid, metricName, results.size());
         return results;
