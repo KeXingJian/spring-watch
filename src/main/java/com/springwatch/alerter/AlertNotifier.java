@@ -238,4 +238,33 @@ public class AlertNotifier {
         }
         return level.toUpperCase();
     }
+
+    /**
+     * kxj: 测试发送邮件 - 平台配置页验证 SMTP 连通性
+     */
+    public String sendTestEmail(String to) {
+        if (to == null || to.isBlank()) {
+            return "{\"status\":\"failed\",\"reason\":\"empty_recipient\"}";
+        }
+        String[] toArr = Arrays.stream(to.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .toArray(String[]::new);
+        if (toArr.length == 0) {
+            return "{\"status\":\"failed\",\"reason\":\"empty_recipient\"}";
+        }
+        try {
+            SimpleMailMessage msg = new SimpleMailMessage();
+            msg.setFrom(from);
+            msg.setTo(toArr);
+            msg.setSubject("[spring-watch] 测试邮件");
+            msg.setText("这是一封来自 spring-watch 的测试邮件。\n时间: " + Instant.now() + "\n如果您收到此邮件,说明 SMTP 配置正确。");
+            mailSender.send(msg);
+            log.info("[kxj: AlertNotifier sendTestEmail - to={}, 成功]", Arrays.toString(toArr));
+            return "{\"status\":\"ok\",\"to\":\"" + to + "\"}";
+        } catch (Exception e) {
+            log.warn("[kxj: AlertNotifier sendTestEmail 失败 - to={}, error={}]", Arrays.toString(toArr), e.getMessage());
+            return "{\"status\":\"failed\",\"error\":\"" + e.getMessage().replace("\"", "'") + "\"}";
+        }
+    }
 }

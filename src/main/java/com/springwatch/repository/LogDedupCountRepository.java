@@ -8,13 +8,9 @@ import org.springframework.data.repository.query.Param;
 
 import java.time.Instant;
 import java.util.List;
-import java.util.Optional;
 
 public interface LogDedupCountRepository extends JpaRepository<LogDedupCount, Long> {
 
-    Optional<LogDedupCount> findByAppidAndFingerprint(Long appid, String fingerprint);
-
-    List<LogDedupCount> findByAppidOrderByDedupCountDesc(Long appid);
 
     @Modifying
     @Query(value = """

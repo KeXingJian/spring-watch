@@ -8,6 +8,4 @@ import java.util.List;
 public interface AlertNotificationConfigRepository extends JpaRepository<AlertNotificationConfig, Long> {
 
     List<AlertNotificationConfig> findByAppidAndStatus(Long appid, String status);
-
-    List<AlertNotificationConfig> findByAppid(Long appid);
 }
