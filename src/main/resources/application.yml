@@ -27,7 +27,6 @@ spring-watch:
     executor:
       pool-size: 8 # 告警执行线程池大小
     scan:
-      enabled: true # 是否开启数据库扫描触发告警
       interval-ms: 5000 # 扫描间隔（毫秒）
       batch-size: 200 # 每批扫描条数
   kafka:
@@ -162,6 +161,6 @@ influxdb:
 
 logging:
   level:
-    com.springwatch: debug # 自定义包日志级别
+    com.springwatch: warn # 自定义包日志级别
   file:
     path: ./.log # 日志输出目录
