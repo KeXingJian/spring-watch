@@ -41,9 +41,6 @@ spring-watch:
       window-seconds: 60 # 去重窗口（秒）
       count-ttl-seconds: 3600 # 计数缓存 TTL（秒）
       flush-interval-ms: 30000 # 计数刷新间隔（毫秒）
-    query:
-      cache-enabled: true # 是否开启查询缓存
-      cache-ttl-seconds: 15 # 查询缓存 TTL（秒）
     anomaly:
       rate-ttl-seconds: 600 # 异常率窗口 TTL（秒）
       pattern-ttl-hours: 168 # 异常模式 TTL（小时）

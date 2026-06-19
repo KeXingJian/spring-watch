@@ -45,7 +45,6 @@ public class AgentMetricsCollector {
                 .filter(Objects::nonNull)
                 .map(parsed -> toMetricEvent(target, parsed, result.status()))
                 .forEach(event -> {
-                    log.warn("{}",event);
                     kafkaProducerBridge.sendMetric(event);
                     metricCount[0]++;
                 });

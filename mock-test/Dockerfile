@@ -15,9 +15,15 @@ COPY src ./src
 RUN --mount=type=cache,target=/root/.m2/repository \
     mvn -s /root/.m2/settings.xml -B -q clean package -DskipTests
 
+# 3) 解包 fat jar 的 classes 和 lib 到独立目录(让 OTel agent 能从系统 classpath 加载 oshi-core,应用类也能被加载)
+RUN mkdir -p /build/classes /build/lib && \
+    cd /build/classes && jar -xf /build/target/mock-test-1.0.0.jar BOOT-INF/classes && mv BOOT-INF/classes/* . && rmdir BOOT-INF/classes && \
+    cd /build/lib && jar -xf /build/target/mock-test-1.0.0.jar BOOT-INF/lib && mv BOOT-INF/lib/* . && rmdir BOOT-INF/lib
+
 FROM eclipse-temurin:21-jre-jammy
 WORKDIR /app
-COPY --from=builder /build/target/mock-test-1.0.0.jar app.jar
+COPY --from=builder /build/classes /app/classes
+COPY --from=builder /build/lib /app/lib
 COPY --from=builder /build/target/opentelemetry-javaagent.jar /app/opentelemetry-javaagent.jar
 COPY entrypoint.sh /app/entrypoint.sh
 RUN sed -i 's/\r$//' /app/entrypoint.sh && chmod +x /app/entrypoint.sh

@@ -1,27 +1,52 @@
 package com.mock.test.dao;
 
+import lombok.RequiredArgsConstructor;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.support.GeneratedKeyHolder;
+import org.springframework.jdbc.support.KeyHolder;
 import org.springframework.stereotype.Repository;
 
-import java.time.LocalDateTime;
-import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicLong;
+import java.sql.PreparedStatement;
+import java.sql.Statement;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 
 @Repository
+@RequiredArgsConstructor
 public class ProductDao {
 
-    private final ConcurrentHashMap<Long, Map<String, Object>> store = new ConcurrentHashMap<>();
-    private final AtomicLong idGen = new AtomicLong(100);
+    private final JdbcTemplate jdbcTemplate;
 
-    public ProductDao() {
-        store.put(1L, product(1L, "iPhone 15 Pro", "手机", 8999.00, 100));
-        store.put(2L, product(2L, "MacBook Pro 14", "笔记本", 14999.00, 50));
-        store.put(3L, product(3L, "AirPods Pro 2", "耳机", 1899.00, 200));
-        store.put(4L, product(4L, "iPad Air 5", "平板", 4799.00, 80));
-        store.put(5L, product(5L, "小米14 Ultra", "手机", 6499.00, 150));
+    public List<Map<String, Object>> findAll() {
+        return jdbcTemplate.queryForList("SELECT * FROM products")
+                .stream().map(this::toProductMap).toList();
     }
 
-    private Map<String, Object> product(Long id, String name, String category, Double price, Integer stock) {
+    public List<Map<String, Object>> findByCategory(String category) {
+        return jdbcTemplate.queryForList("SELECT * FROM products WHERE category = ?", category)
+                .stream().map(this::toProductMap).toList();
+    }
+
+    public Map<String, Object> findById(Long id) {
+        List<Map<String, Object>> list = jdbcTemplate.queryForList(
+                "SELECT * FROM products WHERE id = ?", id);
+        return list.isEmpty() ? null : toProductMap(list.get(0));
+    }
+
+    public Map<String, Object> save(String name, String category, Double price, Integer stock) {
+        KeyHolder kh = new GeneratedKeyHolder();
+        jdbcTemplate.update(con -> {
+            PreparedStatement ps = con.prepareStatement(
+                    "INSERT INTO products (name, category, price, stock, status) VALUES (?, ?, ?, ?, 1)",
+                    Statement.RETURN_GENERATED_KEYS);
+            ps.setString(1, name);
+            ps.setString(2, category);
+            ps.setDouble(3, price);
+            ps.setInt(4, stock);
+            return ps;
+        }, kh);
+        Long id = kh.getKey().longValue();
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("id", id);
         m.put("name", name);
@@ -32,34 +57,24 @@ public class ProductDao {
         return m;
     }
 
-    public List<Map<String, Object>> findAll() {
-        return new ArrayList<>(store.values());
-    }
-
-    public List<Map<String, Object>> findByCategory(String category) {
-        return store.values().stream()
-                .filter(p -> category.equals(p.get("category")))
-                .toList();
-    }
-
-    public Map<String, Object> findById(Long id) {
-        return store.get(id);
-    }
-
-    public Map<String, Object> save(String name, String category, Double price, Integer stock) {
-        Long id = idGen.getAndIncrement();
-        Map<String, Object> p = product(id, name, category, price, stock);
-        store.put(id, p);
-        return p;
-    }
-
     public long count() {
-        return store.size();
+        Long c = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM products", Long.class);
+        return c == null ? 0L : c;
     }
 
     public List<Map<String, Object>> findLowStock(int threshold) {
-        return store.values().stream()
-                .filter(p -> ((Number) p.get("stock")).intValue() < threshold)
-                .toList();
+        return jdbcTemplate.queryForList("SELECT * FROM products WHERE stock < ?", threshold)
+                .stream().map(this::toProductMap).toList();
+    }
+
+    private Map<String, Object> toProductMap(Map<String, Object> row) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", row.get("ID"));
+        m.put("name", row.get("NAME"));
+        m.put("category", row.get("CATEGORY"));
+        m.put("price", row.get("PRICE"));
+        m.put("stock", row.get("STOCK"));
+        m.put("status", row.get("STATUS"));
+        return m;
     }
 }

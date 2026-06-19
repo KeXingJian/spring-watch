@@ -63,7 +63,7 @@ public class AgentLogCollector {
             if (event.getHost() == null && remoteHost != null) {
                 event.setHost(remoteHost);
             }
-            log.warn("{}",event);
+
             kafkaProducerBridge.sendLog(event);
             sent++;
             if (event.getTimestamp().isAfter(latest)) {

@@ -1,51 +1,71 @@
 package com.mock.test.dao;
 
+import lombok.RequiredArgsConstructor;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.support.GeneratedKeyHolder;
+import org.springframework.jdbc.support.KeyHolder;
 import org.springframework.stereotype.Repository;
 
+import java.sql.PreparedStatement;
+import java.sql.Statement;
+import java.sql.Timestamp;
 import java.time.LocalDateTime;
-import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 
 @Repository
+@RequiredArgsConstructor
 public class UserDao {
 
-    private final ConcurrentHashMap<Long, Map<String, Object>> store = new ConcurrentHashMap<>();
-    private final AtomicLong idGen = new AtomicLong(100);
+    private final JdbcTemplate jdbcTemplate;
 
-    public UserDao() {
-        store.put(1L, user(1L, "zhangsan", "张三", "13800138001", 1));
-        store.put(2L, user(2L, "lisi", "李四", "13800138002", 1));
-        store.put(3L, user(3L, "wangwu", "王五", "13800138003", 0));
+    public List<Map<String, Object>> findAll() {
+        return jdbcTemplate.queryForList("SELECT * FROM users");
     }
 
-    private Map<String, Object> user(Long id, String username, String realName, String phone, Integer status) {
+    public Map<String, Object> findById(Long id) {
+        List<Map<String, Object>> list = jdbcTemplate.queryForList(
+                "SELECT * FROM users WHERE id = ?", id);
+        return list.isEmpty() ? null : toUserMap(list.get(0));
+    }
+
+    public Map<String, Object> save(String username, String realName, String phone) {
+        KeyHolder kh = new GeneratedKeyHolder();
+        jdbcTemplate.update(con -> {
+            PreparedStatement ps = con.prepareStatement(
+                    "INSERT INTO users (username, real_name, phone, status) VALUES (?, ?, ?, 1)",
+                    Statement.RETURN_GENERATED_KEYS);
+            ps.setString(1, username);
+            ps.setString(2, realName);
+            ps.setString(3, phone);
+            return ps;
+        }, kh);
+        Long id = kh.getKey().longValue();
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("id", id);
         m.put("username", username);
         m.put("realName", realName);
         m.put("phone", phone);
-        m.put("status", status);
-        m.put("createTime", LocalDateTime.now().minusDays(id).toString());
+        m.put("status", 1);
+        m.put("createTime", LocalDateTime.now().toString());
         return m;
     }
 
-    public List<Map<String, Object>> findAll() {
-        return new ArrayList<>(store.values());
-    }
-
-    public Map<String, Object> findById(Long id) {
-        return store.get(id);
-    }
-
-    public Map<String, Object> save(String username, String realName, String phone) {
-        Long id = idGen.getAndIncrement();
-        Map<String, Object> u = user(id, username, realName, phone, 1);
-        store.put(id, u);
-        return u;
-    }
-
     public long count() {
-        return store.size();
+        Long c = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM users", Long.class);
+        return c == null ? 0L : c;
+    }
+
+    private Map<String, Object> toUserMap(Map<String, Object> row) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", row.get("ID"));
+        m.put("username", row.get("USERNAME"));
+        m.put("realName", row.get("REAL_NAME"));
+        m.put("phone", row.get("PHONE"));
+        m.put("status", row.get("STATUS"));
+        Object t = row.get("CREATE_TIME");
+        m.put("createTime", t instanceof Timestamp ts ? ts.toLocalDateTime().toString() : t);
+        return m;
     }
 }
