@@ -284,7 +284,7 @@ public class AlertStateStore {
         } catch (Exception e) {
             log.warn("[Alerter] 扫PENDING状态失败 - error={}", e.getMessage());
         }
-        log.debug("[Alerter] scanPending 完成 - size={}", result.size());
+        log.trace("[Alerter] scanPending 完成 - size={}", result.size());
         return result;
     }
 

@@ -158,6 +158,6 @@ influxdb:
 
 logging:
   level:
-    com.springwatch: warn # 自定义包日志级别
+    com.springwatch: debug # 自定义包日志级别
   file:
     path: ./.log # 日志输出目录

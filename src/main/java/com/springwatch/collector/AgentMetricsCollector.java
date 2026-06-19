@@ -43,6 +43,7 @@ public class AgentMetricsCollector {
                 .filter(line -> !line.isBlank() && !line.startsWith("#"))
                 .map(this::parsePrometheusLine)
                 .filter(Objects::nonNull)
+                .filter(parsed -> !isOtelInfoMetric(parsed.name))
                 .map(parsed -> toMetricEvent(target, parsed, result.status()))
                 .forEach(event -> {
                     kafkaProducerBridge.sendMetric(event);
@@ -138,5 +139,14 @@ public class AgentMetricsCollector {
             val = val.substring(1, val.length() - 1);
         }
         return new AbstractMap.SimpleEntry<>(key, val);
+    }
+
+    private static boolean isOtelInfoMetric(String name) {
+        if ("target_info".equals(name)) {
+            log.debug("[spring-watch: 跳过OTel info指标 - name={}, 原因=value恒为1无时序意义,且process_command_args等标签值含双引号会破坏InfluxDB line protocol]",
+                    name);
+            return true;
+        }
+        return false;
     }
 }

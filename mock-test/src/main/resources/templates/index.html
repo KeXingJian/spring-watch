@@ -248,7 +248,10 @@
         <div class="result-box">
             <div class="result-header">
                 <h3>&#128196; API 响应结果</h3>
-                <span id="respStatus" class="badge bdg-wait">等待请求...</span>
+                <div style="display:flex; gap:10px; align-items:center;">
+                    <span id="autoStatus" class="badge bdg-wait">自动执行: 待机</span>
+                    <span id="respStatus" class="badge bdg-wait">等待请求...</span>
+                </div>
             </div>
             <div class="result-meta">
                 <span><span class="label">方法:</span> <strong id="reqMethod">-</strong></span>
@@ -301,14 +304,85 @@
                 statusEl.textContent = `HTTP ${resp.status} ${resp.statusText}`;
                 statusEl.className = resp.ok ? 'badge bdg-ok' : 'badge bdg-err';
                 bodyEl.textContent = text;
+                return { ok: resp.ok, status: resp.status, data: text };
             } catch (err) {
                 const ms = Math.round(performance.now() - start);
                 timeEl.textContent = ms + 'ms';
                 statusEl.textContent = '请求失败';
                 statusEl.className = 'badge bdg-err';
                 bodyEl.textContent = '错误: ' + err.message + '\n\n请确认服务已启动在 http://localhost:8081';
+                return { ok: false, status: 0, data: null, error: err.message };
             }
         }
+
+        async function autoRun() {
+            const autoEl = document.getElementById('autoStatus');
+            const bodyEl = document.getElementById('respBody');
+            const pool = [
+                { m: 'GET',  u: '/actuator/health',         d: '健康检查' },
+                { m: 'GET',  u: '/api/ping',                d: '可用性探测' },
+                { m: 'GET',  u: '/api/dashboard',           d: '业务数据总览' },
+                { m: 'GET',  u: '/api/users',               d: '用户列表' },
+                { m: 'GET',  u: '/api/users/1',             d: '用户详情' },
+                { m: 'GET',  u: '/api/users/2',             d: '用户详情' },
+                { m: 'GET',  u: '/api/users/3',             d: '用户详情' },
+                { m: 'GET',  u: '/api/users/1/stats',       d: '用户统计' },
+                { m: 'GET',  u: '/api/products',            d: '商品列表' },
+                { m: 'GET',  u: '/api/products?category=' + encodeURIComponent('手机'), d: '商品筛选' },
+                { m: 'GET',  u: '/api/products/1',          d: '商品详情' },
+                { m: 'GET',  u: '/api/products/2',          d: '商品详情' },
+                { m: 'GET',  u: '/api/orders',              d: '订单列表' },
+                { m: 'GET',  u: '/api/orders?status=paid',  d: '订单筛选' },
+                { m: 'GET',  u: '/api/orders/1',            d: '订单详情' },
+                { m: 'GET',  u: '/api/cart/1',              d: '购物车' },
+                { m: 'GET',  u: '/api/cart/2',              d: '购物车' },
+                { m: 'GET',  u: '/metrics',                 d: 'Prometheus 指标' }
+            ];
+
+            let pass = 0, fail = 0, round = 0;
+            const maxLog = 200;
+            const log = [];
+
+            function shuffle(arr) {
+                const a = arr.slice();
+                for (let i = a.length - 1; i > 0; i--) {
+                    const j = Math.floor(Math.random() * (i + 1));
+                    [a[i], a[j]] = [a[j], a[i]];
+                }
+                return a;
+            }
+
+            async function tick() {
+                round++;
+                const picked = shuffle(pool).slice(0, 10);
+                const ts = new Date().toLocaleTimeString();
+                const header = `── 第 ${round} 轮  ${ts}  (随机 10/${pool.length}) ──`;
+                log.push(header);
+
+                for (let i = 0; i < picked.length; i++) {
+                    const t = picked[i];
+                    const r = await callApi(t.m, t.u);
+                    const line = `  [${String(i + 1).padStart(2, '0')}] ${t.m.padEnd(4)} ${t.u.padEnd(38)} -> HTTP ${r.status}  (${t.d})`;
+                    log.push(line);
+                    r.ok ? pass++ : fail++;
+                }
+
+                while (log.length > maxLog) log.shift();
+                bodyEl.textContent = log.join('\n');
+                bodyEl.scrollTop = bodyEl.scrollHeight;
+                autoEl.textContent = `自动执行: 第${round}轮  ${pass}✓ / ${fail}✗`;
+                autoEl.className = fail === 0 ? 'badge bdg-ok' : 'badge bdg-err';
+            }
+
+            autoEl.textContent = '自动执行: 启动中...';
+            autoEl.className = 'badge bdg-wait';
+            setInterval(tick, 1000);
+            await tick();
+        }
+
+        window.addEventListener('DOMContentLoaded', () => {
+            setTimeout(autoRun, 300);
+        });
     </script>
 </body>
 </html>

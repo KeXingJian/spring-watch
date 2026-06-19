@@ -21,6 +21,7 @@ public class FlywayConfig {
                 .baselineVersion("0")
                 .mixed(true)
                 .load();
+        flyway.repair();
         flyway.migrate();
         log.info("[spring-watch: Flyway 数据库迁移完成]");
         return flyway;

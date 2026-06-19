@@ -112,7 +112,7 @@ public class AlertEngine {
         }
         List<AlertRule> rules = ruleCache.rulesFor(event.getAppid());
         if (rules.isEmpty()) {
-            log.debug("[Alerter] process(LogEvent) 无匹配规则 - appid={}, fingerprint={}, level={}",
+            log.trace("[Alerter] process(LogEvent) 无匹配规则 - appid={}, fingerprint={}, level={}",
                     event.getAppid(), event.getFingerprint(), event.getLevel());
             return;
         }
