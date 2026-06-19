@@ -49,6 +49,9 @@
                 <div class="metric-card"><div class="title">使用连接</div><div class="value warn" id="jdbc-used">-</div></div>
                 <div class="metric-card"><div class="title">使用率</div><div class="value" id="jdbc-usage">-</div></div>
                 <div class="metric-card"><div class="title">等待请求</div><div class="value" id="jdbc-pending">-</div></div>
+                <div class="metric-card"><div class="title">平均使用耗时</div><div class="value" id="jdbc-avg-use">-</div></div>
+                <div class="metric-card"><div class="title">平均等待耗时</div><div class="value" id="jdbc-avg-wait">-</div></div>
+                <div class="metric-card"><div class="title">平均创建耗时</div><div class="value" id="jdbc-avg-create">-</div></div>
             </div>
             <div class="chart-row">
                 <div class="chart-panel">
@@ -56,14 +59,44 @@
                     <div class="panel-body has-chart" id="jdbc-conn-chart"></div>
                 </div>
                 <div class="chart-panel">
-                    <div class="panel-head">连接使用时长分布(le 桶) <span class="tag">懒触发</span></div>
+                    <div class="panel-head">连接使用率(used/max) <span class="tag">%</span></div>
+                    <div class="panel-body has-chart" id="jdbc-usage-chart"></div>
+                </div>
+            </div>
+            <div class="chart-row">
+                <div class="chart-panel">
+                    <div class="panel-head">等待请求时序 <span class="tag">&gt;0 告警</span></div>
+                    <div class="panel-body has-chart" id="jdbc-pending-chart"></div>
+                </div>
+                <div class="chart-panel">
+                    <div class="panel-head">获取连接 QPS <span class="tag">agg=rate</span></div>
+                    <div class="panel-body has-chart" id="jdbc-qps-chart"></div>
+                </div>
+            </div>
+            <div class="chart-row">
+                <div class="chart-panel">
+                    <div class="panel-head">连接使用耗时 P50/P95/P99</div>
+                    <div class="panel-body has-chart" id="jdbc-use-quantile"></div>
+                </div>
+                <div class="chart-panel">
+                    <div class="panel-head">连接使用时长分布(le 桶)</div>
                     <div class="panel-body has-chart" id="jdbc-use-dist"></div>
                 </div>
             </div>
             <div class="chart-row">
                 <div class="chart-panel">
-                    <div class="panel-head">获取连接等待耗时分布(le 桶) <span class="tag">关注长尾</span></div>
+                    <div class="panel-head">获取连接等待耗时 P50/P95/P99 <span class="tag">关注长尾</span></div>
+                    <div class="panel-body has-chart" id="jdbc-wait-quantile"></div>
+                </div>
+                <div class="chart-panel">
+                    <div class="panel-head">获取连接等待耗时分布(le 桶)</div>
                     <div class="panel-body has-chart" id="jdbc-wait-dist"></div>
+                </div>
+            </div>
+            <div class="chart-row">
+                <div class="chart-panel">
+                    <div class="panel-head">创建连接耗时 P50/P95/P99</div>
+                    <div class="panel-body has-chart" id="jdbc-create-quantile"></div>
                 </div>
                 <div class="chart-panel">
                     <div class="panel-head">创建连接耗时分布(le 桶)</div>
@@ -84,6 +117,7 @@
                     <div class="metric-card"><div class="title">总请求数</div><div class="value" id="http-count">-</div></div>
                     <div class="metric-card"><div class="title">不同路由数</div><div class="value" id="http-routes">-</div></div>
                     <div class="metric-card"><div class="title">不同状态码数</div><div class="value" id="http-statuses">-</div></div>
+                    <div class="metric-card"><div class="title">错误占比 (4xx/5xx)</div><div class="value" id="http-error-rate">-</div></div>
                 </div>
                 <div class="chart-row">
                     <div class="chart-panel">
@@ -91,16 +125,28 @@
                         <div class="panel-body has-chart" id="http-status-pie"></div>
                     </div>
                     <div class="chart-panel">
-                        <div class="panel-head">响应时间 P50 / P95 / P99 <span class="tag">直方图还原</span></div>
+                        <div class="panel-head">HTTP 方法分布</div>
+                        <div class="panel-body has-chart" id="http-method-pie"></div>
+                    </div>
+                </div>
+                <div class="chart-row">
+                    <div class="chart-panel">
+                        <div class="panel-head">Top10 路由(按请求数)</div>
+                        <div class="panel-body has-chart" id="http-topn-count"></div>
+                    </div>
+                    <div class="chart-panel">
+                        <div class="panel-head">Top10 路由(按 P99 耗时)</div>
+                        <div class="panel-body has-chart" id="http-topn-p99"></div>
+                    </div>
+                </div>
+                <div class="chart-row">
+                    <div class="chart-panel">
+                        <div class="panel-head">响应时间 P50 / P95 / P99(全站最差)</div>
                         <div class="panel-body has-chart" id="http-rt-quantile"></div>
                     </div>
                 </div>
-                <div class="chart-row full">
-                    <div class="chart-panel">
-                        <div class="panel-head">慢请求 TopN(按 route 累计 sum) <span class="tag">横向柱图</span></div>
-                        <div class="panel-body has-chart" id="http-topn"></div>
-                    </div>
-                </div>
+                <h3 class="section-title">按接口(<span id="http-route-count">0</span>)</h3>
+                <div id="http-route-panels"></div>
             </div>
         </div>
 
@@ -296,12 +342,19 @@
             const { from, to } = getRangeFromTo();
 
             try {
-                const [maxR, minR, idleR, usedR, pendingR] = await Promise.all([
+                const [maxR, minR, idleR, usedR, pendingR,
+                       useSumR, useCntR, waitSumR, waitCntR, createSumR, createCntR] = await Promise.all([
                     SW.api.get("/api/metrics/latest", { appid, metric: "db_client_connections_max" }),
                     SW.api.get("/api/metrics/latest", { appid, metric: "db_client_connections_idle_min" }),
                     SW.api.get("/api/metrics/latest", { appid, metric: "db_client_connections_usage", state: "idle" }),
                     SW.api.get("/api/metrics/latest", { appid, metric: "db_client_connections_usage", state: "used" }),
-                    SW.api.get("/api/metrics/latest", { appid, metric: "db_client_connections_pending_requests" })
+                    SW.api.get("/api/metrics/latest", { appid, metric: "db_client_connections_pending_requests" }),
+                    SW.api.get("/api/metrics/latest", { appid, metric: "db_client_connections_use_time_milliseconds_sum" }),
+                    SW.api.get("/api/metrics/latest", { appid, metric: "db_client_connections_use_time_milliseconds_count" }),
+                    SW.api.get("/api/metrics/latest", { appid, metric: "db_client_connections_wait_time_milliseconds_sum" }),
+                    SW.api.get("/api/metrics/latest", { appid, metric: "db_client_connections_wait_time_milliseconds_count" }),
+                    SW.api.get("/api/metrics/latest", { appid, metric: "db_client_connections_create_time_milliseconds_sum" }),
+                    SW.api.get("/api/metrics/latest", { appid, metric: "db_client_connections_create_time_milliseconds_count" })
                 ]);
                 const v = (r) => r && r.rows && r.rows[0] ? r.rows[0].value : null;
                 const max = v(maxR), idle = v(idleR), used = v(usedR);
@@ -312,17 +365,96 @@
                 setText("jdbc-usage", (max && used != null) ? SW.ui.formatPercent(used / max) : "-");
                 setText("jdbc-pending", v(pendingR) == null ? "-" : v(pendingR).toFixed(0));
 
+                const avgUseMs = avgOf(v(useSumR), v(useCntR));
+                const avgWaitMs = avgOf(v(waitSumR), v(waitCntR));
+                const avgCreateMs = avgOf(v(createSumR), v(createCntR));
+                setText("jdbc-avg-use", avgUseMs == null ? "-" : SW.ui.formatMs(avgUseMs));
+                setText("jdbc-avg-wait", avgWaitMs == null ? "-" : SW.ui.formatMs(avgWaitMs));
+                setText("jdbc-avg-create", avgCreateMs == null ? "-" : SW.ui.formatMs(avgCreateMs));
+
+                const pendingEl = document.getElementById("jdbc-pending");
+                const pendingVal = v(pendingR);
+                if (pendingEl && pendingVal != null) {
+                    pendingEl.className = "value " + (pendingVal > 0 ? "danger" : "success");
+                }
+
+                const idleSeries = flattenPoints(await fetchSeries(appid, "db_client_connections_usage", { state: "idle" }, from, to));
+                const usedSeries = flattenPoints(await fetchSeries(appid, "db_client_connections_usage", { state: "used" }, from, to));
                 SW.chart.line("#jdbc-conn-chart", [
-                    { name: "空闲", points: flattenPoints(await fetchSeries(appid, "db_client_connections_usage", { state: "idle" }, from, to)) },
-                    { name: "使用", points: flattenPoints(await fetchSeries(appid, "db_client_connections_usage", { state: "used" }, from, to)) }
+                    { name: "空闲", points: idleSeries },
+                    { name: "使用", points: usedSeries }
                 ], { stack: true, area: true, yAxisName: "connections" });
+
+                if (max && max > 0) {
+                    const usagePts = usedSeries.map(([t, u]) => [t, u == null ? null : u / max * 100]);
+                    SW.chart.line("#jdbc-usage-chart",
+                        [{ name: "使用率", points: usagePts }],
+                        { yAxisName: "%", area: true });
+                } else {
+                    renderEmpty("#jdbc-usage-chart", "暂无 max 数据");
+                }
             } catch (e) {
                 console.warn("jdbc cards failed", e);
             }
 
+            try {
+                const pendingSeries = await fetchSeries(appid, "db_client_connections_pending_requests", {}, from, to);
+                SW.chart.line("#jdbc-pending-chart",
+                    [{ name: "等待请求", points: flattenPoints(pendingSeries) }],
+                    { yAxisName: "requests" });
+            } catch (e) {
+                renderEmpty("#jdbc-pending-chart", "加载失败");
+            }
+
+            try {
+                const qpsSeries = await fetchSeries(appid, "db_client_connections_use_time_milliseconds_count", {}, from, to);
+                const seriesArr = qpsSeries.map(s => ({
+                    name: extractTagValue(s.name, "pool_name") || "QPS",
+                    points: (s.points || []).map(p => [p.t, p.v])
+                }));
+                if (seriesArr.length > 0 && seriesArr.some(s => s.points.length > 0)) {
+                    SW.chart.line("#jdbc-qps-chart", seriesArr, { area: true, yAxisName: "req/s" });
+                } else {
+                    renderEmpty("#jdbc-qps-chart", "暂无 QPS 数据");
+                }
+            } catch (e) {
+                renderEmpty("#jdbc-qps-chart", "加载失败");
+            }
+
+            renderHistogramQuantile(appid, "db_client_connections_use_time_milliseconds", "jdbc-use-quantile", "ms");
+            renderHistogramQuantile(appid, "db_client_connections_wait_time_milliseconds", "jdbc-wait-quantile", "ms");
+            renderHistogramQuantile(appid, "db_client_connections_create_time_milliseconds", "jdbc-create-quantile", "ms");
+
             renderHistogram(appid, "db_client_connections_use_time_milliseconds", "jdbc-use-dist", "ms");
             renderHistogram(appid, "db_client_connections_wait_time_milliseconds", "jdbc-wait-dist", "ms");
             renderHistogram(appid, "db_client_connections_create_time_milliseconds", "jdbc-create-dist", "ms");
+        }
+
+        function avgOf(sum, count) {
+            if (sum == null || count == null || count <= 0) return null;
+            return sum / count;
+        }
+
+        /* 直方图 P50/P95/P99 时序折线 */
+        async function renderHistogramQuantile(appid, metric, elId, unit) {
+            const { from, to } = getRangeFromTo();
+            try {
+                const r = await SW.api.get("/api/metrics/histogram-quantile",
+                    { appid, metric, quantiles: "0.5,0.95,0.99", from, to, every: "30s" });
+                const points = (r && r.points) || [];
+                if (points.length === 0) {
+                    renderEmpty("#" + elId, "暂无分位数据");
+                    return;
+                }
+                const series = [
+                    { name: "P50", points: points.map(p => [p.t, p.q50 == null ? null : p.q50]) },
+                    { name: "P95", points: points.map(p => [p.t, p.q95 == null ? null : p.q95]) },
+                    { name: "P99", points: points.map(p => [p.t, p.q99 == null ? null : p.q99]) }
+                ];
+                SW.chart.line("#" + elId, series, { yAxisName: unit || "ms" });
+            } catch (e) {
+                renderEmpty("#" + elId, "分位计算失败");
+            }
         }
 
         /* ============================ HTTP ============================ */
@@ -348,21 +480,48 @@
 
             setText("http-count", data.count);
 
+            let routeList = [];
             try {
-                const grp = await SW.api.get("/api/metrics/grouped", { appid, metric: "http_server_request_duration_seconds_count", groupBy: "http_route" });
-                setText("http-routes", (grp.groups || []).length);
-                const statusGrp = await SW.api.get("/api/metrics/grouped", { appid, metric: "http_server_request_duration_seconds_count", groupBy: "http_response_status_code" });
+                const [routeGrp, statusGrp, methodGrp] = await Promise.all([
+                    SW.api.get("/api/metrics/grouped", { appid, metric: "http_server_request_duration_seconds_count", groupBy: "http_route" }),
+                    SW.api.get("/api/metrics/grouped", { appid, metric: "http_server_request_duration_seconds_count", groupBy: "http_response_status_code" }),
+                    SW.api.get("/api/metrics/grouped", { appid, metric: "http_server_request_duration_seconds_count", groupBy: "http_request_method" })
+                ]);
+                setText("http-routes", (routeGrp.groups || []).length);
                 setText("http-statuses", (statusGrp.groups || []).length);
+                const totalReq = (statusGrp.groups || []).reduce((s, g) => s + (g.value || 0), 0);
+                const errorReq = (statusGrp.groups || [])
+                    .filter(g => /^4|^5/.test(String(g.group || "")))
+                    .reduce((s, g) => s + (g.value || 0), 0);
+                const errorRate = totalReq > 0 ? errorReq / totalReq : 0;
+                const errEl = document.getElementById("http-error-rate");
+                errEl.textContent = totalReq > 0 ? SW.ui.formatPercent(errorRate) : "-";
+                errEl.className = "value " + (errorRate >= 0.05 ? "danger" : errorRate >= 0.01 ? "warn" : "success");
 
                 SW.chart.pie("#http-status-pie", (statusGrp.groups || []).map(g => ({ name: g.group, value: g.value })),
                     { name: "状态码", donut: true });
+                SW.chart.pie("#http-method-pie", (methodGrp.groups || []).map(g => ({ name: g.group, value: g.value })),
+                    { name: "方法", donut: true });
 
-                SW.chart.bar("#http-topn",
-                    { categories: (grp.groups || []).slice(0, 5).map(g => g.group || "unknown"),
-                      series: [{ name: "累计耗时(s)", data: (grp.groups || []).slice(0, 5).map(g => g.value || 0) }] },
-                    { horizontal: true, yAxisName: "s" });
+                const topCount = (routeGrp.groups || []).slice().sort((a, b) => (b.value || 0) - (a.value || 0)).slice(0, 10);
+                SW.chart.bar("#http-topn-count",
+                    { categories: topCount.map(g => g.group || "unknown"),
+                      series: [{ name: "请求数", data: topCount.map(g => g.value || 0) }] },
+                    { horizontal: true, yAxisName: "" });
             } catch (e) {
                 console.warn("http grouped failed", e);
+            }
+
+            try {
+                const p99Grp = await SW.api.get("/api/metrics/grouped",
+                    { appid, metric: "http_server_request_duration_seconds_sum", groupBy: "http_route" });
+                const topP99 = (p99Grp.groups || []).slice().sort((a, b) => (b.value || 0) - (a.value || 0)).slice(0, 10);
+                SW.chart.bar("#http-topn-p99",
+                    { categories: topP99.map(g => g.group || "unknown"),
+                      series: [{ name: "累计耗时(s)", data: topP99.map(g => g.value || 0) }] },
+                    { horizontal: true, yAxisName: "s" });
+            } catch (e) {
+                renderEmpty("#http-topn-p99", "暂无数据");
             }
 
             try {
@@ -372,17 +531,132 @@
                 if (points.length === 0) {
                     renderEmpty("#http-rt-quantile", "暂无响应时间数据");
                 } else {
+                    const agg = new Map();
+                    for (const p of points) {
+                        const t = p.t;
+                        if (!agg.has(t)) agg.set(t, { q50: null, q95: null, q99: null });
+                        const cur = agg.get(t);
+                        for (const q of ["q50", "q95", "q99"]) {
+                            if (p[q] != null && (cur[q] == null || p[q] > cur[q])) cur[q] = p[q];
+                        }
+                    }
+                    const sorted = Array.from(agg.entries()).sort((a, b) => a[0].localeCompare(b[0]));
                     const series = [{
-                        name: "P50", points: points.map(p => [p.t, p.q50])
+                        name: "P50", points: sorted.map(([t, v]) => [t, v.q50])
                     }, {
-                        name: "P95", points: points.map(p => [p.t, p.q95])
+                        name: "P95", points: sorted.map(([t, v]) => [t, v.q95])
                     }, {
-                        name: "P99", points: points.map(p => [p.t, p.q99])
+                        name: "P99", points: sorted.map(([t, v]) => [t, v.q99])
                     }];
                     SW.chart.line("#http-rt-quantile", series, { smooth: true, yAxisName: "s" });
                 }
             } catch (e) {
                 renderEmpty("#http-rt-quantile", "分位计算失败:" + e.message);
+            }
+
+            try {
+                const detail = await SW.api.get("/api/metrics/grouped",
+                    { appid, metric: "http_server_request_duration_seconds_count", groupBy: "http_request_method,http_response_status_code,http_route" });
+                routeList = (detail.groups || []).map(g => ({
+                    method: g.tags?.http_request_method || "unknown",
+                    status: g.tags?.http_response_status_code || "unknown",
+                    route: g.tags?.http_route || "unknown",
+                    count: g.value || 0
+                })).filter(r => r.route);
+                routeList.sort((a, b) => b.count - a.count);
+                setText("http-route-count", routeList.length);
+                renderRoutePanels(appid, routeList, from, to);
+            } catch (e) {
+                console.warn("http route detail failed", e);
+            }
+        }
+
+        /* 动态创建每个 (method, status, route) 面板,并懒加载其图表数据 */
+        function renderRoutePanels(appid, routeList, from, to) {
+            const container = document.getElementById("http-route-panels");
+            if (!container) return;
+            container.querySelectorAll(".route-chart").forEach(el => SW.chart.destroy(el));
+            container.innerHTML = "";
+            for (const r of routeList) {
+                const panelId = "http-route-" + Math.random().toString(36).slice(2, 9);
+                const quantileId = panelId + "-q";
+                const qpsId = panelId + "-r";
+                const isError = /^4|^5/.test(String(r.status));
+                const headColor = isError ? "danger" : "ok";
+                const head = document.createElement("div");
+                head.className = "chart-panel";
+                head.style.borderLeft = isError ? "3px solid #dc2626" : "3px solid #16a34a";
+                head.innerHTML = ''
+                    + '<div class="panel-head">'
+                    + '<span class="method-tag ' + headColor + '">' + SW.ui.escapeHtml(r.method) + '</span> '
+                    + '<span class="status-tag ' + headColor + '">' + SW.ui.escapeHtml(r.status) + '</span> '
+                    + '<code class="route-tag">' + SW.ui.escapeHtml(r.route) + '</code>'
+                    + '<span class="tag" style="margin-left:auto;">'
+                    + '<span class="route-stat" data-k="count">- 次</span> · '
+                    + '<span class="route-stat" data-k="avg">- ms</span> · '
+                    + '<span class="route-stat" data-k="qps">- qps</span>'
+                    + '</span>'
+                    + '</div>'
+                    + '<div class="chart-row" style="grid-template-columns: 1fr 1fr; gap: 8px;">'
+                    + '<div class="panel-body has-chart route-chart" id="' + quantileId + '"></div>'
+                    + '<div class="panel-body has-chart route-chart" id="' + qpsId + '"></div>'
+                    + '</div>';
+                container.appendChild(head);
+                loadRoutePanelData(appid, r, quantileId, qpsId, from, to);
+            }
+        }
+
+        async function loadRoutePanelData(appid, r, quantileId, qpsId, from, to) {
+            const tagFilters = {
+                http_request_method: r.method,
+                http_response_status_code: r.status,
+                http_route: r.route
+            };
+            const panelHead = document.querySelector("#" + quantileId)?.closest(".chart-panel");
+            try {
+                const [countR, sumR, q, qpsR] = await Promise.all([
+                    SW.api.get("/api/metrics/latest",
+                        Object.assign({ appid, metric: "http_server_request_duration_seconds_count" }, tagFilters)),
+                    SW.api.get("/api/metrics/latest",
+                        Object.assign({ appid, metric: "http_server_request_duration_seconds_sum" }, tagFilters)),
+                    SW.api.get("/api/metrics/histogram-quantile",
+                        Object.assign({ appid, metric: "http_server_request_duration_seconds", from, to, every: "30s" }, tagFilters)),
+                    SW.api.get("/api/metrics/series",
+                        Object.assign({ appid, metric: "http_server_request_duration_seconds_count", from, to, every: "30s", agg: "rate" }, tagFilters))
+                ]);
+                const count = countR.rows?.[0]?.value || 0;
+                const sum = sumR.rows?.[0]?.value || 0;
+                const avgMs = count > 0 ? (sum / count) * 1000 : 0;
+                const setStat = (k, text) => {
+                    const el = panelHead?.querySelector('.route-stat[data-k="' + k + '"]');
+                    if (el) el.textContent = text;
+                };
+                setStat("count", count.toFixed(0) + " 次");
+                setStat("avg", count > 0 ? avgMs.toFixed(1) + " ms" : "-");
+                const qpsPoints = (qpsR.series || []).flatMap(s => (s.points || []).map(p => [p.t, p.v]));
+                const lastQps = qpsPoints.filter(p => p[1] != null).slice(-3).reduce((s, p) => s + (p[1] || 0), 0) / 3;
+                setStat("qps", isFinite(lastQps) ? lastQps.toFixed(2) + " qps" : "-");
+
+                const points = (q && q.points) || [];
+                if (points.length > 0) {
+                    const series = [
+                        { name: "P50", points: points.map(p => [p.t, p.q50 == null ? null : p.q50 * 1000]) },
+                        { name: "P95", points: points.map(p => [p.t, p.q95 == null ? null : p.q95 * 1000]) },
+                        { name: "P99", points: points.map(p => [p.t, p.q99 == null ? null : p.q99 * 1000]) }
+                    ];
+                    SW.chart.line("#" + quantileId, series, { yAxisName: "ms" });
+                } else {
+                    renderEmpty("#" + quantileId, "无分位数据");
+                }
+                if (qpsPoints.length > 0) {
+                    SW.chart.line("#" + qpsId, [{ name: "QPS", points: qpsPoints }], { area: true, yAxisName: "req/s" });
+                } else {
+                    renderEmpty("#" + qpsId, "无 QPS 数据");
+                }
+            } catch (e) {
+                console.warn("route panel load failed", r, e);
+                renderEmpty("#" + quantileId, "加载失败");
+                renderEmpty("#" + qpsId, "加载失败");
             }
         }
 
@@ -535,25 +809,32 @@
         /* GC P50/P95/P99 折线(按 gc_name 多线,每个 name 3 条线) */
         async function renderGcQuantileMulti(appid, from, to) {
             try {
-                const nameGrp = await SW.api.get("/api/metrics/grouped",
-                    { appid, metric: "jvm_gc_duration_seconds_count", groupBy: "jvm_gc_name" });
-                const names = (nameGrp.groups || []).map(g => g.tags?.jvm_gc_name || g.group).filter(Boolean);
-                if (names.length === 0) { renderEmpty("#jvm-gc-quantile", "GC 数据缺失"); return; }
-                const seriesMap = new Map();
-                await Promise.all(names.map(async n => {
-                    try {
-                        const r2 = await SW.api.get("/api/metrics/histogram-quantile",
-                            Object.assign({ appid, metric: "jvm_gc_duration", from, to, every: "30s" }, { jvm_gc_name: n }));
-                        for (const q of ["q50", "q95", "q99"]) {
-                            const pts = (r2.points || []).map(p => [p.t, p[q] == null ? null : p[q] * 1000]);
-                            if (pts.some(p => p[1] != null)) seriesMap.set(n + " " + q, pts);
-                        }
-                    } catch (e) { /* 单个 name 失败不影响其它 */ }
-                }));
-                const finalSeries = Array.from(seriesMap.entries()).map(([name, points]) => ({ name, points }));
+                const r = await SW.api.get("/api/metrics/histogram-quantile",
+                    { appid, metric: "jvm_gc_duration_seconds", from, to, every: "30s" });
+                const points = (r && r.points) || [];
+                if (points.length === 0) { renderEmpty("#jvm-gc-quantile", "GC 分位数据缺失"); return; }
+                const byName = new Map();
+                for (const p of points) {
+                    const t = p.tags || {};
+                    const name = t.jvm_gc_name || "unknown";
+                    const action = t.jvm_gc_action || "unknown";
+                    const seriesName = name + " (" + action + ")";
+                    if (!byName.has(seriesName)) byName.set(seriesName, { q50: [], q95: [], q99: [] });
+                    const bucket = byName.get(seriesName);
+                    for (const q of ["q50", "q95", "q99"]) {
+                        if (p[q] != null) bucket[q].push([p.t, p[q] * 1000]);
+                    }
+                }
+                const finalSeries = [];
+                for (const [seriesName, q] of byName.entries()) {
+                    for (const k of ["q50", "q95", "q99"]) {
+                        if (q[k].length > 0) finalSeries.push({ name: seriesName + " " + k, points: q[k] });
+                    }
+                }
                 if (finalSeries.length === 0) { renderEmpty("#jvm-gc-quantile", "GC 分位数据缺失"); return; }
                 SW.chart.line("#jvm-gc-quantile", finalSeries, { yAxisName: "ms" });
             } catch (e) {
+                console.warn("gc quantile failed", e);
                 renderEmpty("#jvm-gc-quantile", "GC 分位数据缺失");
             }
         }
@@ -803,13 +1084,14 @@
             try {
                 const r = await SW.api.get("/api/metrics/series",
                     { appid, metric: countMetric, from, to, every: "30s" });
-                const points = r.series || [];
-                if (points.length === 0) {
+                const seriesArr = r.series || [];
+                const allPoints = seriesArr.flatMap(s => (s.points || []).map(p => [p.t, p.v]));
+                if (allPoints.length === 0) {
                     renderEmpty("#" + elId, "暂无数据(可能未触发采集)");
                     return;
                 }
                 SW.chart.line("#" + elId,
-                    [{ name: "调用次数(累计)", points: points.map(p => [p.t, p.v]) }],
+                    [{ name: "调用次数(累计)", points: allPoints }],
                     { area: true, yAxisName: "count" });
             } catch (e) {
                 renderEmpty("#" + elId, "加载失败");

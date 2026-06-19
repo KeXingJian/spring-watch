@@ -280,88 +280,75 @@ public class MetricQueryService {
             String countMetric = metric + "_count";
             String tagClause = buildTagFilter(tagFilters);
             String flux = String.format(
-                    "buckets = from(bucket: \"%s\")\n" +
+                    "from(bucket: \"%s\")\n" +
                             "  |> range(start: %s, stop: %s)\n" +
                             "  |> filter(fn: (r) => r._measurement == \"%s\"\n" +
                             "                    and r.appid == \"%s\"\n" +
                             "                    and r._field == \"value\"\n" +
-                            "                    and r.metric == \"%s\"%s)\n" +
-                            "  |> aggregateWindow(every: %s, fn: last, createEmpty: false)\n" +
-                            "counts = from(bucket: \"%s\")\n" +
-                            "  |> range(start: %s, stop: %s)\n" +
-                            "  |> filter(fn: (r) => r._measurement == \"%s\"\n" +
-                            "                    and r.appid == \"%s\"\n" +
-                            "                    and r._field == \"value\"\n" +
-                            "                    and r.metric == \"%s\"%s)\n" +
-                            "  |> aggregateWindow(every: %s, fn: sum, createEmpty: false)\n" +
-                            "join(tables: {b: buckets, c: counts}, on: [\"_time\"])",
-                    bucket, formatInstant(from), formatInstant(to), MEASUREMENT, appid, bucketMetric, tagClause, window,
-                    bucket, formatInstant(from), formatInstant(to), MEASUREMENT, appid, countMetric, tagClause, window);
-            List<FluxTable> tables;
-            try {
-                tables = queryApi.query(flux, influxOrg);
-            } catch (Exception joinErr) {
-                log.debug("[spring-watch: histogram-join回退到双查询 - metric={}, error={}]", metric, joinErr.getMessage());
-                tables = List.of();
-            }
-            if (tables.isEmpty()) {
-                tables = queryApi.query(String.format(
-                        "from(bucket: \"%s\")\n" +
-                                "  |> range(start: %s, stop: %s)\n" +
-                                "  |> filter(fn: (r) => r._measurement == \"%s\"\n" +
-                                "                    and r.appid == \"%s\"\n" +
-                                "                    and r._field == \"value\"\n" +
-                                "                    and (r.metric == \"%s\" or r.metric == \"%s\")%s)",
-                        bucket, formatInstant(from), formatInstant(to), MEASUREMENT, appid, bucketMetric, countMetric, tagClause), influxOrg);
-            }
-            if (tables.isEmpty()) {
-                tables = queryApi.query(String.format(
-                        "from(bucket: \"%s\")\n" +
-                                "  |> range(start: %s, stop: %s)\n" +
-                                "  |> filter(fn: (r) => r._measurement == \"%s\"\n" +
-                                "                    and r.appid == \"%s\"\n" +
-                                "                    and r._field == \"value\"\n" +
-                                "                    and (r.metric == \"%s\" or r.metric == \"%s\"))",
-                        bucket, formatInstant(from), formatInstant(to), MEASUREMENT, appid, bucketMetric, countMetric), influxOrg);
-            }
-            Map<String, Map<String, Double>> timeBuckets = new LinkedHashMap<>();
+                            "                    and (r.metric == \"%s\" or r.metric == \"%s\")%s)\n" +
+                            "  |> aggregateWindow(every: %s, fn: last, createEmpty: false)",
+                    bucket, formatInstant(from), formatInstant(to), MEASUREMENT, appid, bucketMetric, countMetric, tagClause, window);
+            List<FluxTable> tables = queryApi.query(flux, influxOrg);
+            java.util.Set<String> excludeKeys = java.util.Set.of(
+                    "metric", "appid", "_field", "_measurement", "_start", "_stop", "_value", "_time", "result", "table", "le");
+            Map<String, Map<String, Object>> slots = new LinkedHashMap<>();
             for (FluxTable table : tables) {
                 for (FluxRecord r : table.getRecords()) {
                     String m = (String) r.getValueByKey("metric");
+                    if (m == null) continue;
                     Object tObj = r.getValueByKey("_time");
                     if (tObj == null) continue;
                     String t = tObj.toString();
-                    Map<String, Double> slot = timeBuckets.computeIfAbsent(t, k -> new LinkedHashMap<>());
-                    if (m != null && m.equals(bucketMetric)) {
+
+                    StringBuilder tagKey = new StringBuilder();
+                    Map<String, Object> tagMap = new LinkedHashMap<>();
+                    for (java.util.Map.Entry<String, Object> e : r.getValues().entrySet()) {
+                        String k = e.getKey();
+                        if (excludeKeys.contains(k) || k.startsWith("_")) continue;
+                        if (e.getValue() == null) continue;
+                        tagKey.append(k).append("=").append(e.getValue()).append("|");
+                        tagMap.put(k, e.getValue());
+                    }
+                    String slotKey = tagKey + "@" + t;
+                    Map<String, Object> slot = slots.computeIfAbsent(slotKey, k -> {
+                        Map<String, Object> s = new LinkedHashMap<>();
+                        s.put("t", t);
+                        s.put("tags", tagMap);
+                        s.put("le", new LinkedHashMap<String, Double>());
+                        s.put("count", null);
+                        return s;
+                    });
+
+                    if (m.equals(bucketMetric)) {
                         Object le = r.getValueByKey("le");
                         if (le == null) continue;
                         Object v = r.getValue();
                         if (v instanceof Number n) {
-                            slot.put("le=" + le, n.doubleValue());
+                            ((Map<String, Double>) slot.get("le")).put(le.toString(), n.doubleValue());
                         }
-                    } else if (m != null && m.equals(countMetric)) {
+                    } else if (m.equals(countMetric)) {
                         Object v = r.getValue();
-                        if (v instanceof Number n) slot.put("__count__", n.doubleValue());
+                        if (v instanceof Number n) slot.put("count", n.doubleValue());
                     }
                 }
             }
             List<Map<String, Object>> outPoints = new ArrayList<>();
-            for (Map.Entry<String, Map<String, Double>> e : timeBuckets.entrySet()) {
-                String t = e.getKey();
-                Map<String, Double> slot = e.getValue();
-                Double count = slot.get("__count__");
+            for (Map<String, Object> slot : slots.values()) {
+                Double count = (Double) slot.get("count");
                 if (count == null || count <= 0) continue;
-                List<Map.Entry<Double, Double>> sorted = slot.entrySet().stream()
-                        .filter(en -> en.getKey().startsWith("le="))
+                Map<String, Double> leMap = (Map<String, Double>) slot.get("le");
+                if (leMap.isEmpty()) continue;
+                List<Map.Entry<Double, Double>> sorted = leMap.entrySet().stream()
                         .map(en -> {
-                            Double le = parseLe(en.getKey().substring(3));
+                            Double le = parseLe(en.getKey());
                             return le == null ? null : Map.entry(le, en.getValue());
                         })
                         .filter(java.util.Objects::nonNull)
                         .sorted(Map.Entry.comparingByKey())
                         .toList();
                 Map<String, Object> point = new LinkedHashMap<>();
-                point.put("t", t);
+                point.put("t", slot.get("t"));
+                point.put("tags", slot.get("tags"));
                 for (Double q : quantiles) {
                     point.put("q" + (int) (q * 100), quantile(sorted, count, q));
                 }
