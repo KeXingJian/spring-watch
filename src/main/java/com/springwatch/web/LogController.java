@@ -42,7 +42,7 @@ public class LogController {
             @RequestParam(required = false) String fingerprint,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant to,
-            @RequestParam(defaultValue = "100") int limit) {
+            @RequestParam(defaultValue = "10") int limit) {
         Instant fromInstant = (from == null) ? Instant.now().minusSeconds(900) : from;
         Instant toInstant = (to == null) ? Instant.now() : to;
         log.info("[spring-watch: log search - appid={}, keyword={}, level={}, from={}, to={}]",

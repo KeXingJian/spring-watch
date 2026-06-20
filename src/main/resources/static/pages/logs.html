@@ -311,7 +311,7 @@
             if (!appid) return;
             const { from, to } = getFromTo();
             const params = {
-                appid, from, to, limit: 200,
+                appid, from, to, limit: 10,
                 keyword: document.getElementById("f-keyword").value.trim() || undefined,
                 level: document.getElementById("f-level").value || undefined,
                 logger: document.getElementById("f-logger").value.trim() || undefined,
