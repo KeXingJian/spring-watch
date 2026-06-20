@@ -56,7 +56,10 @@ public class NotificationController {
     }
 
     @PostMapping("/test")
-    public ApiResponse<Map<String, Object>> testEmail(@RequestParam("to") String to) {
+    public ApiResponse<Map<String, Object>> testEmail(@RequestParam(value = "to", required = false) String to) {
+        if (to == null || to.isBlank()) {
+            return ApiResponse.fail(40001, "缺少必填参数 to");
+        }
         log.info("[spring-watch: 测试邮件 - to={}]", to);
         String raw = configService.testEmail(to);
         // 简单解析 sendTestEmail 返回的 JSON 字符串

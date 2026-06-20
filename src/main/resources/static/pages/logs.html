@@ -276,7 +276,7 @@
                     { name: "warn", points: warn }
                 ], { area: true, yAxisName: "条" });
             } catch (e) {
-                console.log("[logs] 错误率时序加载失败", { appid, rangeSec, url: "/api/logs/stats/error-rate-series", err: e });
+                console.error("[logs] 错误率时序加载失败", { appid, rangeSec, url: "/api/logs/stats/error-rate-series", err: e });
                 renderEmpty("#chart-error-rate", "加载失败: " + (e && e.message ? e.message : e));
             }
         }
@@ -289,7 +289,7 @@
                 if (data.length === 0) { renderEmpty("#chart-levels", "暂无级别数据"); return; }
                 SW.chart.pie("#chart-levels", data, { name: "级别", donut: true });
             } catch (e) {
-                console.log("[logs] 级别分布加载失败", { appid, rangeSec, url: "/api/logs/levels", err: e });
+                console.error("[logs] 级别分布加载失败", { appid, rangeSec, url: "/api/logs/levels", err: e });
                 renderEmpty("#chart-levels", "加载失败: " + (e && e.message ? e.message : e));
             }
         }
@@ -444,7 +444,7 @@
                         { horizontal: true, yAxisName: "" });
                 }
             } catch (e) {
-                console.log("[logs] Top 异常模式加载失败", { appid, rangeSec, url: "/api/logs/patterns", err: e });
+                console.error("[logs] Top 异常模式加载失败", { appid, rangeSec, url: "/api/logs/patterns", err: e });
                 renderEmpty("#chart-patterns", "加载失败: " + (e && e.message ? e.message : e));
             }
             try {
@@ -457,7 +457,7 @@
                         { horizontal: true, yAxisName: "" });
                 }
             } catch (e) {
-                console.log("[logs] 高频去重模式加载失败", { appid, url: "/api/logs/dedup/top", err: e });
+                console.error("[logs] 高频去重模式加载失败", { appid, url: "/api/logs/dedup/top", err: e });
                 renderEmpty("#chart-dedup", "加载失败: " + (e && e.message ? e.message : e));
             }
         }
