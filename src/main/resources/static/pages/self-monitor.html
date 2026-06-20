@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>自身监控 - spring-watch</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+    <script src="/js/common.js"></script>
+    <style>
+        .self-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+        .self-row.three { grid-template-columns: repeat(3, 1fr); }
+        .self-row.full { grid-template-columns: 1fr; }
+        .kv-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px 18px; font-size: 0.85rem; }
+        .kv-grid .kv { display: flex; justify-content: space-between; border-bottom: 1px dashed var(--c-border); padding: 4px 0; }
+        .kv-grid .kv .k { color: var(--c-text-secondary); }
+        .kv-grid .kv .v { color: var(--c-text); font-weight: 500; font-family: ui-monospace, monospace; }
+        .meter-table th { position: sticky; top: 0; }
+        .meter-table td.num { text-align: right; font-family: ui-monospace, monospace; }
+        .meter-group-row td { background: var(--c-info-light); font-weight: 500; color: var(--c-text-secondary); }
+        .status-pill { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 0.72rem; font-weight: 500; }
+        .status-pill.ok { background: var(--c-success-light); color: var(--c-success); }
+        .status-pill.warn { background: var(--c-warn-light); color: var(--c-warn); }
+        .status-pill.bad { background: var(--c-danger-light); color: var(--c-danger); }
+    </style>
+</head>
+<body>
+<div class="page">
+    <div class="page-header">
+        <h2>&#128296; 自身监控</h2>
+        <span class="meta" id="meta-info">--</span>
+        <span class="spacer"></span>
+        <span id="health-pill" class="status-pill ok">采样中</span>
+    </div>
+
+    <!-- 概览卡片 -->
+    <div class="metric-cards" id="cards">
+        <div class="metric-card"><div class="title">在线应用</div><div><span id="card-apps" class="value">-</span><span class="unit">个</span></div><div class="sub" id="card-apps-sub">加载中…</div></div>
+        <div class="metric-card"><div class="title">JVM 堆使用率</div><div><span id="card-heap" class="value">-</span></div><div class="sub" id="card-heap-sub">-</div></div>
+        <div class="metric-card"><div class="title">进程 CPU</div><div><span id="card-cpu" class="value">-</span></div><div class="sub" id="card-cpu-sub">-</div></div>
+        <div class="metric-card"><div class="title">启动时长</div><div><span id="card-uptime" class="value">-</span></div><div class="sub" id="card-uptime-sub">-</div></div>
+        <div class="metric-card"><div class="title">活跃 HTTP 抓取</div><div><span id="card-active" class="value">-</span><span class="unit">请求</span></div><div class="sub">实时并发数</div></div>
+        <div class="metric-card"><div class="title">重试队列</div><div><span id="card-retry" class="value">-</span><span class="unit">条</span></div><div class="sub" id="card-retry-sub">-</div></div>
+        <div class="metric-card"><div class="title">Kafka 兜底队列</div><div><span id="card-kafka" class="value">-</span><span class="unit">条</span></div><div class="sub">Kafka 发送失败时本地堆积</div></div>
+        <div class="metric-card"><div class="title">线程数</div><div><span id="card-threads" class="value">-</span></div><div class="sub" id="card-threads-sub">守护/峰值</div></div>
+    </div>
+
+    <!-- 1. 采集流量 -->
+    <div class="section-title">1 · 采集流量(事件/秒)</div>
+    <div class="self-row">
+        <div class="chart-panel"><div class="panel-head">指标 / 日志 / DLQ 接收速率<span class="tag" id="traffic-tag">--</span></div><div id="chart-traffic" class="panel-body has-chart"></div></div>
+        <div class="chart-panel"><div class="panel-head">日志去重 & 告警候选<span class="tag">drop/s vs alert/s</span></div><div id="chart-dedup" class="panel-body has-chart"></div></div>
+    </div>
+
+    <!-- 2. 采集失败 -->
+    <div class="section-title">2 · 采集失败(事件/秒)</div>
+    <div class="self-row full">
+        <div class="chart-panel"><div class="panel-head">入库失败分类<span class="tag">堆积说明写入侧健康度</span></div><div id="chart-fail" class="panel-body has-chart"></div></div>
+    </div>
+
+    <!-- 3. 写入与去重耗时 -->
+    <div class="section-title">3 · 写入与去重耗时</div>
+    <div class="self-row">
+        <div class="chart-panel"><div class="panel-head">指标 / 日志 写入平均延迟<span class="tag">ms</span></div><div id="chart-write" class="panel-body has-chart"></div></div>
+        <div class="chart-panel"><div class="panel-head">日志去重 keep/drop/flush 速率<span class="tag">op/s</span></div><div id="chart-dedup-op" class="panel-body has-chart"></div></div>
+    </div>
+
+    <!-- 4. 查询服务 -->
+    <div class="section-title">4 · 查询服务(请求/秒)</div>
+    <div class="self-row">
+        <div class="chart-panel"><div class="panel-head">指标查询 QPS<span class="tag">最近 10 分钟</span></div><div id="chart-metric-q" class="panel-body has-chart"></div></div>
+        <div class="chart-panel"><div class="panel-head">日志查询 QPS<span class="tag">最近 10 分钟</span></div><div id="chart-log-q" class="panel-body has-chart"></div></div>
+    </div>
+
+    <!-- 5. HTTP 抓取 -->
+    <div class="section-title">5 · 主动抓取客户端</div>
+    <div class="self-row">
+        <div class="chart-panel"><div class="panel-head">抓取结果分布<span class="tag">req/s</span></div><div id="chart-http-outcome" class="panel-body has-chart"></div></div>
+        <div class="chart-panel"><div class="panel-head">抓取平均延迟<span class="tag">ms</span></div><div id="chart-http-lat" class="panel-body has-chart"></div></div>
+    </div>
+
+    <!-- 6. JVM -->
+    <div class="section-title">6 · JVM 运行时</div>
+    <div class="self-row">
+        <div class="chart-panel"><div class="panel-head">内存分布<span class="tag">MB</span></div><div id="chart-jvm-mem" class="panel-body has-chart"></div></div>
+        <div class="chart-panel"><div class="panel-head">线程数与类加载<span class="tag">个</span></div><div id="chart-jvm-threads" class="panel-body has-chart"></div></div>
+    </div>
+    <div class="self-row full">
+        <div class="chart-panel"><div class="panel-head">GC 暂停时间(各收集器,ms/采样周期)<span class="tag">越大说明 GC 压力越重</span></div><div id="chart-jvm-gc" class="panel-body has-chart"></div></div>
+    </div>
+
+    <!-- 7. 进程资源 -->
+    <div class="section-title">7 · 进程与主机</div>
+    <div class="self-row three">
+        <div class="chart-panel"><div class="panel-head">CPU 占用<span class="tag">0~100%</span></div><div id="chart-proc-cpu" class="panel-body has-chart"></div></div>
+        <div class="chart-panel"><div class="panel-head">进程 RSS<span class="tag">MB</span></div><div id="chart-proc-rss" class="panel-body has-chart"></div></div>
+        <div class="chart-panel"><div class="panel-head">系统资源<span class="tag">MB / 核</span></div><div id="proc-system" class="panel-body" style="padding:12px 14px;">
+            <div class="kv-grid">
+                <div class="kv"><span class="k">系统 CPU 负载</span><span class="v" id="kv-sys-cpu">-</span></div>
+                <div class="kv"><span class="k">系统总内存</span><span class="v" id="kv-sys-total">-</span></div>
+                <div class="kv"><span class="k">系统可用内存</span><span class="v" id="kv-sys-free">-</span></div>
+                <div class="kv"><span class="k">磁盘可用</span><span class="v" id="kv-disk">-</span></div>
+                <div class="kv"><span class="k">CPU 核数</span><span class="v" id="kv-cores">-</span></div>
+                <div class="kv"><span class="k">JVM 启动时长</span><span class="v" id="kv-uptime">-</span></div>
+            </div>
+        </div></div>
+    </div>
+
+    <!-- 8. 原始指标表 -->
+    <div class="section-title">8 · 原始 Micrometer 指标(只读)</div>
+    <div class="chart-panel">
+        <div class="panel-head">所有 spring.watch.* 指标<span class="tag" id="meter-count">--</span></div>
+        <div class="panel-body" style="max-height:420px;overflow:auto;">
+            <table class="data meter-table" id="meter-table">
+                <thead><tr><th>指标</th><th>类型</th><th style="text-align:right;">值</th><th style="text-align:right;">count</th><th style="text-align:right;">total ms</th><th style="text-align:right;">max ms</th></tr></thead>
+                <tbody id="meter-tbody"><tr><td colspan="6" style="text-align:center;color:var(--c-text-muted);">加载中…</td></tr></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+(function () {
+    "use strict";
+
+    // ============================ 状态 ============================
+    let realtime = null;
+    let timeseries = [];   // 升序,最新在末尾
+    let appCount = null;
+
+    // ============================ 工具 ============================
+    function fmtBytes(n) { return n == null ? "-" : SW.ui.formatBytes(n); }
+    function fmtUptime(sec) {
+        if (sec == null) return "-";
+        const d = Math.floor(sec / 86400);
+        const h = Math.floor((sec % 86400) / 3600);
+        const m = Math.floor((sec % 3600) / 60);
+        if (d > 0) return d + "d " + h + "h";
+        if (h > 0) return h + "h " + m + "m";
+        return m + "m " + (sec % 60) + "s";
+    }
+    function rateAt(idx, key) {
+        if (idx <= 0) return 0;
+        const cur = timeseries[idx].meters.counters[key] || 0;
+        const prev = timeseries[idx - 1].meters.counters[key] || 0;
+        const dt = (timeseries[idx].ts - timeseries[idx - 1].ts) / 1000;
+        return dt > 0 ? (cur - prev) / dt : 0;
+    }
+    function meanLatencyAt(idx, key) {
+        if (idx <= 0) return null;
+        const cur = (timeseries[idx].meters.timers || {})[key];
+        const prev = (timeseries[idx - 1].meters.timers || {})[key];
+        if (!cur || !prev) return null;
+        const dc = cur.count - prev.count;
+        const dt = cur.totalMs - prev.totalMs;
+        return dc > 0 ? dt / dc : null;
+    }
+    function tsAt(i) { return timeseries[i] ? timeseries[i].ts : null; }
+    function groupOf(name) {
+        if (name.startsWith("spring.watch.consumer.metric")) return "指标采集";
+        if (name.startsWith("spring.watch.consumer.log")) return "日志采集";
+        if (name.startsWith("spring.watch.consumer.dlq")) return "DLQ";
+        if (name.startsWith("spring.watch.metric.query")) return "指标查询";
+        if (name.startsWith("spring.watch.log.query")) return "日志查询";
+        if (name.startsWith("spring.watch.aggregator.log")) return "日志聚合";
+        if (name.startsWith("spring.watch.ingest.log.dedup")) return "日志去重";
+        if (name.startsWith("spring.watch.collector.http")) return "HTTP 抓取";
+        if (name.startsWith("spring.watch.collector.retry")) return "重投队列";
+        if (name.startsWith("spring.watch.collector.kafka")) return "Kafka 兜底";
+        if (name.startsWith("spring.watch.collector.host")) return "主机限流";
+        return "其他";
+    }
+    function groupOrder() {
+        return ["指标采集", "日志采集", "DLQ", "指标查询", "日志查询", "日志聚合", "日志去重", "HTTP 抓取", "重投队列", "Kafka 兜底", "主机限流", "其他"];
+    }
+    function gaugeVal(name) {
+        if (!realtime || !realtime.meters) return null;
+        return (realtime.meters.gauges || {})[name];
+    }
+
+    // ============================ 总览卡片 ============================
+    function renderCards() {
+        const pill = document.getElementById("health-pill");
+        if (!realtime) {
+            pill.className = "status-pill warn"; pill.textContent = "未就绪";
+            return;
+        }
+        const jvm = realtime.jvm || {};
+        const proc = realtime.process || {};
+        const heap = (jvm.heap || {});
+        const used = heap.used || 0, max = heap.max || -1;
+        const heapPct = max > 0 ? used / max : 0;
+        const cpu = proc.cpuLoad || 0;
+        const heapColor = heapPct > 0.85 ? "danger" : heapPct > 0.7 ? "warn" : "";
+        const cpuColor = cpu > 0.85 ? "danger" : cpu > 0.7 ? "warn" : "";
+        setText("card-heap", SW.ui.formatPercent(heapPct, 1));
+        document.getElementById("card-heap").className = "value " + heapColor;
+        setText("card-heap-sub", SW.ui.formatBytes(used) + " / " + (max > 0 ? SW.ui.formatBytes(max) : "-"));
+        setText("card-cpu", SW.ui.formatPercent(cpu, 1));
+        document.getElementById("card-cpu").className = "value " + cpuColor;
+        setText("card-cpu-sub", "系统 " + SW.ui.formatPercent(proc.systemCpuLoad || 0, 1));
+        setText("card-uptime", fmtUptime(jvm.uptimeSec));
+        setText("card-uptime-sub", "采样 " + (realtime.iso || "-"));
+        setText("card-active", fmtNum(gaugeVal("spring.watch.collector.http.active")));
+        setText("card-retry", fmtNum(gaugeVal("spring.watch.collector.retry.queue.size")));
+        setText("card-retry-sub", "已注册主机 " + fmtNum(gaugeVal("spring.watch.collector.host_throttler.active")));
+        setText("card-kafka", fmtNum(gaugeVal("spring.watch.collector.kafka.fallback.size")));
+        const th = jvm.threads || {};
+        setText("card-threads", th.current == null ? "-" : th.current);
+        setText("card-threads-sub", "守护 " + (th.daemon || 0) + " / 峰值 " + (th.peak || 0));
+        setText("card-apps", appCount == null ? "-" : appCount);
+        setText("card-apps-sub", "已注册监控应用");
+        // 进程区
+        setText("kv-sys-cpu", SW.ui.formatPercent(proc.systemCpuLoad || 0, 1));
+        setText("kv-sys-total", SW.ui.formatBytes(proc.systemTotalBytes));
+        setText("kv-sys-free", SW.ui.formatBytes(proc.systemFreeBytes));
+        setText("kv-disk", SW.ui.formatBytes(proc.diskFreeBytes));
+        setText("kv-cores", (proc.cpuCores || 0) + " 核");
+        setText("kv-uptime", fmtUptime(jvm.uptimeSec));
+        // 健康
+        if (heapPct > 0.9 || cpu > 0.9) { pill.className = "status-pill bad"; pill.textContent = "高负载"; }
+        else if (heapPct > 0.75 || cpu > 0.75) { pill.className = "status-pill warn"; pill.textContent = "负载偏高"; }
+        else { pill.className = "status-pill ok"; pill.textContent = "正常"; }
+        setText("meta-info", "采样间隔 10s · 环形缓冲 1h · " + (realtime.iso || ""));
+    }
+
+    function setText(id, v) { const el = document.getElementById(id); if (el) el.textContent = v; }
+    function fmtNum(n) {
+        if (n == null || isNaN(n)) return "-";
+        return n.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    }
+
+    // ============================ 图表:采集流量 ============================
+    function renderTraffic() {
+        const xData = timeseries.map(s => s.ts);
+        const series = [
+            { name: "指标 received/s", points: timeseries.map((s, i) => [s.ts, rateAt(i, "spring.watch.consumer.metric.received")]) },
+            { name: "日志 received/s", points: timeseries.map((s, i) => [s.ts, rateAt(i, "spring.watch.consumer.log.received")]) },
+            { name: "日志 kept/s", points: timeseries.map((s, i) => [s.ts, rateAt(i, "spring.watch.consumer.log.kept")]) },
+            { name: "DLQ persisted/s", points: timeseries.map((s, i) => [s.ts, rateAt(i, "spring.watch.consumer.dlq.persisted")]) }
+        ];
+        SW.chart.line("#chart-traffic", series, { area: true, yAxisName: "evt/s" });
+        setText("traffic-tag", xData.length + " 个采样点");
+    }
+    function renderDedup() {
+        const series = [
+            { name: "日志 deduped/s", points: timeseries.map((s, i) => [s.ts, rateAt(i, "spring.watch.consumer.log.deduped")]) },
+            { name: "告警候选/s", points: timeseries.map((s, i) => [s.ts, rateAt(i, "spring.watch.consumer.log.alert_candidate")]) }
+        ];
+        SW.chart.line("#chart-dedup", series, { area: true, yAxisName: "evt/s" });
+    }
+
+    // ============================ 图表:采集失败 ============================
+    function renderFail() {
+        const series = [
+            { name: "指标 parse_fail", points: timeseries.map((s, i) => [s.ts, rateAt(i, "spring.watch.consumer.metric.parse_fail")]) },
+            { name: "指标 write_fail", points: timeseries.map((s, i) => [s.ts, rateAt(i, "spring.watch.consumer.metric.write_fail")]) },
+            { name: "日志 parse_fail", points: timeseries.map((s, i) => [s.ts, rateAt(i, "spring.watch.consumer.log.parse_fail")]) },
+            { name: "日志 write_fail", points: timeseries.map((s, i) => [s.ts, rateAt(i, "spring.watch.consumer.log.write_fail")]) },
+            { name: "DLQ persist_fail", points: timeseries.map((s, i) => [s.ts, rateAt(i, "spring.watch.consumer.dlq.persist_fail")]) }
+        ];
+        SW.chart.line("#chart-fail", series, { area: true, yAxisName: "fail/s" });
+    }
+
+    // ============================ 图表:写入延迟 ============================
+    function renderWrite() {
+        const series = [
+            { name: "指标写入均延迟 ms", points: timeseries.map((s, i) => [s.ts, meanLatencyAt(i, "spring.watch.consumer.metric.write") || 0]) },
+            { name: "日志写入均延迟 ms", points: timeseries.map((s, i) => [s.ts, meanLatencyAt(i, "spring.watch.consumer.log.write") || 0]) }
+        ];
+        SW.chart.line("#chart-write", series, { yAxisName: "ms" });
+    }
+    function renderDedupOp() {
+        const series = [
+            { name: "keep/s", points: timeseries.map((s, i) => [s.ts, rateAt(i, "spring.watch.ingest.log.dedup.keep")]) },
+            { name: "drop/s", points: timeseries.map((s, i) => [s.ts, rateAt(i, "spring.watch.ingest.log.dedup.drop")]) },
+            { name: "flush/s", points: timeseries.map((s, i) => [s.ts, rateAt(i, "spring.watch.ingest.log.dedup.flush")]) },
+            { name: "flush_fail/s", points: timeseries.map((s, i) => [s.ts, rateAt(i, "spring.watch.ingest.log.dedup.flush_fail")]) }
+        ];
+        SW.chart.line("#chart-dedup-op", series, { area: true, yAxisName: "op/s" });
+    }
+
+    // ============================ 图表:查询 ============================
+    function buildQuerySeries(prefix, name) {
+        const samples = timeseries;
+        const last = samples[samples.length - 1];
+        if (!last) return { categories: [], series: [] };
+        const keys = Object.keys(last.meters.counters || {}).filter(k => k.startsWith(prefix) && k.endsWith("." + name)).sort();
+        const cats = keys.map(k => k.slice(prefix.length));
+        const data = keys.map(k => samples[samples.length - 1].meters.counters[k] || 0);
+        return { categories: cats, series: [{ name: name, data: data }] };
+    }
+    function buildQueryRateSeries(prefix, name) {
+        const samples = timeseries;
+        const last = samples[samples.length - 1];
+        if (!last) return { categories: [], series: [] };
+        const keys = Object.keys(last.meters.counters || {}).filter(k => k.startsWith(prefix) && k.endsWith("." + name)).sort();
+        const cats = keys.map(k => k.slice(prefix.length));
+        const data = keys.map(k => {
+            const i = samples.length - 1;
+            return rateAt(i, k);
+        });
+        return { categories: cats, series: [{ name: name + "/s", data: data }] };
+    }
+    function renderMetricQuery() {
+        const d = buildQueryRateSeries("spring.watch.metric.query.", "fail");
+        const d2 = buildQueryRateSeries("spring.watch.metric.query.", "empty_result");
+        d.categories = d.categories.map(c => c.replace(".fail", ""));
+        d2.categories = d2.categories.map(c => c.replace(".empty_result", ""));
+        // 主图: fail (横向柱), 副图: 全部 endpoint 的 QPS 用其他方式
+        const samples = timeseries;
+        const last = samples[samples.length - 1];
+        const allKeys = Object.keys(last.meters.counters || {}).filter(k => k.startsWith("spring.watch.metric.query.") && k.endsWith(".fail"));
+        const allCats = allKeys.map(k => k.slice("spring.watch.metric.query.".length).replace(/\.fail$/, ""));
+        // 用 endpoint 的 fail 速率作为对比
+        const failData = allKeys.map(k => rateAt(samples.length - 1, k));
+        // 用空结果速率作为补充
+        const emptyData = allKeys.map(k => rateAt(samples.length - 1, k.replace(".fail", ".empty_result")));
+        SW.chart.bar("#chart-metric-q", { categories: allCats, series: [{ name: "fail/s", data: failData }, { name: "empty_result/s", data: emptyData }] }, { horizontal: true, yAxisName: "req/s" });
+    }
+    function renderLogQuery() {
+        const samples = timeseries;
+        const last = samples[samples.length - 1];
+        if (!last) return;
+        const allKeys = Object.keys(last.meters.counters || {}).filter(k => k.startsWith("spring.watch.log.query.") && k.endsWith(".fail"));
+        const cats = allKeys.map(k => k.slice("spring.watch.log.query.".length).replace(/\.fail$/, ""));
+        const failData = allKeys.map(k => rateAt(samples.length - 1, k));
+        SW.chart.bar("#chart-log-q", { categories: cats, series: [{ name: "fail/s", data: failData }] }, { horizontal: true, yAxisName: "req/s" });
+    }
+
+    // ============================ 图表:HTTP 抓取 ============================
+    function renderHttpOutcome() {
+        const series = [
+            { name: "success/s", points: timeseries.map((s, i) => [s.ts, rateAt(i, "spring.watch.collector.http.success")]) },
+            { name: "failure/s", points: timeseries.map((s, i) => [s.ts, rateAt(i, "spring.watch.collector.http.failure")]) },
+            { name: "timeout/s", points: timeseries.map((s, i) => [s.ts, rateAt(i, "spring.watch.collector.http.timeout")]) },
+            { name: "non2xx/s", points: timeseries.map((s, i) => [s.ts, rateAt(i, "spring.watch.collector.http.non2xx")]) }
+        ];
+        SW.chart.line("#chart-http-outcome", series, { area: true, yAxisName: "req/s" });
+    }
+    function renderHttpLat() {
+        const series = [
+            { name: "均延迟 ms", points: timeseries.map((s, i) => [s.ts, meanLatencyAt(i, "spring.watch.collector.http.request") || 0]) },
+            { name: "重投 enqueue/s", points: timeseries.map((s, i) => [s.ts, rateAt(i, "spring.watch.collector.retry.enqueued")]) },
+            { name: "重投 dropped/s", points: timeseries.map((s, i) => [s.ts, rateAt(i, "spring.watch.collector.retry.dropped")]) }
+        ];
+        SW.chart.line("#chart-http-lat", series, { yAxisName: "ms / op·s" });
+    }
+
+    // ============================ 图表:JVM ============================
+    function renderJvmMem() {
+        const series = [
+            { name: "堆已用 MB", points: timeseries.map(s => [s.ts, (s.jvm.heap.used || 0) / 1048576]) },
+            { name: "Metaspace MB", points: timeseries.map(s => [s.ts, (s.jvm.metaspace.used || 0) / 1048576]) },
+            { name: "非堆 MB", points: timeseries.map(s => [s.ts, (s.jvm.nonHeap.used || 0) / 1048576]) }
+        ];
+        SW.chart.line("#chart-jvm-mem", series, { area: true, yAxisName: "MB" });
+    }
+    function renderJvmThreads() {
+        const series = [
+            { name: "线程数", points: timeseries.map(s => [s.ts, s.jvm.threads.current || 0]) },
+            { name: "守护线程", points: timeseries.map(s => [s.ts, s.jvm.threads.daemon || 0]) },
+            { name: "已加载类", points: timeseries.map(s => [s.ts, s.jvm.classes.loaded || 0]) }
+        ];
+        SW.chart.line("#chart-jvm-threads", series, { yAxisName: "个" });
+    }
+    function renderJvmGc() {
+        // 每个采样周期,GC 增量(暂停时间)
+        const last = timeseries.length - 1;
+        const keys = new Set();
+        timeseries.forEach(s => (s.jvm.gc || []).forEach(g => keys.add(g.name)));
+        const series = [];
+        for (const name of keys) {
+            const points = [];
+            for (let i = 0; i < timeseries.length; i++) {
+                const cur = (timeseries[i].jvm.gc || []).find(g => g.name === name);
+                const prev = i > 0 ? (timeseries[i - 1].jvm.gc || []).find(g => g.name === name) : null;
+                const inc = cur && prev ? (cur.timeMs - prev.timeMs) : 0;
+                points.push([timeseries[i].ts, inc]);
+            }
+            series.push({ name: name, points: points });
+        }
+        SW.chart.line("#chart-jvm-gc", series, { area: true, yAxisName: "ms/周期" });
+    }
+
+    // ============================ 图表:进程 ============================
+    function renderProcCpu() {
+        const series = [
+            { name: "进程 CPU", points: timeseries.map(s => [s.ts, (s.process.cpuLoad || 0) * 100]) },
+            { name: "系统 CPU", points: timeseries.map(s => [s.ts, (s.process.systemCpuLoad || 0) * 100]) }
+        ];
+        SW.chart.line("#chart-proc-cpu", series, { yAxisName: "%" });
+    }
+    function renderProcRss() {
+        const series = [
+            { name: "JVM 堆已用 MB", points: timeseries.map(s => [s.ts, (s.process.rssBytes || 0) / 1048576]) },
+            { name: "进程虚拟内存 MB", points: timeseries.map(s => [s.ts, (s.process.virtualBytes || 0) / 1048576]) }
+        ];
+        SW.chart.line("#chart-proc-rss", series, { yAxisName: "MB" });
+    }
+
+    // ============================ 原始指标表 ============================
+    function renderMeterTable() {
+        if (!realtime || !realtime.meters) {
+            document.getElementById("meter-tbody").innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--c-text-muted);">暂无数据</td></tr>';
+            return;
+        }
+        const counters = realtime.meters.counters || {};
+        const timers = realtime.meters.timers || {};
+        const gauges = realtime.meters.gauges || {};
+        const rows = [];
+        for (const k of Object.keys(counters).sort()) rows.push({ name: k, type: "Counter", val: counters[k], count: null, total: null, max: null, group: groupOf(k) });
+        for (const k of Object.keys(timers).sort()) {
+            const t = timers[k];
+            rows.push({ name: k, type: "Timer", val: null, count: t.count, total: t.totalMs, max: t.maxMs, group: groupOf(k) });
+        }
+        for (const k of Object.keys(gauges).sort()) rows.push({ name: k, type: "Gauge", val: gauges[k], count: null, total: null, max: null, group: groupOf(k) });
+        const order = groupOrder();
+        rows.sort((a, b) => {
+            const ga = order.indexOf(a.group), gb = order.indexOf(b.group);
+            if (ga !== gb) return ga - gb;
+            return a.name.localeCompare(b.name);
+        });
+        let html = "", lastGroup = null;
+        for (const r of rows) {
+            if (r.group !== lastGroup) {
+                html += '<tr class="meter-group-row"><td colspan="6">' + SW.ui.escapeHtml(r.group) + '</td></tr>';
+                lastGroup = r.group;
+            }
+            html += '<tr>'
+                + '<td>' + SW.ui.escapeHtml(r.name) + '</td>'
+                + '<td><span class="badge badge-info">' + r.type + '</span></td>'
+                + '<td class="num">' + (r.val == null ? "-" : fmtNum(r.val)) + '</td>'
+                + '<td class="num">' + (r.count == null ? "-" : fmtNum(r.count)) + '</td>'
+                + '<td class="num">' + (r.total == null ? "-" : r.total.toFixed(1)) + '</td>'
+                + '<td class="num">' + (r.max == null ? "-" : r.max.toFixed(2)) + '</td>'
+                + '</tr>';
+        }
+        document.getElementById("meter-tbody").innerHTML = html;
+        setText("meter-count", rows.length + " 条");
+    }
+
+    // ============================ 渲染入口 ============================
+    function renderAll() {
+        renderCards();
+        if (timeseries.length < 2) return;
+        renderTraffic();
+        renderDedup();
+        renderFail();
+        renderWrite();
+        renderDedupOp();
+        renderMetricQuery();
+        renderLogQuery();
+        renderHttpOutcome();
+        renderHttpLat();
+        renderJvmMem();
+        renderJvmThreads();
+        renderJvmGc();
+        renderProcCpu();
+        renderProcRss();
+        renderMeterTable();
+    }
+
+    // ============================ 轮询 ============================
+    async function pollRealtime() {
+        try {
+            const resp = await SW.api.get("/api/self/realtime");
+            realtime = (resp && resp.sample) || null;
+            if (appCount == null) {
+                try { const apps = await SW.api.get("/api/apps/active"); appCount = (apps || []).length; }
+                catch (e) { appCount = 0; }
+            }
+            renderCards();
+        } catch (e) { /* 静默 */ }
+    }
+    async function pollTimeseries() {
+        try {
+            const resp = await SW.api.get("/api/self/timeseries", { window: 60 });
+            timeseries = (resp && resp.samples) || [];
+            renderAll();
+        } catch (e) { /* 静默 */ }
+    }
+
+    pollRealtime();
+    pollTimeseries();
+    setInterval(pollRealtime, 5000);
+    setInterval(pollTimeseries, 10000);
+})();
+</script>
+</body>
+</html>

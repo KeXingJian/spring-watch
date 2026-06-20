@@ -77,7 +77,9 @@ public class LogAggregator {
                   |> filter(fn: (r) => r.appid == "%d")
                   |> filter(fn: (r) => r._field == "message")
                   |> group(columns: ["level"])
-                  |> count()
+                  |> count(column: "_value")
+                  |> keep(columns: ["_value", "level"])
+                  |> group()
                 """, logBucket, from, to, appid);
 
         AtomicLong total = new AtomicLong();
@@ -103,7 +105,7 @@ public class LogAggregator {
                     });
         } catch (Exception e) {
             queryFailCounter.increment();
-            log.warn("[spring-watch: LogAggregator errorRate查询失败 - appid={}, error={}]", appid, e.getMessage());
+            log.warn("[spring-watch: LogAggregator errorRate查询失败 - appid={}, error={}]", appid, e.getMessage(), e);
         } finally {
             errorRateTimer.record(Duration.ofNanos(System.nanoTime() - start));
         }
@@ -130,7 +132,9 @@ public class LogAggregator {
                   |> filter(fn: (r) => r.level == "ERROR")
                   |> filter(fn: (r) => r._field == "message")
                   |> group(columns: ["fingerprint"])
-                  |> count()
+                  |> count(column: "_value")
+                  |> keep(columns: ["_value", "fingerprint"])
+                  |> group()
                   |> sort(columns: ["_value"], desc: true)
                   |> limit(n: %d)
                 """, logBucket, from, to, appid, safeTop);
@@ -155,7 +159,7 @@ public class LogAggregator {
         } catch (Exception e) {
             queryFailCounter.increment();
             log.warn("[spring-watch: LogAggregator topPatterns查询失败 - appid={}, error={}]",
-                    appid, e.getMessage());
+                    appid, e.getMessage(), e);
         } finally {
             topPatternsTimer.record(Duration.ofNanos(System.nanoTime() - start));
         }
@@ -176,8 +180,11 @@ public class LogAggregator {
                   |> filter(fn: (r) => r._measurement == "app_log")
                   |> filter(fn: (r) => r.appid == "%d")
                   |> filter(fn: (r) => r._field == "message")
-                  |> aggregateWindow(every: %s, fn: count, createEmpty: true)
-                  |> group(columns: ["_time", "level"])
+                  |> group(columns: ["level"])
+                  |> aggregateWindow(every: %s, fn: count, createEmpty: false)
+                  |> keep(columns: ["_time", "_value", "level"])
+                  |> group()
+                  |> sort(columns: ["_time"], desc: false)
                 """, logBucket, from, to, appid, window);
 
         List<ErrorRatePoint> series = new ArrayList<>();
@@ -197,7 +204,7 @@ public class LogAggregator {
                     .forEach(series::add);
         } catch (Exception e) {
             queryFailCounter.increment();
-            log.warn("[spring-watch: LogAggregator errorRateSeries查询失败 - appid={}, error={}]", appid, e.getMessage());
+            log.warn("[spring-watch: LogAggregator errorRateSeries查询失败 - appid={}, error={}]", appid, e.getMessage(), e);
         } finally {
             errorRateSeriesTimer.record(Duration.ofNanos(System.nanoTime() - start));
         }

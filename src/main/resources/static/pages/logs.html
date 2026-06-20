@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>日志分析 - spring-watch</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <script src="/js/echarts.min.js"></script>
+    <script src="/js/common.js"></script>
+    <style>
+        body { margin: 0; }
+        .log-shell { padding: 16px 20px; max-width: 1500px; margin: 0 auto; }
+        .toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+        .toolbar .seg { display: inline-flex; }
+        .toolbar .seg .btn { border-radius: 0; margin-left: -1px; }
+        .toolbar .seg .btn:first-child { border-top-left-radius: var(--radius-sm); border-bottom-left-radius: var(--radius-sm); }
+        .toolbar .seg .btn:last-child { border-top-right-radius: var(--radius-sm); border-bottom-right-radius: var(--radius-sm); }
+        .toolbar .seg .btn.active { background: var(--c-primary); color: #fff; border-color: var(--c-primary); }
+        .toolbar .right { margin-left: auto; }
+
+        .log-cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 14px; }
+        .log-card { background: var(--c-card); border: 1px solid var(--c-border); border-radius: var(--radius-md); padding: 12px 14px; box-shadow: var(--shadow-sm); }
+        .log-card .title { color: var(--c-text-secondary); font-size: 0.78rem; margin-bottom: 4px; }
+        .log-card .value { font-size: 1.5rem; font-weight: 600; }
+        .log-card .sub { color: var(--c-text-muted); font-size: 0.74rem; margin-top: 4px; }
+
+        .chart-row { display: grid; grid-template-columns: 2fr 1fr; gap: 14px; margin-bottom: 14px; }
+        .chart-row .chart-panel { background: var(--c-card); border: 1px solid var(--c-border); border-radius: var(--radius-md); box-shadow: var(--shadow-sm); overflow: hidden; }
+        .chart-row .panel-head { padding: 10px 14px; border-bottom: 1px solid var(--c-border); font-size: 0.9rem; font-weight: 500; display: flex; align-items: center; }
+        .chart-row .panel-head .tag { font-size: 0.7rem; color: var(--c-text-muted); margin-left: auto; font-weight: 400; }
+        .chart-row .panel-body.has-chart { height: 280px; }
+
+        .log-table { background: var(--c-card); border: 1px solid var(--c-border); border-radius: var(--radius-md); box-shadow: var(--shadow-sm); overflow: hidden; margin-bottom: 14px; }
+        .log-table .panel-head { padding: 10px 14px; border-bottom: 1px solid var(--c-border); font-size: 0.9rem; font-weight: 500; display: flex; align-items: center; gap: 8px; }
+        .log-table .panel-head .tag { font-size: 0.7rem; color: var(--c-text-muted); margin-left: auto; font-weight: 400; }
+        .log-table table.data { font-size: 0.82rem; }
+        .log-table td.message { max-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .log-table td.message.expanded { white-space: pre-wrap; word-break: break-all; max-width: none; }
+        .log-table td .actions { display: flex; gap: 4px; }
+        .log-table td code { background: #f1f5f9; padding: 1px 5px; border-radius: 3px; font-size: 0.75rem; }
+        .log-table .row-error { background: rgba(220, 38, 38, 0.04); }
+        .log-table .row-warn { background: rgba(234, 88, 12, 0.04); }
+
+        .level-tag { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 0.7rem; font-weight: 600; font-family: var(--font-mono, monospace); }
+        .level-tag.INFO { background: #dbeafe; color: #1e40af; }
+        .level-tag.DEBUG { background: #f1f5f9; color: #475569; }
+        .level-tag.WARN { background: #fef3c7; color: #92400e; }
+        .level-tag.ERROR { background: #fee2e2; color: #991b1b; }
+        .level-tag.UNKNOWN { background: #e2e8f0; color: #475569; }
+
+        .filters { display: flex; gap: 8px; flex-wrap: wrap; padding: 10px 14px; border-bottom: 1px solid var(--c-border); align-items: center; }
+        .filters input.form, .filters select.form { width: auto; min-width: 100px; }
+        .filters .label { color: var(--c-text-secondary); font-size: 0.78rem; }
+
+        .pagination { padding: 10px 14px; display: flex; align-items: center; gap: 8px; border-top: 1px solid var(--c-border); }
+        .pagination .right { margin-left: auto; color: var(--c-text-muted); font-size: 0.78rem; }
+
+        pre.log-detail { background: #0f172a; color: #e2e8f0; padding: 10px 12px; border-radius: var(--radius-sm); font-size: 0.78rem; overflow-x: auto; max-height: 300px; white-space: pre-wrap; word-break: break-all; }
+        .empty-state { padding: 30px 20px; text-align: center; color: var(--c-text-muted); font-size: 0.9rem; }
+        .fp-row td.fp { font-family: var(--font-mono, monospace); font-size: 0.74rem; color: var(--c-text-muted); max-width: 140px; overflow: hidden; text-overflow: ellipsis; }
+        .fp-row td.pattern { max-width: 360px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .pattern-text { max-width: 360px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: inline-block; vertical-align: middle; }
+    </style>
+</head>
+<body>
+    <div class="log-shell">
+        <div class="toolbar">
+            <span class="label">时间范围:</span>
+            <div class="seg" id="range-seg">
+                <button class="btn btn-sm" data-sec="900">15m</button>
+                <button class="btn btn-sm active" data-sec="3600">1h</button>
+                <button class="btn btn-sm" data-sec="21600">6h</button>
+                <button class="btn btn-sm" data-sec="86400">24h</button>
+            </div>
+            <span class="right"></span>
+            <button class="btn" id="btn-refresh">刷新</button>
+        </div>
+
+        <div class="log-cards">
+            <div class="log-card"><div class="title">总日志(全级别)</div><div class="value" id="card-total">-</div><div class="sub">最近 1h</div></div>
+            <div class="log-card"><div class="title">ERROR 数</div><div class="value" id="card-error">-</div><div class="sub" id="card-error-sub">错误率 -</div></div>
+            <div class="log-card"><div class="title">WARN 数</div><div class="value" id="card-warn">-</div><div class="sub">告警关注</div></div>
+            <div class="log-card"><div class="title">错误率突增</div><div class="value" id="card-spike">-</div><div class="sub" id="card-spike-sub">倍数阈值 3.0</div></div>
+        </div>
+
+        <div class="chart-row">
+            <div class="chart-panel">
+                <div class="panel-head">错误率时序 <span class="tag">total / error / warn,1m 窗口</span></div>
+                <div class="panel-body has-chart" id="chart-error-rate"></div>
+            </div>
+            <div class="chart-panel">
+                <div class="panel-head">级别分布 <span class="tag">最近 1h</span></div>
+                <div class="panel-body has-chart" id="chart-levels"></div>
+            </div>
+        </div>
+
+        <div class="log-table">
+            <div class="panel-head">日志检索 <span class="tag" id="search-count">0 条</span></div>
+            <div class="filters">
+                <span class="label">关键字:</span>
+                <input class="form" id="f-keyword" placeholder="message/throwable 包含" style="min-width:180px;">
+                <span class="label">级别:</span>
+                <select class="form" id="f-level">
+                    <option value="">全部</option>
+                    <option value="ERROR">ERROR</option>
+                    <option value="WARN">WARN</option>
+                    <option value="INFO">INFO</option>
+                    <option value="DEBUG">DEBUG</option>
+                </select>
+                <span class="label">logger:</span>
+                <input class="form" id="f-logger" placeholder="类全名,精确匹配" style="min-width:160px;">
+                <span class="label">thread:</span>
+                <input class="form" id="f-thread" placeholder="线程名" style="min-width:120px;">
+                <span class="label">traceId:</span>
+                <input class="form" id="f-trace" placeholder="精确" style="min-width:140px;">
+                <span class="label">fingerprint:</span>
+                <input class="form" id="f-fp" placeholder="精确" style="min-width:140px;">
+                <span class="right"></span>
+                <button class="btn btn-primary btn-sm" id="btn-search">查询</button>
+                <button class="btn btn-sm" id="btn-search-reset">重置</button>
+            </div>
+            <table class="data">
+                <thead>
+                    <tr>
+                        <th style="width:160px;">时间</th>
+                        <th style="width:70px;">级别</th>
+                        <th style="width:240px;">logger</th>
+                        <th style="width:120px;">thread</th>
+                        <th>message</th>
+                        <th style="width:80px;">traceId</th>
+                        <th style="width:200px;">操作</th>
+                    </tr>
+                </thead>
+                <tbody id="search-tbody">
+                    <tr><td colspan="7" class="empty-state">设置过滤条件后点击 [查询]</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="chart-row" style="grid-template-columns: 1fr 1fr;">
+            <div class="chart-panel">
+                <div class="panel-head">Top 异常模式 <span class="tag">按 fingerprint 聚合</span></div>
+                <div class="panel-body has-chart" id="chart-patterns"></div>
+            </div>
+            <div class="chart-panel">
+                <div class="panel-head">高频去重模式 <span class="tag">滑动窗口 1m 内重复</span></div>
+                <div class="panel-body has-chart" id="chart-dedup"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 日志详情模态 -->
+    <div class="modal-mask" id="detail-mask" style="display:none;">
+        <div class="modal" style="width: 760px;">
+            <div class="modal-head">
+                <span>日志详情</span>
+                <span class="close" onclick="closeDetail()">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div id="detail-meta" style="font-size: 0.85rem; margin-bottom: 8px;"></div>
+                <label style="display:block; font-size:0.8rem; color:var(--c-text-secondary); margin: 8px 0 4px;">message</label>
+                <pre class="log-detail" id="detail-message">-</pre>
+                <label style="display:block; font-size:0.8rem; color:var(--c-text-secondary); margin: 8px 0 4px;">throwable</label>
+                <pre class="log-detail" id="detail-throwable" style="max-height: 200px;">-</pre>
+                <label style="display:block; font-size:0.8rem; color:var(--c-text-secondary); margin: 8px 0 4px;">pattern / fingerprint</label>
+                <pre class="log-detail" id="detail-pattern" style="max-height: 80px;">-</pre>
+            </div>
+            <div class="modal-foot">
+                <button class="btn" onclick="copyDetail()">复制全文</button>
+                <button class="btn" onclick="viewContext()">查看上下文</button>
+                <button class="btn btn-primary" onclick="closeDetail()">关闭</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 上下文模态 -->
+    <div class="modal-mask" id="ctx-mask" style="display:none;">
+        <div class="modal" style="width: 920px;">
+            <div class="modal-head">
+                <span>上下文(±30s)</span>
+                <span class="close" onclick="closeCtx()">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div id="ctx-meta" style="font-size: 0.85rem; margin-bottom: 8px;"></div>
+                <div id="ctx-list"></div>
+            </div>
+            <div class="modal-foot">
+                <button class="btn btn-primary" onclick="closeCtx()">关闭</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let rangeSec = 3600;
+        let currentDetailRow = null;
+        let currentSearchResults = [];
+
+        function getAppid() {
+            return SW.ctx.getQueryAppid() || localStorage.getItem("spring_watch.currentAppid");
+        }
+        function getFromTo() {
+            const to = new Date();
+            const from = new Date(to.getTime() - rangeSec * 1000);
+            return { from: from.toISOString(), to: to.toISOString() };
+        }
+        function isoToLocal(iso) {
+            if (!iso) return "-";
+            try { return new Date(iso).toLocaleString("zh-CN", { hour12: false }); }
+            catch (e) { return iso; }
+        }
+        function shortMsg(s, n) {
+            if (!s) return "";
+            n = n || 100;
+            return s.length > n ? s.slice(0, n) + "..." : s;
+        }
+        function setText(id, t) { const el = document.getElementById(id); if (el) el.textContent = (t == null || t === "") ? "-" : t; }
+        function renderEmpty(sel, msg) { const el = document.querySelector(sel); if (el) el.innerHTML = '<div class="empty-state">' + (msg || "暂无数据") + '</div>'; }
+
+        document.querySelectorAll("#range-seg .btn").forEach(b => {
+            b.addEventListener("click", () => {
+                document.querySelectorAll("#range-seg .btn").forEach(x => x.classList.toggle("active", x === b));
+                rangeSec = parseInt(b.dataset.sec, 10);
+                loadAll();
+            });
+        });
+        document.getElementById("btn-refresh").addEventListener("click", loadAll);
+
+        async function loadAll() {
+            const appid = getAppid();
+            if (!appid) {
+                document.querySelector(".log-shell").insertAdjacentHTML("afterbegin",
+                    '<div class="alert alert-info" style="margin-bottom:14px;">请先在 [监控应用] 选择一个应用</div>');
+                return;
+            }
+            await Promise.all([loadOverview(appid), loadErrorRateSeries(appid), loadLevels(appid)]);
+        }
+
+        async function loadOverview(appid) {
+            try {
+                const r = await SW.api.get("/api/logs/stats/error-rate", { appid, windowSeconds: rangeSec });
+                setText("card-total", r.total);
+                setText("card-error", r.error);
+                setText("card-warn", r.warn);
+                document.getElementById("card-error-sub").textContent = "错误率 " + SW.ui.formatPercent(r.errorRate);
+            } catch (e) {
+                console.warn("overview failed", e);
+            }
+            try {
+                const a = await SW.api.get("/api/logs/anomaly", { appid, windowSeconds: 60, multiplier: 3.0 });
+                const el = document.getElementById("card-spike");
+                el.textContent = a.spiking ? "是" : "否";
+                el.className = "value " + (a.spiking ? "danger" : "success");
+                const cur = a.stats.errorRate, last = cur / 3.0;
+                document.getElementById("card-spike-sub").textContent =
+                    "当前 " + (cur * 100).toFixed(2) + "%(基线 ≈ " + (last * 100).toFixed(2) + "%)";
+            } catch (e) {
+                document.getElementById("card-spike").textContent = "-";
+            }
+        }
+
+        async function loadErrorRateSeries(appid) {
+            try {
+                const { from, to } = getFromTo();
+                const r = await SW.api.get("/api/logs/stats/error-rate-series", { appid, from, to, every: "1m" });
+                const buckets = r || [];
+                if (buckets.length === 0) { renderEmpty("#chart-error-rate", "暂无错误率数据"); return; }
+                const total = [], error = [], warn = [];
+                for (const b of buckets) {
+                    const t = b.time;
+                    total.push([t, b.total || 0]);
+                    error.push([t, b.error || 0]);
+                    warn.push([t, b.warn || 0]);
+                }
+                SW.chart.line("#chart-error-rate", [
+                    { name: "total", points: total },
+                    { name: "error", points: error },
+                    { name: "warn", points: warn }
+                ], { area: true, yAxisName: "条" });
+            } catch (e) {
+                renderEmpty("#chart-error-rate", "加载失败");
+            }
+        }
+
+        async function loadLevels(appid) {
+            try {
+                const { from, to } = getFromTo();
+                const r = await SW.api.get("/api/logs/levels", { appid, from, to });
+                const data = (r || []).map(x => ({ name: x.level, value: x.count }));
+                if (data.length === 0) { renderEmpty("#chart-levels", "暂无级别数据"); return; }
+                SW.chart.pie("#chart-levels", data, { name: "级别", donut: true });
+            } catch (e) {
+                renderEmpty("#chart-levels", "加载失败");
+            }
+        }
+
+        /* ============================ 检索 ============================ */
+        document.getElementById("btn-search").addEventListener("click", doSearch);
+        document.getElementById("btn-search-reset").addEventListener("click", () => {
+            document.getElementById("f-keyword").value = "";
+            document.getElementById("f-level").value = "";
+            document.getElementById("f-logger").value = "";
+            document.getElementById("f-thread").value = "";
+            document.getElementById("f-trace").value = "";
+            document.getElementById("f-fp").value = "";
+            doSearch();
+        });
+
+        async function doSearch() {
+            const appid = getAppid();
+            if (!appid) return;
+            const { from, to } = getFromTo();
+            const params = {
+                appid, from, to, limit: 200,
+                keyword: document.getElementById("f-keyword").value.trim() || undefined,
+                level: document.getElementById("f-level").value || undefined,
+                logger: document.getElementById("f-logger").value.trim() || undefined,
+                threadName: document.getElementById("f-thread").value.trim() || undefined,
+                traceId: document.getElementById("f-trace").value.trim() || undefined,
+                fingerprint: document.getElementById("f-fp").value.trim() || undefined
+            };
+            try {
+                const r = await SW.api.get("/api/logs/search", params);
+                currentSearchResults = r || [];
+                renderSearchRows(currentSearchResults);
+                document.getElementById("search-count").textContent = currentSearchResults.length + " 条";
+                loadPatterns(appid);
+            } catch (e) {
+                SW.ui.toast("检索失败: " + e.message, "error");
+            }
+        }
+
+        function renderSearchRows(rows) {
+            const tbody = document.getElementById("search-tbody");
+            if (rows.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="7" class="empty-state">无匹配日志</td></tr>';
+                return;
+            }
+            tbody.innerHTML = rows.map((r, idx) => {
+                const lvl = (r.level || "UNKNOWN").toUpperCase();
+                const rowClass = lvl === "ERROR" ? "row-error" : (lvl === "WARN" ? "row-warn" : "");
+                return ''
+                    + '<tr class="' + rowClass + '" data-idx="' + idx + '">'
+                    + '<td>' + SW.ui.escapeHtml(isoToLocal(r.time)) + '</td>'
+                    + '<td><span class="level-tag ' + SW.ui.escapeHtml(lvl) + '">' + SW.ui.escapeHtml(lvl) + '</span></td>'
+                    + '<td title="' + SW.ui.escapeHtml(r.logger || "") + '"><code>' + SW.ui.escapeHtml(shortMsg(r.logger, 30)) + '</code></td>'
+                    + '<td><code>' + SW.ui.escapeHtml(r.threadName || "-") + '</code></td>'
+                    + '<td class="message" title="' + SW.ui.escapeHtml(r.message || "") + '">' + SW.ui.escapeHtml(r.message || "-") + '</td>'
+                    + '<td>' + (r.traceId ? '<code>' + SW.ui.escapeHtml(shortMsg(r.traceId, 10)) + '</code>' : '-') + '</td>'
+                    + '<td><div class="actions">'
+                    + '<button class="btn btn-sm" data-act="detail">详情</button>'
+                    + '<button class="btn btn-sm" data-act="ctx">上下文</button>'
+                    + (r.fingerprint ? '<button class="btn btn-sm" data-act="fp">按指纹</button>' : '')
+                    + '</div></td>'
+                    + '</tr>';
+            }).join("");
+        }
+
+        document.getElementById("search-tbody").addEventListener("click", (e) => {
+            const btn = e.target.closest("button[data-act]");
+            if (!btn) return;
+            const tr = btn.closest("tr");
+            const idx = parseInt(tr.dataset.idx, 10);
+            const row = currentSearchResults[idx];
+            if (!row) return;
+            const act = btn.dataset.act;
+            if (act === "detail") openDetail(row);
+            else if (act === "ctx") openContext(row);
+            else if (act === "fp") {
+                document.getElementById("f-fp").value = row.fingerprint;
+                doSearch();
+            }
+        });
+
+        /* ============================ 详情模态 ============================ */
+        function openDetail(row) {
+            currentDetailRow = row;
+            const meta = []
+                + '<span class="level-tag ' + (row.level || "UNKNOWN") + '">' + SW.ui.escapeHtml(row.level || "UNKNOWN") + '</span> '
+                + isoToLocal(row.time) + " | logger=" + (row.logger || "-") + " | thread=" + (row.threadName || "-");
+            document.getElementById("detail-meta").innerHTML = meta;
+            document.getElementById("detail-message").textContent = row.message || "-";
+            document.getElementById("detail-throwable").textContent = row.throwable || "(无异常栈)";
+            document.getElementById("detail-pattern").textContent =
+                "fingerprint: " + (row.fingerprint || "-") + "\n" + "pattern: " + (row.pattern || "-");
+            document.getElementById("detail-mask").style.display = "flex";
+        }
+        function closeDetail() { document.getElementById("detail-mask").style.display = "none"; }
+        function copyDetail() {
+            if (!currentDetailRow) return;
+            const text = [currentDetailRow.message || "", currentDetailRow.throwable || ""].join("\n\n");
+            if (navigator.clipboard) navigator.clipboard.writeText(text).then(() => SW.ui.toast("已复制", "success"));
+        }
+        function viewContext() { if (currentDetailRow) { closeDetail(); openContext(currentDetailRow); } }
+
+        /* ============================ 上下文模态 ============================ */
+        async function openContext(row) {
+            const appid = getAppid();
+            const params = {
+                appid, time: row.time,
+                threadName: row.threadName, logger: row.logger, host: row.host,
+                beforeSec: 30, afterSec: 30, limit: 100
+            };
+            try {
+                const r = await SW.api.get("/api/logs/context", params);
+                renderContext(row, r || []);
+                document.getElementById("ctx-mask").style.display = "flex";
+            } catch (e) {
+                SW.ui.toast("加载上下文失败: " + e.message, "error");
+            }
+        }
+        function renderContext(center, rows) {
+            document.getElementById("ctx-meta").innerHTML =
+                "中心日志: " + isoToLocal(center.time) + " <code>" + SW.ui.escapeHtml(center.logger || "-") + "</code> thread=" + (center.threadName || "-") + " | 共 " + rows.length + " 条上下文";
+            const html = rows.map(r => {
+                const lvl = (r.level || "UNKNOWN").toUpperCase();
+                const isCenter = r.time === center.time;
+                return ''
+                    + '<div style="border-left:3px solid ' + (isCenter ? "#dc2626" : "#e2e8f0") + '; padding:6px 8px; margin-bottom:6px; background:' + (isCenter ? "#fee2e233" : "#f8fafc") + '; border-radius:3px;">'
+                    + '<div style="font-size:0.75rem; color:var(--c-text-muted);">'
+                    + '<span class="level-tag ' + lvl + '">' + lvl + '</span> '
+                    + isoToLocal(r.time) + ' | <code>' + SW.ui.escapeHtml(r.threadName || "-") + '</code>'
+                    + '</div>'
+                    + '<div style="font-size:0.85rem; margin-top:4px; white-space:pre-wrap; word-break:break-all;">'
+                    + SW.ui.escapeHtml(r.message || "-")
+                    + (r.throwable ? '\n<span style="color:#dc2626;">' + SW.ui.escapeHtml(shortMsg(r.throwable, 500)) + '</span>' : '')
+                    + '</div>'
+                    + '</div>';
+            }).join("");
+            document.getElementById("ctx-list").innerHTML = html || '<div class="empty-state">无上下文</div>';
+        }
+        function closeCtx() { document.getElementById("ctx-mask").style.display = "none"; }
+
+        /* ============================ 模式聚类 ============================ */
+        async function loadPatterns(appid) {
+            try {
+                const { from, to } = getFromTo();
+                const r = await SW.api.get("/api/logs/patterns", { appid, from, to, level: "ERROR", topN: 10 });
+                const list = r || [];
+                if (list.length === 0) { renderEmpty("#chart-patterns", "暂无异常模式"); }
+                else {
+                    SW.chart.bar("#chart-patterns",
+                        { categories: list.map(p => shortMsg(p.fingerprint, 12)), series: [{ name: "次数", data: list.map(p => p.count) }] },
+                        { horizontal: true, yAxisName: "" });
+                }
+            } catch (e) {
+                renderEmpty("#chart-patterns", "加载失败");
+            }
+            try {
+                const r = await SW.api.get("/api/logs/dedup/top", { appid, topN: 10 });
+                const list = r || [];
+                if (list.length === 0) { renderEmpty("#chart-dedup", "暂无去重模式"); }
+                else {
+                    SW.chart.bar("#chart-dedup",
+                        { categories: list.map(p => shortMsg(p.fingerprint, 12)), series: [{ name: "去重次数", data: list.map(p => p.dedupCount) }] },
+                        { horizontal: true, yAxisName: "" });
+                }
+            } catch (e) {
+                renderEmpty("#chart-dedup", "加载失败");
+            }
+        }
+
+        /* 模态遮罩点击关闭 */
+        document.getElementById("detail-mask").addEventListener("click", e => { if (e.target.id === "detail-mask") closeDetail(); });
+        document.getElementById("ctx-mask").addEventListener("click", e => { if (e.target.id === "ctx-mask") closeCtx(); });
+
+        /* 初始化 */
+        loadAll();
+        doSearch();
+    </script>
+</body>
+</html>

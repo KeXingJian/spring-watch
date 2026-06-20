@@ -52,7 +52,6 @@ public class MonitorAppService {
                 .appName(req.getAppName())
                 .endpoint(req.getEndpoint())
                 .metricsPort(req.getMetricsPort() == null ? 9464 : req.getMetricsPort())
-                .appType(req.getAppType() == null ? "springboot" : req.getAppType())
                 .scrapeInterval(req.getScrapeInterval() == null ? 15 : req.getScrapeInterval())
                 .scheduleType(req.getScheduleType() == null ? "INTERVAL" : req.getScheduleType())
                 .cronExpression(req.getCronExpression())
@@ -81,7 +80,6 @@ public class MonitorAppService {
         if (req.getScrapeInterval() != null) app.setScrapeInterval(req.getScrapeInterval());
         if (req.getCronExpression() != null) app.setCronExpression(req.getCronExpression());
         if (req.getLabels() != null) app.setLabels(req.getLabels());
-        if (req.getAppType() != null) app.setAppType(req.getAppType());
         MonitorApp saved = monitorAppRepository.save(app);
         try {
             collectScheduleRegistry.upsert(saved);
@@ -146,10 +144,5 @@ public class MonitorAppService {
         return out;
     }
 
-    public void touchHeartbeat(Long id) {
-        monitorAppRepository.findById(id).ifPresent(a -> {
-            a.setLastHeartbeat(Instant.now());
-            monitorAppRepository.save(a);
-        });
-    }
+
 }

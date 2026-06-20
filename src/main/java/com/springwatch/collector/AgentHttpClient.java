@@ -126,6 +126,7 @@ public class AgentHttpClient {
         log.info("[spring-watch: AgentHttpClient 关闭 - active={}]", activeRequests.get());
     }
 
+
     public record Result(int status, String body, String error) {
         public static Result ok(int status, String body) {
             return new Result(status, body, null);

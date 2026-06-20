@@ -22,9 +22,6 @@ public class AppRegisterRequest {
     private Integer metricsPort = 9464;
 
     @Builder.Default
-    private String appType = "springboot";
-
-    @Builder.Default
     @Positive
     private Integer scrapeInterval = 15;
 

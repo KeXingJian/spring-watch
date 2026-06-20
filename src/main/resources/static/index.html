@@ -17,30 +17,58 @@
             <span class="clock" id="topbar-clock">--:--:--</span>
         </header>
         <div class="shell-body">
-            <nav class="sidenav">
-                <a class="active" target="content" href="/pages/app-detail.html">
+            <nav class="sidenav" id="sidenav">
+                <a target="content" href="/pages/app-detail.html">
                     <span class="nav-icon">&#128202;</span>应用指标
                 </a>
-                <a target="content" href="javascript:void(0)" onclick="SW.ui.toast('日志分析待实现,见 docs/视图层规划_v1.md','info')">
+                <a target="content" href="/pages/logs.html">
                     <span class="nav-icon">&#128196;</span>日志分析
                 </a>
-                <a target="content" href="javascript:void(0)" onclick="SW.ui.toast('告警规则待实现','info')">
+                <a target="content" href="/pages/alert-rules.html">
                     <span class="nav-icon">&#9888;</span>告警规则
                 </a>
-                <a target="content" href="javascript:void(0)" onclick="SW.ui.toast('告警历史待实现','info')">
+                <a target="content" href="/pages/alert-history.html">
                     <span class="nav-icon">&#128203;</span>告警历史
+                </a>
+                <a target="content" href="/pages/email-config.html">
+                    <span class="nav-icon">&#9993;</span>邮箱配置
+                </a>
+                <a target="content" href="/pages/self-monitor.html">
+                    <span class="nav-icon">&#128296;</span>自身监控
                 </a>
                 <a target="content" href="/pages/apps.html">
                     <span class="nav-icon">&#9881;</span>监控应用
                 </a>
             </nav>
             <main class="main">
-                <iframe name="content" src="/pages/app-detail.html"></iframe>
+                <iframe name="content" src="/pages/apps.html"></iframe>
             </main>
         </div>
     </div>
     <script>
         (function () {
+            // 侧边栏激活态:根据 iframe 当前 URL 匹配
+            const frame = document.querySelector("iframe[name=content]");
+            const sidenav = document.getElementById("sidenav");
+            const links = sidenav ? sidenav.querySelectorAll("a[href]") : [];
+            function syncActive() {
+                if (!frame) return;
+                const path = (frame.contentWindow && frame.contentWindow.location.pathname) || frame.src || "";
+                links.forEach(a => {
+                    const href = a.getAttribute("href") || "";
+                    a.classList.toggle("active", !!path && path.indexOf(href) >= 0);
+                });
+            }
+            if (frame) {
+                frame.addEventListener("load", syncActive);
+                syncActive();
+            }
+            // 顶栏时钟
+            const clock = document.getElementById("topbar-clock");
+            function tick() { clock.textContent = new Date().toLocaleTimeString("zh-CN", { hour12: false }); }
+            tick();
+            setInterval(tick, 1000);
+
             // 应用切换器
             const sel = document.getElementById("app-switcher");
             function loadApps() {
@@ -65,24 +93,20 @@
             }
             sel.addEventListener("change", () => {
                 SW.ctx.setAppid(sel.value);
-                const frame = document.querySelector("iframe[name=content]");
-                if (frame && frame.contentWindow) {
+                if (!frame) return;
+                const needsAppid = frame.src.indexOf("/pages/app-detail.html") >= 0
+                    || frame.src.indexOf("/pages/logs.html") >= 0;
+                if (frame.contentWindow && needsAppid) {
                     const url = new URL(frame.src);
                     url.searchParams.set("appid", sel.value);
                     if (!sel.value) url.searchParams.delete("appid");
                     frame.src = url.toString();
-                } else {
-                    document.querySelector("iframe[name=content]").src = "/pages/app-detail.html" + (sel.value ? "?appid=" + sel.value : "");
+                } else if (!frame.contentWindow) {
+                    frame.src = "/pages/app-detail.html" + (sel.value ? "?appid=" + sel.value : "");
                 }
             });
             loadApps();
             window.addEventListener("sw:appid-changed", () => loadApps());
-
-            // 顶栏时钟
-            const clock = document.getElementById("topbar-clock");
-            function tick() { clock.textContent = new Date().toLocaleTimeString("zh-CN", { hour12: false }); }
-            tick();
-            setInterval(tick, 1000);
         })();
     </script>
 </body>

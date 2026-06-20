@@ -24,4 +24,8 @@ public interface LogDedupCountRepository extends JpaRepository<LogDedupCount, Lo
                         @Param("fingerprint") String fingerprint,
                         @Param("count") long count,
                         @Param("now") Instant now);
+
+    @Query("SELECT d FROM LogDedupCount d WHERE d.appid = :appid ORDER BY d.dedupCount DESC, d.lastSeenAt DESC")
+    List<LogDedupCount> findTopByAppidOrderByCount(@Param("appid") Long appid,
+                                                   org.springframework.data.domain.Pageable pageable);
 }

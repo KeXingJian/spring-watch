@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>告警历史 - spring-watch</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <script src="/js/common.js"></script>
+    <style>
+        body { margin: 0; }
+        .shell { padding: 16px 20px; max-width: 1500px; margin: 0 auto; }
+        .toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+        .toolbar .seg { display: inline-flex; }
+        .toolbar .seg .btn { border-radius: 0; margin-left: -1px; }
+        .toolbar .seg .btn:first-child { border-top-left-radius: var(--radius-sm); border-bottom-left-radius: var(--radius-sm); }
+        .toolbar .seg .btn:last-child { border-top-right-radius: var(--radius-sm); border-bottom-right-radius: var(--radius-sm); }
+        .toolbar .seg .btn.active { background: var(--c-primary); color: #fff; border-color: var(--c-primary); }
+        .toolbar select.form, .toolbar input.form { padding: 4px 8px; border: 1px solid var(--c-border); border-radius: var(--radius-sm); font-size: 0.85rem; }
+        .toolbar .right { margin-left: auto; }
+        .panel { background: var(--c-card); border: 1px solid var(--c-border); border-radius: var(--radius-md); box-shadow: var(--shadow-sm); overflow: hidden; }
+        .panel-head { padding: 10px 14px; border-bottom: 1px solid var(--c-border); font-size: 0.9rem; font-weight: 500; display: flex; align-items: center; }
+        .panel-body { padding: 0; }
+        table.data { font-size: 0.82rem; }
+        .badge-level { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 0.7rem; font-weight: 600; }
+        .badge-level.info { background: #dbeafe; color: #1e40af; }
+        .badge-level.warning { background: #fef3c7; color: #92400e; }
+        .badge-level.critical { background: #fee2e2; color: #991b1b; }
+        .status-tag { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 0.7rem; font-weight: 600; }
+        .status-tag.firing { background: #fee2e2; color: #991b1b; }
+        .status-tag.resolved { background: #dcfce7; color: #166534; }
+        .status-tag.pending { background: #fef3c7; color: #92400e; }
+        td code { background: #f1f5f9; padding: 1px 6px; border-radius: 3px; font-size: 0.78rem; }
+        .empty-state { padding: 30px 20px; text-align: center; color: var(--c-text-muted); font-size: 0.9rem; }
+        .detail-row { background: #f8fafc; }
+        .detail-row pre { background: #0f172a; color: #e2e8f0; padding: 8px 10px; border-radius: var(--radius-sm); font-size: 0.76rem; max-height: 200px; overflow: auto; white-space: pre-wrap; word-break: break-all; }
+        .summary { color: font-size: 0.78rem; color: var(--c-text-muted); margin-left: auto; }
+    </style>
+</head>
+<body>
+    <div class="shell">
+        <div class="toolbar">
+            <span style="color:var(--c-text-secondary); font-size:0.8rem;">时间范围:</span>
+            <div class="seg" id="range-seg">
+                <button class="btn btn-sm" data-sec="3600">1h</button>
+                <button class="btn btn-sm" data-sec="86400">24h</button>
+                <button class="btn btn-sm active" data-sec="604800">7d</button>
+                <button class="btn btn-sm" data-sec="2592000">30d</button>
+            </div>
+            <select class="form" id="filter-level">
+                <option value="">全部级别</option>
+                <option value="info">INFO</option>
+                <option value="warning">WARNING</option>
+                <option value="critical">CRITICAL</option>
+            </select>
+            <select class="form" id="filter-status">
+                <option value="">全部状态</option>
+                <option value="firing">FIRING(未恢复)</option>
+                <option value="resolved">RESOLVED(已恢复)</option>
+            </select>
+            <span class="right"></span>
+            <button class="btn" id="btn-refresh">刷新</button>
+        </div>
+
+        <div class="panel">
+            <div class="panel-head">告警历史 <span class="summary" id="hist-count">0 条</span></div>
+            <table class="data">
+                <thead>
+                    <tr>
+                        <th style="width:48px;">ID</th>
+                        <th style="width:140px;">触发时间</th>
+                        <th style="width:60px;">级别</th>
+                        <th style="width:80px;">状态</th>
+                        <th style="width:180px;">应用</th>
+                        <th style="width:140px;">规则</th>
+                        <th>消息</th>
+                        <th style="width:60px;">详情</th>
+                    </tr>
+                </thead>
+                <tbody id="hist-tbody">
+                    <tr><td colspan="8" class="empty-state">加载中...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        let allRows = [];
+        let levelFilter = "";
+        let statusFilter = "";
+
+        async function loadAll() {
+            try {
+                allRows = await SW.api.get("/api/alert/history", { limit: 500 });
+                render();
+            } catch (e) {
+                document.getElementById("hist-tbody").innerHTML = '<tr><td colspan="8" class="empty-state">加载失败: ' + SW.ui.escapeHtml(e.message) + '</td></tr>';
+            }
+        }
+
+        function render() {
+            const filtered = allRows.filter(r => {
+                if (levelFilter && (r.alertLevel || "warning") !== levelFilter) return false;
+                const isFiring = !r.resolvedAt;
+                if (statusFilter === "firing" && !isFiring) return false;
+                if (statusFilter === "resolved" && isFiring) return false;
+                return true;
+            });
+            document.getElementById("hist-count").textContent = filtered.length + " 条(共 " + allRows.length + ")";
+            if (filtered.length === 0) {
+                document.getElementById("hist-tbody").innerHTML = '<tr><td colspan="8" class="empty-state">无告警历史</td></tr>';
+                return;
+            }
+            document.getElementById("hist-tbody").innerHTML = filtered.map(r => {
+                const isFiring = !r.resolvedAt;
+                const status = isFiring ? "firing" : "resolved";
+                const appName = r.app ? (r.app.appName + " (" + r.app.appid + ")") : "-";
+                const ruleName = r.rule ? r.rule.ruleName : "-";
+                const detail = r.notifyResult || r.alertMessage || "";
+                return ''
+                    + '<tr data-id="' + r.id + '">'
+                    + '<td>' + r.id + '</td>'
+                    + '<td>' + SW.ui.escapeHtml(SW.ui.formatTime(r.createdAt) || "-") + '</td>'
+                    + '<td><span class="badge-level ' + (r.alertLevel || "warning") + '">' + SW.ui.escapeHtml((r.alertLevel || "warning").toUpperCase()) + '</span></td>'
+                    + '<td><span class="status-tag ' + status + '">' + (isFiring ? "FIRING" : "RESOLVED") + '</span></td>'
+                    + '<td>' + SW.ui.escapeHtml(appName) + '</td>'
+                    + '<td>' + SW.ui.escapeHtml(ruleName) + '</td>'
+                    + '<td style="max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + SW.ui.escapeHtml(r.alertMessage || "") + '">' + SW.ui.escapeHtml(r.alertMessage || "-") + '</td>'
+                    + '<td><button class="btn btn-sm" data-act="detail">查看</button></td>'
+                    + '</tr>';
+            }).join("");
+
+            filtered.forEach(r => {
+                const tr = document.querySelector('tr[data-id="' + r.id + '"]');
+                if (!tr) return;
+                const detailTr = document.createElement("tr");
+                detailTr.className = "detail-row";
+                detailTr.id = "detail-" + r.id;
+                detailTr.style.display = "none";
+                const td = document.createElement("td");
+                td.colSpan = 8;
+                td.style.padding = "10px 14px";
+                const detail = r.notifyResult || r.alertMessage || "(无详情)";
+                const resolvedLine = r.resolvedAt ? '<div style="margin-top:6px;color:var(--c-text-muted);font-size:0.78rem;">恢复时间: ' + SW.ui.escapeHtml(SW.ui.formatTime(r.resolvedAt)) + '</div>' : '';
+                td.innerHTML = '<pre style="margin:0;">' + SW.ui.escapeHtml(detail) + '</pre>' + resolvedLine;
+                detailTr.appendChild(td);
+                tr.parentNode.insertBefore(detailTr, tr.nextSibling);
+            });
+        }
+
+        document.getElementById("hist-tbody").addEventListener("click", (e) => {
+            const btn = e.target.closest("button[data-act]");
+            if (!btn) return;
+            const tr = btn.closest("tr");
+            const id = tr.dataset.id;
+            const detail = document.getElementById("detail-" + id);
+            if (detail) {
+                detail.style.display = detail.style.display === "none" ? "" : "none";
+                btn.textContent = detail.style.display === "none" ? "查看" : "收起";
+            }
+        });
+
+        document.getElementById("filter-level").addEventListener("change", (e) => {
+            levelFilter = e.target.value;
+            render();
+        });
+        document.getElementById("filter-status").addEventListener("change", (e) => {
+            statusFilter = e.target.value;
+            render();
+        });
+        document.querySelectorAll("#range-seg .btn").forEach(b => {
+            b.addEventListener("click", () => {
+                document.querySelectorAll("#range-seg .btn").forEach(x => x.classList.toggle("active", x === b));
+                loadAll();
+            });
+        });
+        document.getElementById("btn-refresh").addEventListener("click", loadAll);
+
+        loadAll();
+    </script>
+</body>
+</html>

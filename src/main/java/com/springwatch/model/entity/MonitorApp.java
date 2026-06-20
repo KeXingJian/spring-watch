@@ -31,10 +31,6 @@ public class MonitorApp {
     @Builder.Default
     private Integer metricsPort = 9464;
 
-    @Column(length = 32)
-    @Builder.Default
-    private String appType = "springboot";
-
     @Builder.Default
     private Integer scrapeInterval = 15;
 

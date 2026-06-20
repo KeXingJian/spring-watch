@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>告警规则 - spring-watch</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <script src="/js/common.js"></script>
+    <style>
+        body { margin: 0; }
+        .shell { padding: 16px 20px; max-width: 1500px; margin: 0 auto; }
+        .toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
+        .toolbar .right { margin-left: auto; }
+        .panel { background: var(--c-card); border: 1px solid var(--c-border); border-radius: var(--radius-md); box-shadow: var(--shadow-sm); overflow: hidden; }
+        .panel-head { padding: 10px 14px; border-bottom: 1px solid var(--c-border); font-size: 0.9rem; font-weight: 500; display: flex; align-items: center; }
+        .panel-body { padding: 0; }
+        table.data { font-size: 0.82rem; }
+        table.data th { white-space: nowrap; }
+        table.data td .rule-type { font-family: var(--font-mono, monospace); font-size: 0.74rem; padding: 1px 6px; border-radius: 3px; background: #e0f2fe; color: #075985; }
+        table.data td .rule-type.log_keyword { background: #fef3c7; color: #92400e; }
+        table.data td .rule-type.log_error_rate { background: #fee2e2; color: #991b1b; }
+        table.data td .rule-type.log_new_pattern { background: #ede9fe; color: #5b21b6; }
+        .badge-level { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 0.7rem; font-weight: 600; }
+        .badge-level.info { background: #dbeafe; color: #1e40af; }
+        .badge-level.warning { background: #fef3c7; color: #92400e; }
+        .badge-level.critical { background: #fee2e2; color: #991b1b; }
+        .form-row { margin-bottom: 12px; }
+        .form-row label { display: block; font-size: 0.8rem; color: var(--c-text-secondary); margin-bottom: 4px; }
+        .form-row.row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        .form-row.row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+        .form-row input.form, .form-row select.form, .form-row textarea.form { width: 100%; box-sizing: border-box; }
+        .required { color: var(--c-danger); }
+        .hint { color: var(--c-text-muted); font-size: 0.78rem; margin-top: 4px; }
+        .empty-state { padding: 30px 20px; text-align: center; color: var(--c-text-muted); font-size: 0.9rem; }
+    </style>
+</head>
+<body>
+    <div class="shell">
+        <div class="toolbar">
+            <button class="btn btn-primary" id="btn-new">+ 新建规则</button>
+            <span class="right"></span>
+            <button class="btn" id="btn-refresh">刷新</button>
+        </div>
+
+        <div class="panel">
+            <div class="panel-head">告警规则列表 <span class="tag" id="rules-count" style="margin-left:auto;font-size:0.74rem;color:var(--c-text-muted);">0 条</span></div>
+            <table class="data">
+                <thead>
+                    <tr>
+                        <th style="width:48px;">ID</th>
+                        <th style="width:200px;">名称</th>
+                        <th style="width:140px;">应用</th>
+                        <th style="width:120px;">类型</th>
+                        <th style="width:80px;">级别</th>
+                        <th>表达式 / 阈值</th>
+                        <th style="width:60px;">持续</th>
+                        <th style="width:60px;">命中</th>
+                        <th style="width:70px;">状态</th>
+                        <th style="width:220px;">操作</th>
+                    </tr>
+                </thead>
+                <tbody id="rules-tbody">
+                    <tr><td colspan="10" class="empty-state">加载中...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- 规则编辑模态 -->
+    <div class="modal-mask" id="edit-mask" style="display:none;">
+        <div class="modal" style="width: 720px;">
+            <div class="modal-head">
+                <span id="edit-title">新建规则</span>
+                <span class="close" onclick="closeEdit()">&times;</span>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="edit-id">
+                <div class="form-row row-2">
+                    <div>
+                        <label>应用 <span class="required">*</span></label>
+                        <select class="form" id="edit-appid"></select>
+                    </div>
+                    <div>
+                        <label>规则名 <span class="required">*</span></label>
+                        <input class="form" id="edit-name" placeholder="如:CPU 过高">
+                    </div>
+                </div>
+                <div class="form-row row-2">
+                    <div>
+                        <label>类型 <span class="required">*</span></label>
+                        <select class="form" id="edit-type" onchange="onTypeChange()">
+                            <option value="metric">metric - 指标阈值</option>
+                            <option value="log_keyword">log_keyword - 日志关键字</option>
+                            <option value="log_error_rate">log_error_rate - 日志错误率</option>
+                            <option value="log_new_pattern">log_new_pattern - 日志新模式</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label>级别</label>
+                        <select class="form" id="edit-level">
+                            <option value="info">INFO</option>
+                            <option value="warning" selected>WARNING</option>
+                            <option value="critical">CRITICAL</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-row" id="row-expression">
+                    <label id="label-expression">JEXL 表达式 <span class="required">*</span> <span class="hint" style="display:inline;">(metric 类型必填)</span></label>
+                    <textarea class="form" id="edit-expression" rows="2" placeholder="metric == 'jvm_memory_used_bytes' && value > 800000000"></textarea>
+                </div>
+                <div class="form-row row-2" id="row-threshold" style="display:none;">
+                    <div>
+                        <label>阈值 <span class="required">*</span> <span class="hint" style="display:inline;">(log_error_rate 类型,百分比 0~100)</span></label>
+                        <input class="form" id="edit-threshold" type="number" step="0.1" placeholder="10">
+                    </div>
+                    <div>
+                        <label id="label-duration">持续时长(秒) <span class="hint" style="display:inline;">(PENDING 防抖)</span></label>
+                        <input class="form" id="edit-duration" type="number" min="0" value="60">
+                    </div>
+                </div>
+                <div class="form-row row-2" id="row-times">
+                    <div>
+                        <label>命中次数 <span class="hint" style="display:inline;">(PENDING 累计)</span></label>
+                        <input class="form" id="edit-times" type="number" min="1" value="1">
+                    </div>
+                    <div>
+                        <label>状态</label>
+                        <select class="form" id="edit-status">
+                            <option value="enabled" selected>enabled</option>
+                            <option value="disabled">disabled</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <label>通知渠道 <span class="hint" style="display:inline;">(JSON,如:{"email":"a@x.com"},留空回退到 alert_notification_config)</span></label>
+                    <textarea class="form" id="edit-channels" rows="2" placeholder='{"email":"a@x.com,b@y.com"}'></textarea>
+                </div>
+                <div class="form-row">
+                    <label>自定义模板 <span class="hint" style="display:inline;">(支持 {{metric}} {{value}} {{rule}} 等占位符,留空用默认)</span></label>
+                    <textarea class="form" id="edit-template" rows="2" placeholder="告警: {{rule}} 当前值 {{value}}"></textarea>
+                </div>
+            </div>
+            <div class="modal-foot">
+                <button class="btn" onclick="closeEdit()">取消</button>
+                <button class="btn btn-primary" id="btn-save">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let apps = [];
+        let rules = [];
+
+        async function loadApps() {
+            try {
+                apps = await SW.api.get("/api/apps/active");
+            } catch (e) {
+                apps = [];
+            }
+            const sel = document.getElementById("edit-appid");
+            sel.innerHTML = '<option value="">-- 请选择 --</option>' + apps.map(a =>
+                '<option value="' + a.appid + '">' + SW.ui.escapeHtml(a.appName) + ' (' + a.appid + ')</option>'
+            ).join("");
+        }
+
+        async function loadRules() {
+            try {
+                rules = await SW.api.get("/api/alert/rules");
+                renderRules();
+            } catch (e) {
+                document.getElementById("rules-tbody").innerHTML = '<tr><td colspan="10" class="empty-state">加载失败: ' + SW.ui.escapeHtml(e.message) + '</td></tr>';
+            }
+        }
+
+        function renderRules() {
+            document.getElementById("rules-count").textContent = rules.length + " 条";
+            if (rules.length === 0) {
+                document.getElementById("rules-tbody").innerHTML = '<tr><td colspan="10" class="empty-state">暂无规则,点击 [新建规则] 开始</td></tr>';
+                return;
+            }
+            document.getElementById("rules-tbody").innerHTML = rules.map(r => {
+                const appName = r.app ? (r.app.appName + " (" + r.app.appid + ")") : "-";
+                const typeClass = "rule-type " + r.ruleType;
+                const exprOrThreshold = r.ruleType === "log_error_rate"
+                    ? "阈值 " + (r.thresholdValue != null ? r.thresholdValue + "%" : "-")
+                    : (r.expression || "-");
+                return ''
+                    + '<tr data-id="' + r.id + '">'
+                    + '<td>' + r.id + '</td>'
+                    + '<td><strong>' + SW.ui.escapeHtml(r.ruleName) + '</strong></td>'
+                    + '<td>' + SW.ui.escapeHtml(appName) + '</td>'
+                    + '<td><span class="' + typeClass + '">' + SW.ui.escapeHtml(r.ruleType) + '</span></td>'
+                    + '<td><span class="badge-level ' + (r.level || "warning") + '">' + SW.ui.escapeHtml((r.level || "warning").toUpperCase()) + '</span></td>'
+                    + '<td style="max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + SW.ui.escapeHtml(exprOrThreshold) + '">' + SW.ui.escapeHtml(exprOrThreshold) + '</td>'
+                    + '<td>' + (r.durationSeconds || 0) + 's</td>'
+                    + '<td>' + (r.times || 1) + '</td>'
+                    + '<td><span class="badge badge-' + (r.status === "enabled" ? "active" : "paused") + '">' + SW.ui.escapeHtml(r.status || "-") + '</span></td>'
+                    + '<td><div class="row-actions" style="display:flex;gap:4px;flex-wrap:wrap;">'
+                    + '<button class="btn btn-sm" data-act="edit">编辑</button>'
+                    + '<button class="btn btn-sm" data-act="toggle">' + (r.status === "enabled" ? "停用" : "启用") + '</button>'
+                    + '<button class="btn btn-sm" data-act="del" style="color:var(--c-danger);">删除</button>'
+                    + '</div></td>'
+                    + '</tr>';
+            }).join("");
+        }
+
+        function onTypeChange() {
+            const type = document.getElementById("edit-type").value;
+            const rowExpr = document.getElementById("row-expression");
+            const rowThreshold = document.getElementById("row-threshold");
+            const rowTimes = document.getElementById("row-times");
+            const exprLabel = document.getElementById("label-expression");
+            const durLabel = document.getElementById("label-duration");
+            const exprField = document.getElementById("edit-expression");
+
+            rowThreshold.style.display = "none";
+            rowTimes.style.display = "none";
+            exprField.required = false;
+
+            if (type === "metric") {
+                rowExpr.style.display = "";
+                rowThreshold.style.display = "";
+                rowTimes.style.display = "";
+                exprLabel.innerHTML = "JEXL 表达式 <span class='required'>*</span> <span class='hint' style='display:inline;'>(metric 类型必填)</span>";
+                exprField.required = true;
+                exprField.placeholder = "metric == 'jvm_memory_used_bytes' && value > 800000000";
+            } else if (type === "log_error_rate") {
+                rowExpr.style.display = "none";
+                rowThreshold.style.display = "";
+                rowTimes.style.display = "";
+                document.getElementById("edit-threshold").required = true;
+            } else if (type === "log_keyword") {
+                rowExpr.style.display = "";
+                rowThreshold.style.display = "none";
+                rowTimes.style.display = "none";
+                exprLabel.innerHTML = "关键字 <span class='required'>*</span> <span class='hint' style='display:inline;'>(log_keyword 类型必填,匹配 message/throwable 包含)</span>";
+                exprField.required = true;
+                exprField.placeholder = "OutOfMemoryError";
+            } else if (type === "log_new_pattern") {
+                rowExpr.style.display = "none";
+                rowThreshold.style.display = "none";
+                rowTimes.style.display = "none";
+            }
+        }
+
+        function openEdit(id) {
+            document.getElementById("edit-id").value = id || "";
+            document.getElementById("edit-title").textContent = id ? "编辑规则" : "新建规则";
+            if (id) {
+                const r = rules.find(x => x.id === id);
+                if (!r) { SW.ui.toast("规则不存在", "error"); return; }
+                document.getElementById("edit-appid").value = r.app ? r.app.appid : "";
+                document.getElementById("edit-name").value = r.ruleName || "";
+                document.getElementById("edit-type").value = r.ruleType || "metric";
+                document.getElementById("edit-level").value = r.level || "warning";
+                document.getElementById("edit-expression").value = r.expression || "";
+                document.getElementById("edit-threshold").value = r.thresholdValue != null ? r.thresholdValue : "";
+                document.getElementById("edit-duration").value = r.durationSeconds != null ? r.durationSeconds : 60;
+                document.getElementById("edit-times").value = r.times != null ? r.times : 1;
+                document.getElementById("edit-status").value = r.status || "enabled";
+                document.getElementById("edit-channels").value = r.notifyChannels || "";
+                document.getElementById("edit-template").value = r.template || "";
+            } else {
+                document.getElementById("edit-appid").value = "";
+                document.getElementById("edit-name").value = "";
+                document.getElementById("edit-type").value = "metric";
+                document.getElementById("edit-level").value = "warning";
+                document.getElementById("edit-expression").value = "";
+                document.getElementById("edit-threshold").value = "";
+                document.getElementById("edit-duration").value = 60;
+                document.getElementById("edit-times").value = 1;
+                document.getElementById("edit-status").value = "enabled";
+                document.getElementById("edit-channels").value = "";
+                document.getElementById("edit-template").value = "";
+            }
+            onTypeChange();
+            document.getElementById("edit-mask").style.display = "flex";
+            setTimeout(() => document.getElementById("edit-name").focus(), 50);
+        }
+
+        function closeEdit() { document.getElementById("edit-mask").style.display = "none"; }
+
+        document.getElementById("btn-save").addEventListener("click", async () => {
+            const id = document.getElementById("edit-id").value;
+            const appid = document.getElementById("edit-appid").value;
+            const name = document.getElementById("edit-name").value.trim();
+            if (!appid) { SW.ui.toast("请选择应用", "error"); return; }
+            if (!name) { SW.ui.toast("规则名不能为空", "error"); return; }
+            const type = document.getElementById("edit-type").value;
+            const channelsRaw = document.getElementById("edit-channels").value.trim();
+            if (channelsRaw) {
+                try { JSON.parse(channelsRaw); }
+                catch (e) { SW.ui.toast("通知渠道不是合法 JSON", "error"); return; }
+            }
+            const body = {
+                appid: parseInt(appid, 10),
+                ruleName: name,
+                ruleType: type,
+                expression: document.getElementById("edit-expression").value.trim() || null,
+                thresholdValue: document.getElementById("edit-threshold").value ? parseFloat(document.getElementById("edit-threshold").value) : null,
+                durationSeconds: parseInt(document.getElementById("edit-duration").value, 10) || 60,
+                times: parseInt(document.getElementById("edit-times").value, 10) || 1,
+                level: document.getElementById("edit-level").value,
+                status: document.getElementById("edit-status").value,
+                notifyChannels: channelsRaw || null,
+                template: document.getElementById("edit-template").value.trim() || null
+            };
+            try {
+                if (id) {
+                    await SW.api.put("/api/alert/rules/" + id, body);
+                    SW.ui.toast("已更新", "success");
+                } else {
+                    await SW.api.post("/api/alert/rules", body);
+                    SW.ui.toast("已创建", "success");
+                }
+                closeEdit();
+                await loadRules();
+            } catch (e) {
+                SW.ui.toast("保存失败: " + e.message, "error");
+            }
+        });
+
+        document.getElementById("rules-tbody").addEventListener("click", async (e) => {
+            const btn = e.target.closest("button[data-act]");
+            if (!btn) return;
+            const tr = btn.closest("tr");
+            const id = parseInt(tr.dataset.id, 10);
+            const act = btn.dataset.act;
+            if (act === "edit") openEdit(id);
+            else if (act === "toggle") {
+                try { await SW.api.post("/api/alert/rules/" + id + "/toggle"); SW.ui.toast("已切换", "success"); await loadRules(); }
+                catch (e) { SW.ui.toast("切换失败: " + e.message, "error"); }
+            } else if (act === "del") {
+                if (!confirm("确定删除该规则?")) return;
+                try { await SW.api.del("/api/alert/rules/" + id); SW.ui.toast("已删除", "success"); await loadRules(); }
+                catch (e) { SW.ui.toast("删除失败: " + e.message, "error"); }
+            }
+        });
+
+        document.getElementById("btn-new").addEventListener("click", () => openEdit(null));
+        document.getElementById("btn-refresh").addEventListener("click", loadRules);
+        document.getElementById("edit-mask").addEventListener("click", e => { if (e.target.id === "edit-mask") closeEdit(); });
+
+        loadApps();
+        loadRules();
+    </script>
+</body>
+</html>
