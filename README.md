@@ -1,253 +1,246 @@
 # spring-watch
 
-> 基于 **拉取模型** 的 Spring Boot 应用监控平台:平台主动 HTTP GET 目标应用的 Java Agent 暴露的 `/metrics` 端点,聚合指标 / 日志 / 心跳,提供告警与查询能力。
-
-详细架构原则与硬约束见 [`白皮书.md`](./白皮书.md)。
+> 专为 Spring Boot 打造的一站式轻量监控平台 —— 采集、存储、告警、日志分析、可视化，全方位埋点（JDBC / HTTP / OS / JVM / 方法级）。
 
 ---
 
-## 一、技术栈
+## 项目定位
 
-| 维度 | 选型 |
-|---|---|
-| 基础 | Spring Boot 4.0.1 / Java 25 |
-| 持久化 | PostgreSQL 16 + Flyway / Redis 7 |
-| 时序 | InfluxDB 2.7(原始 + 5m 降采样) |
-| 消息 | Apache Kafka 4.3 |
-| 表达式 | Apache Commons JEXL 3(告警规则) |
-| 邮件 | Spring Mail(QQ SMTP) |
-| 构建 | Maven 3 |
+**spring-watch** 是一个基于 **拉取模型（Pull Model）** 的 Spring Boot 应用监控平台。平台主动 HTTP GET 目标应用的监控端点，聚合指标 / 日志 / 心跳数据，提供实时告警、日志分析与可视化能力。
+
+| 维度 | 说明 |
+|------|------|
+| **目标用户** | 运维 / SRE / 研发负责人 |
+| **目标应用** | 仅限 Spring Boot 应用 |
+| **接入方式** | Java Agent（字节码增强） |
+| **数据来源** | 仅由 Java Agent 字节码拦截产生，不依赖 Actuator / Micrometer |
+| **架构模型** | 拉取（平台主动请求，目标永不推送） |
+| **参考借鉴** | HertzBeat、Elasticsearch 监控体系 |
 
 ---
 
-## 二、模块结构
+## 功能特性
 
+- **指标采集** — 定时拉取目标应用的 `/metrics`（Prometheus 文本格式），支持 JVM / OS / HTTP / JDBC 等多维度指标
+- **日志采集与分析** — 增量拉取目标应用日志，经解析、脱敏、指纹去重后写入时序库，支持异常检测、TopN 聚合、日志-指标关联
+- **告警引擎** — 完整状态机（IDLE→PENDING→FIRING→RESOLVED），支持 JEXL 表达式、次数/持续时间阈值、SMTP 邮件通知
+- **可视化** — 基于 ECharts 的监控面板，支持应用列表、指标曲线、日志检索、告警规则管理
+- **存储** — PostgreSQL（元数据）+ InfluxDB（时序数据）+ Redis（缓存/去重/告警状态）
+- **消息解耦** — Kafka 异步缓冲采集数据，支持本地降级队列兜底
+- **自监控** — Micrometer 全方位埋点（HTTP 连接池、消费延迟、Ingest 链路等）
+
+---
+
+## 架构概览
+```mermaid
+flowchart TB
+    subgraph EXT["目标应用侧(被监控方)"]
+        direction TB
+        SB["Spring Boot 应用<br/>@SpringWatch 注解 + 业务代码"]
+        AGENT["Java Agent<br/>(OTel / 自研 Meter)"]
+        META["目标 :metricsPort/metrics<br/>目标 :endpoint/api/agent/logs"]
+        SB -.字节码拦截.-> AGENT --> META
+    end
+
+    subgraph SW["spring-watch 平台(本服务)"]
+        direction TB
+
+        subgraph COLL["① 采集层 Collector"]
+            REG["CollectScheduleRegistry<br/>虚拟线程调度器<br/>(INTERVAL / CRON)"]
+            TASK["AppPullTask<br/>可达性探测 + 心跳 + 拉取"]
+            TH["HostThrottler<br/>Per-Host 并发限流"]
+            RTR["PullRetryQueue<br/>被限流时入队重投"]
+            MC["AgentMetricsCollector<br/>HTTP GET /metrics<br/>解析 Prometheus 文本"]
+            LC["AgentLogCollector<br/>HTTP GET /api/agent/logs?since="]
+        end
+
+        subgraph BR["② Kafka 桥接层"]
+            PB["KafkaProducerBridge<br/>key=appid"]
+            FB["KafkaFallbackQueue<br/>Kafka 不可用时本地降级"]
+            T1["monitor-metrics"]
+            T2["monitor-logs"]
+            T3["monitor-heartbeat"]
+        end
+
+        subgraph CONS["③ 消费层 Consumer(批)"]
+            BMC["BatchMetricConsumer<br/>→ InfluxDB springboot_metrics"]
+            BLC["BatchLogConsumer<br/>解析/脱敏/指纹/去重<br/>→ InfluxDB app_log<br/>+ 异步告警评估"]
+            BHC["BatchHeartbeatConsumer<br/>→ PG monitor_app.lastHeartbeat"]
+            BAC["BatchAlertConsumer<br/>metrics → AsyncAlertExecutor"]
+            DLQ["DlqMonitorConsumer"]
+        end
+
+        subgraph ING["④ 日志接入 Ingest(BatchLogConsumer 内嵌)"]
+            LP["LogParser"]
+            LS["LogSanitizer"]
+            LF["LogFingerprinter"]
+            LD["LogDedupService"]
+        end
+
+        subgraph ALERT["⑤ 告警层 Alerter"]
+            AE["AlertEngine<br/>IDLE→PENDING→FIRING→RESOLVED"]
+            EV["AlertEvaluator<br/>JEXL 表达式"]
+            AS["AlertStateStore(内存)"]
+            ARC["AlertRuleCache(30s 刷新)"]
+            AN["AlertNotifier(邮件)"]
+            AEX["AsyncAlertExecutor<br/>虚拟线程池(8)"]
+        end
+
+        subgraph ANA["⑥ 分析层 Analysis(按需 Flux 查询)"]
+            LA["LogAggregator<br/>错误率 / TopN / 时序"]
+            LAD["LogAnomalyDetector<br/>错误率突增 / 新模式"]
+            LML["LogMetricsLinker<br/>日志+指标关联"]
+            LAS["LogAlertScheduler<br/>@Scheduled 1min"]
+        end
+
+        subgraph WEB["⑦ Web API 层"]
+            M_CTRL["MonitorAppController<br/>POST /api/apps"]
+            MET_CTRL["MetricController<br/>/api/metrics"]
+            L_CTRL["LogController<br/>/api/logs/*"]
+        end
+
+        REG --> TASK
+        TASK --> TH
+        TH -.被限流.-> RTR -.重投.-> TASK
+        TASK --> MC
+        TASK --> LC
+        MC --> PB
+        LC --> PB
+        TASK -- sendHeartbeat --> PB
+        PB -.失败降级.-> FB
+        PB --> T1
+        PB --> T2
+        PB --> T3
+
+        T1 --> BMC
+        T1 --> BAC
+        T2 --> BLC
+        T3 --> BHC
+
+        BLC --> LP --> LS --> LF --> LD
+        LD --> BLC
+        BLC --> AEX
+        BAC --> AEX
+        AEX --> AE
+        LAS --> AEX
+        AE --> EV
+        AE --> AS
+        AE --> ARC
+        AE --> AN
+
+        LA --> LAD
+        LA --> LML
+        LAS --> LA
+
+        WEB --> LA
+        WEB --> LML
+        WEB --> BMC
+        WEB --> BHC
+        M_CTRL -- upsert/cancel --> REG
+    end
+
+    subgraph STORE["存储层(外部)"]
+        PG[("PostgreSQL 16<br/>monitor_app<br/>alert_rule<br/>alert_history")]
+        IDB[("InfluxDB 2.7<br/>bucket: metrics<br/>bucket: logs")]
+        RDS[("Redis 7<br/>dedup:log:dedup:*<br/>errorRate:log:errorRate:*<br/>knownPatterns:log:knownPatterns:*")]
+        KF[("Apache Kafka 4.3<br/>3 topic / DLQ")]
+    end
+
+    META -- "HTTP GET 15s" --> MC
+    META -- "HTTP GET 增量" --> LC
+
+    BMC --> IDB
+    BLC --> IDB
+    BHC --> PG
+    AE --> PG
+    AN -- "SMTP 587" --> MBOX["@qq.com 收件人"]
+    LD --> RDS
+    LAD --> RDS
+    ARC --> PG
+    REG --> PG
+    BHC --> PG
+    T1 & T2 & T3 --> KF
 ```
-com.springwatch
-├── SpringWatchApplication       启动入口(@EnableKafka / @EnableScheduling)
-├── collector                    拉取侧:调度、HTTP 客户端、Kafka 生产、兜底队列
-│   └── schedule                 拉取调度注册、主机节流、重试排空
-├── ingest                       日志摄入:解析、清洗、指纹、去重
-├── consumer                     Kafka 批消费者:metric / log / heartbeat / alert / dlq
-├── analysis                     日志聚合、错误率调度、异常突增检测
-├── alerter                      告警引擎:规则缓存、状态机、JEXL 求值、邮件通知
-├── service                      业务服务层
-├── repository                   JPA 仓储
-├── model                        DTO / Entity / Event
-├── web                          REST API 控制器
-├── config                       配置类(Redis / Mail / Kafka / Influx / JEXL / Flyway)
-├── monitor                      自监控采集
-└── util                         工具(Snowflake ID 等)
-```
 
 ---
 
-## 三、快速开始
+## 技术栈
 
-### 1. 启动依赖
+| 组件 | 技术选型 |
+|------|----------|
+| 语言 | Java 25 |
+| 框架 | Spring Boot 4.0.1 |
+| 时序库 | InfluxDB 2.7 |
+| 关系库 | PostgreSQL 16 |
+| 缓存 | Redis 7 |
+| 消息队列 | Apache Kafka |
+| 数据库迁移 | Flyway |
+| 告警表达式 | Apache Commons JEXL 3.4 |
+| 自监控 | Micrometer |
+| 可视化 | ECharts（静态 HTML SPA） |
+
+---
+
+## 快速开始
+
+### 前置依赖
+
+- Docker & Docker Compose
+- JDK 25+
+- Maven 3.9+
+
+### 启动基础设施
 
 ```bash
-docker compose up -d          # postgres / redis / influxdb / kafka
+docker compose up -d
 ```
 
-| 服务 | 端口 | 账号 |
-|---|---|---|
-| PostgreSQL | 5432 | root / 123456 / db: spring_collector |
-| Redis | 6379 | - |
-| InfluxDB | 8086 | admin / admin123456 / org: spring-watch / token: sw-token-2024 |
-| Kafka | 9092 | PLAINTEXT |
-
-### 2. 配置环境变量
-
-`.env`(项目根目录,可选):
-
-```properties
-MAIL_AUTH_CODE=xxxxxxxxxxxx   # QQ 邮箱 SMTP 授权码
-```
-
-### 3. 启动应用
+### 构建并启动
 
 ```bash
-./mvnw spring-boot:run
-# 或
-mvn spring-boot:run
+mvn clean package -DskipTests
+java -jar target/spring-watch-1.0.0.jar
 ```
 
-应用启动后监听 `http://localhost:8080`。
+### 接入目标应用
+
+1. 目标应用挂载 OTel Java Agent（或未来自研 Agent）
+2. 复制 `@SpringWatch` 注解与 `SpringWatchAspect` 切面到目标项目
+3. 在 spring-watch 平台注册目标应用（名称、Endpoint、Metrics 端口）
 
 ---
 
-## 四、配置说明(关键项)
+## 项目状态
 
-完整配置见 `src/main/resources/application.yml`,以下为最常调整项:
+> **预览阶段（Preview）** — 核心链路基本可用，正在进行正式版迭代。
 
-### 拉取(`spring-watch.collector`)
+### 已实现
 
-| 项 | 默认 | 说明 |
-|---|---|---|
-| `pool-size` | 32 | 采集线程池大小 |
-| `per-host-concurrent` | 4 | 单目标主机最大并发 |
-| `jitter-percent` | 10 | 采集时间抖动,避免雪崩 |
-| `http.connect-timeout-ms` | 3000 | HTTP 连接超时 |
-| `http.read-timeout-ms` | 10000 | HTTP 读取超时 |
-| `retry.max-attempts` | 5 | 单次请求最大重试 |
-| `retry.max-queue-size` | 1000 | 重试队列容量 |
+- [x] 指标采集（HTTP 拉取 + Prometheus 文本解析）
+- [x] 日志增量采集与 Ingest 管道（解析→脱敏→指纹→去重→入库）
+- [x] 日志分析（异常检测、TopN 聚合、日志-指标关联、错误率告警）
+- [x] 告警引擎（JEXL 表达式、状态机、邮件通知）
+- [x] 存储层（InfluxDB + PostgreSQL + Redis + Kafka）
+- [x] 可视化（ECharts 监控面板、日志检索、告警规则管理）
+- [x] 自监控（Micrometer 指标暴露）
+- [x] REST API（应用注册/指标查询/日志检索/告警 CRUD）
 
-### 告警(`spring-watch.alert`)
+### TODO（正式版）
 
-| 项 | 默认 | 说明 |
-|---|---|---|
-| `enabled` | true | 总开关 |
-| `mail.from` | 2787901285@qq.com | 发件人 |
-| `executor.pool-size` | 8 | 告警执行线程数 |
-| `scan.interval-ms` | 5000 | 扫描间隔 |
-| `rule-cache.refresh-interval-ms` | 30000 | 规则缓存刷新 |
-
-### Kafka(`spring.kafka`)
-
-- `bootstrap-servers`:默认 `localhost:9092`
-- Topic:`monitor-metrics`(12 分区)、`monitor-logs`(6 分区)、`monitor-heartbeat`(3 分区)、`monitor-dlq`(3 分区)
-- 副本因子默认 1(单节点),生产请调大
-
-### InfluxDB
-
-- 原始桶:`metrics` / `logs`(保留 30d / 7d)
-- 降采样桶:`metrics_5m` / `logs_5m`(保留 365d)
-- 降采样任务每小时调度一次,聚合窗口 5m
+- [ ] **渲染层升级** — 使用 Vue 重构前端，优化 UI/UX 与交互体验
+- [ ] **E2E 测试** — 补充端到端测试，覆盖采集→入湖→告警全链路
+- [ ] **内存优化** — 实现轻量化与高可用，降低常驻内存开销
+- [ ] **自研 Java Agent** —
+  - 日志采集 Agent（替代目标应用自暴露 `/api/agent/logs`）
+  - 方法注解埋点 Agent（字节码层直接织入 `@SpringWatch` 监控逻辑）
+  - SQL 执行监控（JDBC 拦截）
 
 ---
 
-## 五、数据流
+## 参考与致谢
 
-```
-[目标 Spring Boot 应用 + Java Agent]
-        │  HTTP GET /metrics (15s 一次,平台主动)
-        ▼
-[collector: AppPullTask / HostThrottler / RetryPull]
-        │  Kafka send → monitor-metrics / monitor-logs / monitor-heartbeat
-        ▼
-[consumer: BatchMetricConsumer / BatchLogConsumer / BatchHeartbeatConsumer]
-        │  批写 InfluxDB + PostgreSQL
-        ▼
-[analysis + alerter]
-        │  规则命中 → AlertNotifier → 邮件
-        ▼
-[web: REST API]  ←  平台使用方
-```
-
-Kafka 不可用时,生产者自动降级到**内存兜底队列**(`spring-watch.kafka.fallback-queue`),积压超阈值告警。
+- [HertzBeat](https://github.com/usthe/hertzbeat) — 监控告警系统，项目初期的重要参考
+- Elasticsearch 监控体系 — 日志分析、指标聚合与可视化方案借鉴
 
 ---
 
-## 六、REST API 概览
-
-所有接口返回统一结构 `ApiResponse<T>`:`{ code, message, data }`。
-
-### 监控应用管理 `/api/monitor`
-
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| GET | `/api/monitor` | 列出全部应用 |
-| GET | `/api/monitor/active` | 列出活跃应用 |
-| GET | `/api/monitor/{id}` | 详情 |
-| POST | `/api/monitor` | 注册新应用 |
-| PUT | `/api/monitor/{id}` | 更新 |
-| DELETE | `/api/monitor/{id}` | 删除 |
-
-### 日志查询 `/api/logs`
-
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| GET | `/api/logs/search` | 关键字 + 多维过滤检索 |
-| GET | `/api/logs/levels` | 级别分布 |
-| GET | `/api/logs/stats/error-rate` | 当前窗口错误率 |
-| GET | `/api/logs/stats/error-rate-series` | 错误率时序 |
-| GET | `/api/logs/patterns` | TopN 异常模式 |
-| GET | `/api/logs/fingerprint/{fp}` | 单 fingerprint 详情 |
-| GET | `/api/logs/anomaly` | 异常突增检测 |
-| GET | `/api/logs/trace/{traceId}` | 按 traceId 反查 |
-| GET | `/api/logs/context` | 时间点上下文 |
-| GET | `/api/logs/dedup/top` | 高频去重模式 |
-
-### 指标查询 `/api/metrics`
-
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| GET | `/api/metrics/available` | 可用指标清单 |
-| GET | `/api/metrics/latest` | 最新数据点 |
-| GET | `/api/metrics/series` | 时序数据 |
-| GET | `/api/metrics/grouped` | 按标签分组 |
-| GET | `/api/metrics/histogram-quantile` | histogram 分位数估算 |
-| GET | `/api/metrics/by-prefix` | 前缀模糊匹配 |
-
-### 告警 `/api/alert`
-
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| GET | `/api/alert/rules` | 规则列表 |
-| GET | `/api/alert/rules/{id}` | 规则详情 |
-| POST | `/api/alert/rules` | 新建规则 |
-| PUT | `/api/alert/rules/{id}` | 更新规则 |
-| DELETE | `/api/alert/rules/{id}` | 删除规则 |
-| POST | `/api/alert/rules/{id}/toggle` | 启停 |
-| GET | `/api/alert/history` | 告警历史 |
-
-### 通知配置 `/api/notification`
-
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| GET | `/api/notification/configs` | 配置列表 |
-| POST | `/api/notification/configs` | 新建 |
-| PUT | `/api/notification/configs/{id}` | 更新 |
-| DELETE | `/api/notification/configs/{id}` | 删除 |
-| POST | `/api/notification/test?to=xxx@xx.com` | 邮件测试 |
-
-### 自监控 `/api/self`
-
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| GET | `/api/self/health` | 自身健康状态 |
-| GET | `/api/self/metrics` | 平台自身指标 |
-
----
-
-## 七、告警规则(JEXL)
-
-`AlertRule.expression` 字段为 JEXL 表达式,可用变量:
-
-- `value` — 当前指标值
-- `avg(window)` — 窗口均值
-- `max(window)` / `min(window)` — 窗口极值
-- `tags` — 标签 Map
-
-示例:
-
-```
-value > avg(5m) * 2 && tags.level == "ERROR"
-```
-
----
-
-## 八、本地调试
-
-`mock-test/` 子模块提供目标应用的 mock,可一并启动验证端到端:
-
-```bash
-mvn -pl mock-test spring-boot:run
-```
-
----
-
-## 九、常见问题
-
-**Q: 启动后日志大量 `Node -1 disconnected` / `Rebootstrapping`?**
-A: Kafka 未启动或 `bootstrap-servers` 不可达。已通过 `logging.level.org.apache.kafka: warn` 屏蔽噪音,重连行为照旧进行。真正解决需保证 Kafka 可达。
-
-**Q: 邮件发送失败?**
-A: 检查 `.env` 中 `MAIL_AUTH_CODE`(QQ 邮箱授权码,非登录密码),并确认 `spring.mail.host / port / username` 正确。
-
-**Q: InfluxDB 写入失败?**
-A: 确认 `influxdb.token` 与 `docker-compose.yml` 中 `DOCKER_INFLUXDB_INIT_ADMIN_TOKEN` 一致;首次启动会自动创建桶。
-
-**Q: Flyway 迁移报错?**
-A: `spring.jpa.hibernate.ddl-auto=none`,表结构由 Flyway 管理。检查 `db/migration` 目录与 PostgreSQL `flyway_schema_history` 表。
