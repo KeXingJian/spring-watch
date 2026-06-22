@@ -214,6 +214,10 @@ java -jar target/spring-watch-1.0.0.jar
 
 > **预览阶段（Preview）** — 核心链路基本可用，正在进行正式版迭代。
 
+![日志分析](docs/img/1.png)
+![应用指标](docs/img/2.png)
+![自监控](docs/img/3.png)
+
 ### 已实现
 
 - [x] 指标采集（HTTP 拉取 + Prometheus 文本解析）
