@@ -53,7 +53,11 @@ const filters = reactive({
   fp: ''
 })
 const searchResults = ref<any[]>([])
-const searchCount = ref(0)
+const searchTotal = ref(0)
+const searchPage = ref(1)
+const searchPageSize = ref(20)
+const searchTotalPages = ref(0)
+const jumpPage = ref(1)
 const showAppHint = ref(false)
 
 const showDetail = ref(false)
@@ -158,7 +162,8 @@ async function doSearch() {
     appid: appid.value,
     from,
     to,
-    limit: 10
+    page: searchPage.value,
+    pageSize: searchPageSize.value
   }
   if (filters.keyword) params.keyword = filters.keyword
   if (filters.level) params.level = filters.level
@@ -167,9 +172,14 @@ async function doSearch() {
   if (filters.trace) params.traceId = filters.trace
   if (filters.fp) params.fingerprint = filters.fp
   try {
-    const r = await api.get<any[]>('/api/logs/search', params)
-    searchResults.value = r || []
-    searchCount.value = searchResults.value.length
+    const r = await api.get<{ rows: any[]; total: number; page: number; pageSize: number }>('/api/logs/search', params)
+    searchResults.value = r?.rows || []
+    searchTotal.value = r?.total || 0
+    searchPage.value = r?.page || 1
+    searchPageSize.value = r?.pageSize || 20
+    searchTotalPages.value = searchPageSize.value > 0
+      ? Math.ceil(searchTotal.value / searchPageSize.value)
+      : 0
     await loadPatterns()
   } catch (e: any) {
     toast.error('检索失败: ' + e.message)
@@ -183,8 +193,20 @@ function resetSearch() {
   filters.thread = ''
   filters.trace = ''
   filters.fp = ''
+  searchPage.value = 1
   doSearch()
 }
+
+function goPage(p: number) {
+  if (p < 1 || p > searchTotalPages.value) return
+  searchPage.value = p
+  doSearch()
+}
+
+// 监听筛选条件变化,重置到第 1 页
+watch(() => ({ ...filters }), () => {
+  searchPage.value = 1
+}, { deep: true })
 
 async function loadPatterns() {
   try {
@@ -351,7 +373,11 @@ watch(rangeSec, () => {
       <div class="card-body p-0">
         <div class="px-4 py-2.5 border-b border-base-300 flex items-center font-medium text-sm">
           <span>日志检索</span>
-          <span class="ml-auto text-xs text-muted font-normal">显示 {{ searchCount }} 条(最近 {{ rangeLabel }} 内,按 limit 截断)</span>
+          <span class="ml-auto text-xs text-muted font-normal">
+            共 <strong>{{ searchTotal }}</strong> 条(基础 count,最近 {{ rangeLabel }} 内)
+            · 第 <strong>{{ searchPage }}</strong> / {{ searchTotalPages || 1 }} 页
+            · 显示 <strong>{{ searchResults.length }}</strong> 条
+          </span>
         </div>
         <div class="flex flex-wrap gap-2 p-3 border-b border-base-300 items-center bg-base-200/40">
           <span class="label">关键字:</span>
@@ -415,6 +441,30 @@ watch(rangeSec, () => {
               </tr>
             </tbody>
           </table>
+        </div>
+        <div v-if="searchTotal > 0" class="px-4 py-2 border-t border-base-300 flex items-center gap-2 text-sm">
+          <span class="text-muted text-xs mr-2">每页</span>
+          <select class="select select-bordered select-xs" v-model.number="searchPageSize" @change="goPage(1)">
+            <option :value="10">10</option>
+            <option :value="20">20</option>
+            <option :value="50">50</option>
+            <option :value="100">100</option>
+          </select>
+          <span class="ml-2" />
+          <button class="btn btn-ghost btn-xs" :disabled="searchPage <= 1" @click="goPage(1)">«</button>
+          <button class="btn btn-ghost btn-xs" :disabled="searchPage <= 1" @click="goPage(searchPage - 1)">‹</button>
+          <span class="text-xs mx-2">{{ searchPage }} / {{ searchTotalPages || 1 }}</span>
+          <button class="btn btn-ghost btn-xs" :disabled="searchPage >= searchTotalPages" @click="goPage(searchPage + 1)">›</button>
+          <button class="btn btn-ghost btn-xs" :disabled="searchPage >= searchTotalPages" @click="goPage(searchTotalPages)">»</button>
+          <span class="ml-auto text-xs text-muted">跳至</span>
+          <input
+            class="input input-bordered input-xs w-16"
+            type="number"
+            :min="1"
+            :max="searchTotalPages || 1"
+            v-model.number="jumpPage"
+            @keyup.enter="goPage(jumpPage)"
+          />
         </div>
       </div>
     </div>

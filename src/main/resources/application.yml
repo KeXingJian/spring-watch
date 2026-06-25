@@ -4,7 +4,7 @@ server:
 spring-watch:
   collector:
     pool-size: 32 # 采集线程池大小
-    per-host-concurrent: 4 # 同一目标主机的最大并发数
+    per-host-concurrent: 10 # 同一目标主机的最大并发数
     jitter-percent: 10 # 采集时间抖动百分比（避免雪崩）
     http:
       connect-timeout-ms: 3000 # HTTP 连接超时（毫秒）

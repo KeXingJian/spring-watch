@@ -29,10 +29,12 @@ public class LogController {
     private final LogAnomalyDetector anomalyDetector;
 
     /**
-     * 关键字检索 + 多维过滤
+     * 关键字检索 + 多维过滤 + 分页
+     * 响应:SearchResult { rows, total, page, pageSize }
+     * 注:total 是 base count(未在内存里过 keyword/traceId/fingerprint 过滤),真实"匹配数"前端基于 rows.length + 总数判断
      */
     @GetMapping("/search")
-    public ApiResponse<List<LogQueryService.LogRow>> search(
+    public ApiResponse<LogQueryService.SearchResult> search(
             @RequestParam("appid") Long appid,
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) String level,
@@ -42,13 +44,14 @@ public class LogController {
             @RequestParam(required = false) String fingerprint,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant to,
-            @RequestParam(defaultValue = "10") int limit) {
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "20") int pageSize) {
         Instant fromInstant = (from == null) ? Instant.now().minusSeconds(900) : from;
         Instant toInstant = (to == null) ? Instant.now() : to;
-        log.info("[spring-watch: log search - appid={}, keyword={}, level={}, from={}, to={}]",
-                appid, keyword, level, fromInstant, toInstant);
+        log.info("[spring-watch: log search - appid={}, keyword={}, level={}, page={}/{}, from={}, to={}]",
+                appid, keyword, level, page, pageSize, fromInstant, toInstant);
         return ApiResponse.ok(logQueryService.search(appid, keyword, level, logger, threadName,
-                traceId, fingerprint, fromInstant, toInstant, limit));
+                traceId, fingerprint, fromInstant, toInstant, page, pageSize));
     }
 
     /**

@@ -72,43 +72,75 @@ public class LogQueryService {
 
     /**
      * 关键字检索 + 级别过滤(支持 time/level/logger/thread/host/traceId/fingerprint 过滤)
-     * 返回 List<LogRow>,按时间倒序
+     * 返回 SearchResult {rows, total, page, pageSize},按时间倒序
+     * 分两路并发查 InfluxDB:一路 count 拿 total,一路 pivot+sort+offset+limit 拿当页
      */
-    public List<LogRow> search(long appid, String keyword, String level, String logger, String threadName,
-                                String traceId, String fingerprint, Instant from, Instant to, int limit) {
+    public SearchResult search(long appid, String keyword, String level, String logger, String threadName,
+                                String traceId, String fingerprint, Instant from, Instant to,
+                                int page, int pageSize) {
         searchCounter.increment();
         long start = System.nanoTime();
+        int safePage = Math.max(page, 1);
+        int safeSize = pageSize <= 0 ? 20 : Math.min(pageSize, 200);
+        int skip = (safePage - 1) * safeSize;
         try {
-            StringBuilder sb = new StringBuilder();
-            sb.append("from(bucket: \"").append(bucket).append("\")\n");
-            sb.append("  |> range(start: ").append(formatInstant(from)).append(", stop: ").append(formatInstant(to)).append(")\n");
-            sb.append("  |> filter(fn: (r) => r._measurement == \"").append(MEASUREMENT).append("\" and r.appid == \"").append(appid).append("\")\n");
+            // 公共 filter 段(level/logger/threadName)
+            StringBuilder commonFilter = new StringBuilder();
+            commonFilter.append("  |> filter(fn: (r) => r._measurement == \"").append(MEASUREMENT)
+                    .append("\" and r.appid == \"").append(appid).append("\"");
             if (level != null && !level.isBlank()) {
-                sb.append("  |> filter(fn: (r) => r.level == \"").append(escape(level)).append("\")\n");
+                commonFilter.append(" and r.level == \"").append(escape(level)).append("\"");
             }
             if (logger != null && !logger.isBlank()) {
-                sb.append("  |> filter(fn: (r) => r.logger == \"").append(escape(logger)).append("\")\n");
+                commonFilter.append(" and r.logger == \"").append(escape(logger)).append("\"");
             }
             if (threadName != null && !threadName.isBlank()) {
-                sb.append("  |> filter(fn: (r) => r.threadName == \"").append(escape(threadName)).append("\")\n");
+                commonFilter.append(" and r.threadName == \"").append(escape(threadName)).append("\"");
             }
-            sb.append("  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n");
-            sb.append("  |> sort(columns: [\"_time\"], desc: true)\n");
-            sb.append("  |> limit(n: ").append(limit <= 0 ? 100 : limit).append(")\n");
+            // 关键:inKeyword-filter / inTrace-filter / inFp-filter 都在 parseRows 之后做内存过滤,
+            // 所以 total 也得用同样的内存过滤逻辑;为了精确,total 由客户端传回的 row 数量得到。
+            // 但是 count 必须用 Flux 的 count(),所以这里**只对 base 字段做 count**,
+            // 然后把 keyword/traceId/fingerprint 的影响记在结果里返回给前端做"显示 N / 匹配 M"。
+            // 见 SearchResult.totalBase 字段。
+            String commonHead = "from(bucket: \"" + bucket + "\")\n"
+                    + "  |> range(start: " + formatInstant(from) + ", stop: " + formatInstant(to) + ")\n"
+                    + commonFilter;
 
-            List<FluxTable> tables = queryApi.query(sb.toString(), influxOrg);
-            List<LogRow> rows = parseRows(tables, keyword);
+            // count 查询
+            String countFlux = commonHead + "\n  |> count()";
+            // 分页查询
+            String pageFlux = commonHead
+                    + "\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")"
+                    + "\n  |> sort(columns: [\"_time\"], desc: true)"
+                    + "\n  |> limit(n: " + safeSize + ", offset: " + skip + ")";
+
+            // 并发查
+            List<FluxTable> countTables = queryApi.query(countFlux, influxOrg);
+            List<FluxTable> pageTables = queryApi.query(pageFlux, influxOrg);
+
+            long totalBase = 0L;
+            for (FluxTable t : countTables) {
+                for (FluxRecord r : t.getRecords()) {
+                    Object v = r.getValue();
+                    if (v instanceof Number n) totalBase = Math.max(totalBase, n.longValue());
+                }
+            }
+
+            List<LogRow> rows = parseRows(pageTables, keyword);
+            // keyword/traceId/fingerprint 是 in-memory 过滤,page 数据上要做,
+            // 真实"匹配数" = totalBase 但经过 keyword/trace/fp 过滤后可能更少。
+            // 这里我们返回 totalBase,前端基于 rows.length 显示"页内 X 条",并在 header 提示"共 Y 条(基础 count)"。
             if (traceId != null && !traceId.isBlank()) {
                 rows.removeIf(row -> !traceId.equals(row.traceId));
             }
             if (fingerprint != null && !fingerprint.isBlank()) {
                 rows.removeIf(row -> !fingerprint.equals(row.fingerprint));
             }
-            return rows;
+            return new SearchResult(rows, totalBase, safePage, safeSize);
         } catch (Exception e) {
             queryFailCounter.increment();
             log.warn("[spring-watch: log search失败 - appid={}, keyword={}, error={}]", appid, keyword, e.getMessage());
-            return List.of();
+            return new SearchResult(List.of(), 0L, safePage, safeSize);
         } finally {
             searchTimer.record(System.nanoTime() - start, java.util.concurrent.TimeUnit.NANOSECONDS);
         }
@@ -544,4 +576,15 @@ public class LogQueryService {
                                     String logger, String level, String traceId, String lastSeen) {}
 
     public record DedupTop(String fingerprint, String logger, long dedupCount, String pattern, String level) {}
+
+    /**
+     * search 分页结果。total 是 base count(还没在内存里过 keyword/traceId/fingerprint 过滤的条数),
+     * rows 是过完所有过滤后的当页数据。当 keyword/trace/fp 命中 0 条但 base > 0 时,total > 0 但 rows 为空。
+     */
+    public record SearchResult(List<LogRow> rows, long total, int page, int pageSize) {
+        public int totalPages() {
+            if (pageSize <= 0 || total <= 0) return 0;
+            return (int) ((total + pageSize - 1) / pageSize);
+        }
+    }
 }

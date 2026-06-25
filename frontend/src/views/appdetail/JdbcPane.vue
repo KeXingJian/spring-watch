@@ -269,23 +269,16 @@ watch(() => [props.appid, props.rangeSec], refresh)
       </div>
     </div>
   </div>
-
-    <div class="chart-row">
+  <div class="chart-row">
     <div class="chart-panel">
-      <div class="panel-head">创建连接次数趋势(累计 count)</div>
+      <div class="panel-head">连接使用耗时 P50/P95/P99</div>
       <div class="panel-body has-chart">
-        <Chart v-if="createDist.length" type="line" :series="createDist" y-axis-name="count" />
-        <EmptyState v-else inline>{{ emptyMap['jdbc-create-dist'] || '暂无数据' }}</EmptyState>
+        <Chart v-if="useQuantile.length" type="line" :series="useQuantile" y-axis-name="ms" />
+        <EmptyState v-else inline>{{ emptyMap['jdbc-use-quantile'] || '暂无数据' }}</EmptyState>
       </div>
     </div>
-  </div>
-    </div>
-  </div>
-    </div>
-  </div>
-    </div>
     <div class="chart-panel">
-      <div class="panel-head">连接使用时长分布(le 桶)</div>
+      <div class="panel-head">连接使用次数趋势(累计 count)</div>
       <div class="panel-body has-chart">
         <Chart v-if="useDist.length" type="line" :series="useDist" y-axis-name="count" />
         <EmptyState v-else inline>{{ emptyMap['jdbc-use-dist'] || '暂无数据' }}</EmptyState>
@@ -302,7 +295,7 @@ watch(() => [props.appid, props.rangeSec], refresh)
       </div>
     </div>
     <div class="chart-panel">
-      <div class="panel-head">获取连接等待耗时分布(le 桶)</div>
+      <div class="panel-head">获取连接等待次数趋势(累计 count)</div>
       <div class="panel-body has-chart">
         <Chart v-if="waitDist.length" type="line" :series="waitDist" y-axis-name="count" />
         <EmptyState v-else inline>{{ emptyMap['jdbc-wait-dist'] || '暂无数据' }}</EmptyState>
@@ -319,7 +312,7 @@ watch(() => [props.appid, props.rangeSec], refresh)
       </div>
     </div>
     <div class="chart-panel">
-      <div class="panel-head">创建连接耗时分布(le 桶)</div>
+      <div class="panel-head">创建连接次数趋势(累计 count)</div>
       <div class="panel-body has-chart">
         <Chart v-if="createDist.length" type="line" :series="createDist" y-axis-name="count" />
         <EmptyState v-else inline>{{ emptyMap['jdbc-create-dist'] || '暂无数据' }}</EmptyState>
