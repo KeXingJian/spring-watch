@@ -18,3 +18,13 @@ spring:
 logging:
   pattern:
     console: "%d{HH:mm:ss.SSS} [%thread] [%5level] traceId=%mdc{trace_id:-} spanId=%mdc{span_id:-} %logger{36} - %msg%n"
+
+mock:
+  sim:
+    enabled: true
+    steady-interval-ms: 1000
+    business-interval-ms: 8000
+    stress-pool-burst-ms: 60000
+    stress-slow-query-ms: 90000
+    log-warn-burst-ms: 120000
+    log-error-burst-ms: 300000
