@@ -219,7 +219,25 @@ public class LogQueryService {
                     String fp = strVal(r.getValueByKey("fingerprint"));
                     long cnt = r.getValue() instanceof Number n ? n.longValue() : 0;
                     if (fp == null || "null".equals(fp) || "unknown".equals(fp)) continue;
-                    out.add(new PatternTop(fp, null, cnt, null));
+                    out.add(new PatternTop(fp, null, cnt, 0L));
+                }
+            }
+            // 合并 PG log_dedup_count 的去重计数,得到"真实总次数"
+            // 注意:PG dedup_count 是近 1h 窗口的累加(Redis TTL 限制),
+            // 与 InfluxDB 查的 [from, to] 时间窗并不完全对齐,这里采用"任一指纹命中就补"
+            if (!out.isEmpty()) {
+                List<String> fps = out.stream().map(p -> p.fingerprint()).toList();
+                List<LogDedupCountRepository.FpCount> rows = dedupCountRepository.sumDedupByFingerprints(appid, fps);
+                Map<String, Long> dedupMap = new HashMap<>();
+                for (LogDedupCountRepository.FpCount r : rows) {
+                    if (r != null && r.getFp() != null) {
+                        dedupMap.put(r.getFp(), r.getCnt() == null ? 0L : r.getCnt());
+                    }
+                }
+                for (int i = 0; i < out.size(); i++) {
+                    PatternTop p = out.get(i);
+                    long dedup = dedupMap.getOrDefault(p.fingerprint(), 0L);
+                    out.set(i, new PatternTop(p.fingerprint(), p.pattern(), p.count(), dedup));
                 }
             }
             return out;
@@ -520,7 +538,7 @@ public class LogQueryService {
 
     public record LevelCount(String level, long count) {}
 
-    public record PatternTop(String fingerprint, String pattern, long count, String level) {}
+    public record PatternTop(String fingerprint, String pattern, long count, long dedupCount) {}
 
     public record FingerprintDetail(String fingerprint, String pattern, String message, String throwable,
                                     String logger, String level, String traceId, String lastSeen) {}

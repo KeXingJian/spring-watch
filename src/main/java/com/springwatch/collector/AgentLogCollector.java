@@ -4,14 +4,17 @@ import com.springwatch.model.event.LogEvent;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
-import tools.jackson.core.type.TypeReference;
+import tools.jackson.core.JsonParser;
+import tools.jackson.core.JsonToken;
 import tools.jackson.databind.ObjectMapper;
 
 import java.net.URI;
 import java.time.Instant;
-import java.util.Collections;
-import java.util.List;
 
+/**
+ * 拉取 Agent 日志并入 Kafka。
+ * P1-2: 改用 JsonParser 逐条流式解析，避免把整段日志 List 化在堆里。
+ */
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -40,35 +43,41 @@ public class AgentLogCollector {
         if (body == null || body.isEmpty()) {
             return since;
         }
-        List<LogEvent> logs;
-        try {
-            logs = objectMapper.readValue(body, new TypeReference<>() {});
+
+        Instant latest = since;
+        int sent = 0;
+        try (JsonParser p = objectMapper.createParser(body)) {
+            if (p.nextToken() != JsonToken.START_ARRAY) {
+                log.warn("[spring-watch: Agent日志响应非数组 - appid={}, app={}]", appid, appName);
+                return since;
+            }
+            while (p.nextToken() != JsonToken.END_ARRAY) {
+                if (p.currentToken() != JsonToken.START_OBJECT) {
+                    log.warn("[spring-watch: Agent日志元素非对象 - appid={}, app={}, token={}]",
+                            appid, appName, p.currentToken());
+                    p.skipChildren();
+                    continue;
+                }
+                LogEvent event = p.readValueAs(LogEvent.class);
+                if (event.getAppid() == null) {
+                    event.setAppid(appid);
+                }
+                if (event.getTimestamp() == null) {
+                    event.setTimestamp(Instant.now());
+                }
+                if (event.getHost() == null && remoteHost != null) {
+                    event.setHost(remoteHost);
+                }
+                kafkaProducerBridge.sendLog(event);
+                sent++;
+                if (event.getTimestamp().isAfter(latest)) {
+                    latest = event.getTimestamp();
+                }
+            }
         } catch (Exception e) {
             log.warn("[spring-watch: Agent日志解析失败 - appid={}, app={}, error={}]",
                     appid, appName, e.getMessage());
-            return since;
-        }
-        if (logs == null) {
-            logs = Collections.emptyList();
-        }
-        Instant latest = since;
-        int sent = 0;
-        for (LogEvent event : logs) {
-            if (event.getAppid() == null) {
-                event.setAppid(appid);
-            }
-            if (event.getTimestamp() == null) {
-                event.setTimestamp(Instant.now());
-            }
-            if (event.getHost() == null && remoteHost != null) {
-                event.setHost(remoteHost);
-            }
-
-            kafkaProducerBridge.sendLog(event);
-            sent++;
-            if (event.getTimestamp().isAfter(latest)) {
-                latest = event.getTimestamp();
-            }
+            return latest.isAfter(since) ? latest : since;
         }
         log.info("[spring-watch: Agent日志拉取 - appid={}, app={}, since={}, count={}, latest={}]",
                 appid, appName, since, sent, latest);

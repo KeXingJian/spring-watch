@@ -29,15 +29,16 @@ public class LogAnomalyDetector {
 
     /**
      * kxj: 错误率突增检测-当前窗口rate与上一窗口对比,倍数>=multiplier视为突增
+     * 返回 SpikingResult 包含是否突增 + 上一窗口的基线 rate(供前端展示)
      */
-    public boolean isErrorRateSpiking(long appid, double currentRate, double multiplier) {
+    public SpikingResult isErrorRateSpiking(long appid, double currentRate, double multiplier) {
         log.debug("[spring-watch: LogAnomalyDetector isErrorRateSpiking - appid={}, current={}, multiplier={}]", appid, currentRate, multiplier);
         String key = KEY_LAST_RATE + appid;
         Double lastRate = parseDouble(redis.opsForValue().get(key));
         redis.opsForValue().set(key, String.valueOf(currentRate), Duration.ofSeconds(rateTtlSeconds));
         if (lastRate == null || lastRate < minBaseRate) {
             log.debug("[spring-watch: LogAnomalyDetector 跳过突增判断 - appid={}, lastRate={}, minBaseRate={}", appid, lastRate, minBaseRate);
-            return false;
+            return new SpikingResult(false, lastRate);
         }
         boolean spiking = currentRate / lastRate >= multiplier;
         if (spiking) {
@@ -47,8 +48,10 @@ public class LogAnomalyDetector {
             log.debug("[spring-watch: LogAnomalyDetector 错误率未突增 - appid={}, current={}, last={}, ratio={}",
                     appid, currentRate, lastRate, currentRate / lastRate);
         }
-        return spiking;
+        return new SpikingResult(spiking, lastRate);
     }
+
+    public record SpikingResult(boolean spiking, Double lastRate) {}
 
     /**
      * kxj: 新模式发现-fingerprint首次出现返回true(Redis Set记录已知模式)

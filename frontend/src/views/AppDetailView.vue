@@ -23,7 +23,7 @@ const activeTab = ref<Tab>('jdbc')
 const rangeSec = ref(900)
 const appid = computed<string | null>(() => {
   const q = route.query.appid
-  if (q) return String(q)
+  if (typeof q === 'string' && /^\d+$/.test(q)) return q
   return appStore.currentAppid
 })
 
@@ -40,7 +40,7 @@ async function loadAppInfo() {
       app = await api.get('/api/apps/by-appid/' + appid.value)
     } catch {
       try {
-        const apps = await api.get<any[]>('/api/apps?appid=' + appid.value)
+        const apps = await api.page<any>('/api/apps', { appid: appid.value })
         app = Array.isArray(apps) ? apps[0] : null
       } catch {
         /* ignore */

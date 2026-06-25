@@ -49,6 +49,29 @@ public class HostThrottler {
         }
     }
 
+    /**
+     * P1-5: 删除应用时彻底清理该 host 的限流器 entry，
+     * 避免 hostSemaphores 在长生命周期中持续累积导致内存泄漏。
+     * 仅在所有 permit 都已归还且无等待线程时移除。
+     */
+    public boolean cleanup(String host) {
+        Semaphore sem = hostSemaphores.get(host);
+        if (sem == null) {
+            return false;
+        }
+        if (sem.availablePermits() != properties.getPerHostConcurrent() || sem.getQueueLength() != 0) {
+            log.warn("[spring-watch: 主机限流器清理失败 - host={}, available={}, waiting={}, max={}",
+                    host, sem.availablePermits(), sem.getQueueLength(), properties.getPerHostConcurrent());
+            return false;
+        }
+        Semaphore removed = hostSemaphores.remove(host);
+        if (removed != null) {
+            log.info("[spring-watch: 主机限流器清理 - host={}, activeHosts={}]", host, hostSemaphores.size());
+            return true;
+        }
+        return false;
+    }
+
     public int activeHosts() {
         return hostSemaphores.size();
     }

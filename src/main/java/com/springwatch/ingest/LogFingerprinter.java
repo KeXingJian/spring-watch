@@ -81,13 +81,21 @@ public class LogFingerprinter {
     }
 
     private String sha1Hex(String input) {
-        try {
-            MessageDigest md = MessageDigest.getInstance("SHA-1");
-            byte[] bytes = md.digest(input.getBytes(StandardCharsets.UTF_8));
-            return HexFormat.of().formatHex(bytes);
-        } catch (NoSuchAlgorithmException e) {
-            log.warn("[spring-watch: LogFingerprinter SHA-1 不可用 - error={}]", e.getMessage());
-            return Integer.toHexString(input.hashCode());
-        }
+        MessageDigest md = SHA1.get();
+        md.reset();
+        byte[] bytes = md.digest(input.getBytes(StandardCharsets.UTF_8));
+        return HexFormat.of().formatHex(bytes);
     }
+
+    /**
+     * P1-4: 复用 MessageDigest 实例，避免每条日志都新建一次 SHA-1 算法对象。
+     * MessageDigest 本身非线程安全，必须放在 ThreadLocal 中。
+     */
+    private static final ThreadLocal<MessageDigest> SHA1 = ThreadLocal.withInitial(() -> {
+        try {
+            return MessageDigest.getInstance("SHA-1");
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-1 not available", e);
+        }
+    });
 }

@@ -8,6 +8,10 @@ import com.springwatch.service.NotificationConfigService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -18,7 +22,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.List;
 import java.util.Map;
 
 @Slf4j
@@ -27,12 +30,20 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class NotificationController {
 
+    private static final int MAX_PAGE_SIZE = 200;
+
     private final NotificationConfigService configService;
     private final AlertNotifier alertNotifier;
 
     @GetMapping("/configs")
-    public ApiResponse<List<AlertNotificationConfig>> listConfigs(@RequestParam(value = "appid", required = false) Long appid) {
-        List<AlertNotificationConfig> list = (appid == null) ? configService.listAll() : configService.listByAppid(appid);
+    public ApiResponse<Page<AlertNotificationConfig>> listConfigs(
+            @RequestParam(value = "appid", required = false) Long appid,
+            @RequestParam(value = "page", defaultValue = "0") int page,
+            @RequestParam(value = "size", defaultValue = "20") int size) {
+        Pageable pageable = PageRequest.of(page, clampSize(size), Sort.by("id").descending());
+        Page<AlertNotificationConfig> list = (appid == null)
+                ? configService.listAll(pageable)
+                : configService.listByAppid(appid, pageable);
         return ApiResponse.ok(list);
     }
 
@@ -62,11 +73,15 @@ public class NotificationController {
         }
         log.info("[spring-watch: 测试邮件 - to={}]", to);
         String raw = configService.testEmail(to);
-        // 简单解析 sendTestEmail 返回的 JSON 字符串
         boolean ok = raw != null && raw.contains("\"status\":\"ok\"");
         return ApiResponse.ok(Map.of(
                 "ok", ok,
                 "raw", raw == null ? "" : raw
         ));
+    }
+
+    private static int clampSize(int size) {
+        if (size <= 0) return 20;
+        return Math.min(size, MAX_PAGE_SIZE);
     }
 }

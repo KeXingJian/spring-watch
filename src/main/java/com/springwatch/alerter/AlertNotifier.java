@@ -4,6 +4,7 @@ import com.springwatch.model.entity.AlertNotificationConfig;
 import com.springwatch.model.entity.AlertRule;
 import com.springwatch.model.event.MetricEvent;
 import com.springwatch.repository.AlertNotificationConfigRepository;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -30,6 +31,7 @@ public class AlertNotifier {
     private final JavaMailSender mailSender;
     private final ObjectMapper objectMapper;
     private final AlertNotificationConfigRepository notifyConfigRepository;
+    private final AsyncMailExecutor mailExecutor;
 
     @Value("${spring-watch.alert.mail.from:alert@example.com}")
     private String from;
@@ -38,6 +40,11 @@ public class AlertNotifier {
     private String fromName;
 
     private static final String INVALID_CHANNELS_MARKER = "__INVALID_CHANNELS__";
+
+    @PostConstruct
+    void init() {
+        mailExecutor.start();
+    }
 
     public String notify(AlertRule rule, MetricEvent event, String type) {
         if (!alertEnabled) {
@@ -54,7 +61,9 @@ public class AlertNotifier {
             log.debug("[Alerter] 未配置email渠道 - ruleId={}, appid={}", rule.getId(), event.getAppid());
             return "{\"status\":\"skipped\",\"reason\":\"no_email\"}";
         }
-        return sendEmail(email, rule, event, type);
+        // P1-10: SMTP 调用放到独立线程池，避免 SMTP 慢响应阻塞告警评估
+        mailExecutor.submit(() -> sendEmail(email, rule, event, type));
+        return "{\"status\":\"queued\",\"channel\":\"email\",\"to\":\"" + email + "\"}";
     }
 
     /**
@@ -108,14 +117,14 @@ public class AlertNotifier {
         }
     }
 
-    private String sendEmail(String to, AlertRule rule, MetricEvent event, String type) {
+    private void sendEmail(String to, AlertRule rule, MetricEvent event, String type) {
         String[] toArr = Arrays.stream(to.split(","))
                 .map(String::trim)
                 .filter(s -> !s.isEmpty())
                 .toArray(String[]::new);
         if (toArr.length == 0) {
             log.warn("[Alerter] 邮件收件人解析为空 - to={}", to);
-            return "{\"status\":\"failed\",\"channel\":\"email\",\"error\":\"empty_recipients\"}";
+            return;
         }
         String subject = buildSubject(rule, event, type);
         String body = buildBody(rule, event, type);
@@ -129,10 +138,8 @@ public class AlertNotifier {
             mailSender.send(msg);
             log.info("[Alerter] 邮件发送成功 - to={}, type={}, ruleId={}, appid={}",
                     Arrays.toString(toArr), type, rule.getId(), event.getAppid());
-            return "{\"status\":\"ok\",\"channel\":\"email\",\"to\":\"" + to + "\"}";
         } catch (Exception e) {
             log.warn("[Alerter] 邮件发送失败 - to={}, type={}, error={}", Arrays.toString(toArr), type, e.getMessage());
-            return "{\"status\":\"failed\",\"channel\":\"email\",\"error\":\"" + e.getMessage().replace("\"", "'") + "\"}";
         }
     }
 

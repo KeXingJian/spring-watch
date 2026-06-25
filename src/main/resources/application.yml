@@ -9,6 +9,7 @@ spring-watch:
     http:
       connect-timeout-ms: 3000 # HTTP 连接超时（毫秒）
       read-timeout-ms: 10000 # HTTP 读取超时（毫秒）
+      max-body-bytes: 4194304 # Agent HTTP 响应体大小上限（字节，P0-2，默认 4MB）
     retry:
       drainer-count: 2 # 重试排空线程数
       max-attempts: 5 # 单次请求最大重试次数
@@ -25,13 +26,16 @@ spring-watch:
     rule-cache:
       refresh-interval-ms: 30000 # 告警规则缓存刷新间隔（毫秒）
     executor:
-      pool-size: 8 # 告警执行线程池大小
+      pool-size: 8 # 告警执行线程池大小（虚拟线程并发上限）
     scan:
       interval-ms: 5000 # 扫描间隔（毫秒）
       batch-size: 200 # 每批扫描条数
+    history:
+      retention-days: 90 # 告警历史保留天数（P0-5）
   kafka:
     fallback-queue:
-      capacity: 50000 # 兜底内存队列容量
+      capacity: 10000 # 兜底内存队列容量（P1-1: 50000 → 10000）
+      max-payload-bytes: 16384 # 单条 payload 截断阈值（字节，P1-1）
       drain-interval-ms: 5000 # 队列排空间隔（毫秒）
       send-timeout-ms: 2000 # 单条发送超时（毫秒）
       alert-threshold: 1000 # 积压告警阈值
@@ -81,6 +85,7 @@ spring:
     driver-class-name: org.postgresql.Driver # JDBC 驱动
 
   jpa:
+    open-in-view: false # 关闭 OSIV，避免请求级 PersistenceContext 泄漏（P0-1）
     hibernate:
       ddl-auto: none # 不由 JPA 维护表结构
     show-sql: false # 是否打印 SQL
@@ -88,12 +93,17 @@ spring:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect # Hibernate 方言
 
+  task:
+    scheduling:
+      pool:
+        size: 4 # @Scheduled 调度线程数（P1-7，默认 1 串行）
+
   kafka:
     bootstrap-servers: localhost:9092 # Kafka Broker 地址
     consumer:
       group-id: spring-watch # 消费者组
       auto-offset-reset: earliest # 偏移量重置策略
-      max-poll-records: 500 # 单次 poll 最大条数
+      max-poll-records: 200 # 单次 poll 最大条数（P2-2: 500 → 200，单批峰值下降 60%）
       fetch-min-size: 1024 # 最小拉取字节数
       fetch-max-wait: 200 # 拉取最大等待（毫秒）
       max-poll-interval-ms: 300000 # 两次 poll 最大间隔（毫秒）
@@ -102,7 +112,7 @@ spring:
       compression-type: lz4 # 压缩算法
       batch-size: 65536 # 批大小（字节）
       linger-ms: 30 # 批等待时间（毫秒）
-      buffer-memory: 134217728 # 客户端总缓冲（字节，128MB）
+      buffer-memory: 33554432 # 客户端总缓冲（字节，P1-9: 128MB → 32MB）
       delivery-timeout-ms: 120000 # 投递总超时（毫秒）
       request-timeout-ms: 30000 # 单次请求超时（毫秒）
     listener:
@@ -148,8 +158,8 @@ influxdb:
     task-every: 1h # 任务调度频率
   write:
     batch-size: 1000 # 每批写入条数
-    flush-interval-ms: 1000 # 刷新间隔（毫秒）
-    buffer-limit: 100000 # 内存缓冲上限
+    flush-interval-ms: 2000 # 刷新间隔（毫秒，P1-8: 1000 → 2000）
+    buffer-limit: 20000 # 内存缓冲上限（P1-8: 100000 → 20000）
     retry-interval-ms: 1000 # 写入失败重试间隔（毫秒）
     max-retries: 3 # 最大重试次数
     max-retry-delay-ms: 5000 # 单次重试最大延迟（毫秒）
@@ -158,6 +168,6 @@ influxdb:
 
 logging:
   level:
-    com.springwatch: debug # 自定义包日志级别
+    com.springwatch: info # 自定义包日志级别（P2-3: debug → info，避免每次评估/采样都格式化 toString）
   file:
     path: ./.log # 日志输出目录

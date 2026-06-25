@@ -147,13 +147,17 @@ public class MetricQueryService {
                                            String agg, String every, Map<String, String> tagFilters) {
         long startNs = System.nanoTime();
         try {
-            String aggFn = switch (agg == null ? "mean" : agg.toLowerCase()) {
+            String aggLower = agg == null ? "mean" : agg.toLowerCase();
+            String aggFn = switch (aggLower) {
                 case "max" -> "max";
                 case "min" -> "min";
                 case "sum" -> "sum";
                 case "last" -> "last";
+                case "rate" -> "mean";
                 default -> "mean";
             };
+            // rate 是给 counter 用的,先 derivative(unit: 1s) 转成 1/s,再按窗口聚合均值
+            String rateStep = "rate".equals(aggLower) ? "|> derivative(unit: 1s, nonNegative: true)\n" : "";
             String window = (every == null || every.isBlank()) ? "30s" : every;
             String filter = buildTagFilter(tagFilters);
             String flux = String.format(
@@ -163,9 +167,10 @@ public class MetricQueryService {
                             "                    and r.appid == \"%s\"\n" +
                             "                    and r._field == \"value\"\n" +
                             "                    and r.metric == \"%s\"%s)\n" +
+                            "%s" +
                             "  |> aggregateWindow(every: %s, fn: %s, createEmpty: false)\n" +
                             "  |> yield(name: \"series\")",
-                    bucket, formatInstant(from), formatInstant(to), MEASUREMENT, appid, metric, filter, window, aggFn);
+                    bucket, formatInstant(from), formatInstant(to), MEASUREMENT, appid, metric, filter, rateStep, window, aggFn);
             List<FluxTable> tables = queryApi.query(flux, influxOrg);
             List<Map<String, Object>> resultSeries = new ArrayList<>();
             for (FluxTable table : tables) {
@@ -212,9 +217,11 @@ public class MetricQueryService {
         }
     }
 
-    public Map<String, Object> queryGrouped(Long appid, String metric, String groupBy) {
+    public Map<String, Object> queryGrouped(Long appid, String metric, String groupBy, String agg) {
         long startNs = System.nanoTime();
         try {
+            String aggLower = agg == null ? "last" : agg.toLowerCase();
+            String rateStep = "rate".equals(aggLower) ? "|> derivative(unit: 1s, nonNegative: true)\n" : "";
             String[] groupCols = parseGroupBy(groupBy);
             String groupColumnsLiteral = Arrays.stream(groupCols)
                     .map(c -> "\"" + c.replace("\"", "\\\"") + "\"")
@@ -226,9 +233,10 @@ public class MetricQueryService {
                             "                    and r.appid == \"%s\"\n" +
                             "                    and r._field == \"value\"\n" +
                             "                    and r.metric == \"%s\")\n" +
+                            "%s" +
                             "  |> group(columns: [%s])\n" +
                             "  |> last()",
-                    bucket, MEASUREMENT, appid, metric, groupColumnsLiteral);
+                    bucket, MEASUREMENT, appid, metric, rateStep, groupColumnsLiteral);
             List<FluxTable> tables = queryApi.query(flux, influxOrg);
             List<Map<String, Object>> groups = new ArrayList<>();
             for (FluxTable table : tables) {

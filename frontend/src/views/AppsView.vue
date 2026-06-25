@@ -53,7 +53,7 @@ const isCron = ref(false)
 async function loadApps() {
   loading.value = true
   try {
-    apps.value = (await api.get<AppItem[]>('/api/apps')) || []
+    apps.value = await api.page<AppItem>('/api/apps')
   } catch (e: any) {
     toast.error('加载失败: ' + e.message)
   } finally {

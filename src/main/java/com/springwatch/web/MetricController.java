@@ -104,9 +104,10 @@ public class MetricController {
     @GetMapping("/grouped")
     public ApiResponse<Map<String, Object>> grouped(@RequestParam("appid") Long appid,
                                                     @RequestParam("metric") String metric,
-                                                    @RequestParam("groupBy") String groupBy) {
-        log.info("[spring-watch: 指标grouped - appid={}, metric={}, groupBy={}]", appid, metric, groupBy);
-        return ApiResponse.ok(metricQueryService.queryGrouped(appid, metric, groupBy));
+                                                    @RequestParam("groupBy") String groupBy,
+                                                    @RequestParam(required = false, defaultValue = "last") String agg) {
+        log.info("[spring-watch: 指标grouped - appid={}, metric={}, groupBy={}, agg={}]", appid, metric, groupBy, agg);
+        return ApiResponse.ok(metricQueryService.queryGrouped(appid, metric, groupBy, agg));
     }
 
     /**

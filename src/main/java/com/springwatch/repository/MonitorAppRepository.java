@@ -1,6 +1,8 @@
 package com.springwatch.repository;
 
 import com.springwatch.model.entity.MonitorApp;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.Collection;
@@ -13,4 +15,7 @@ public interface MonitorAppRepository extends JpaRepository<MonitorApp, Long> {
 
     List<MonitorApp> findAllByAppidIn(Collection<Long> appids);
 
+    Page<MonitorApp> findByStatusIgnoreCase(String status, Pageable pageable);
+
+    List<MonitorApp> findByStatusIgnoreCase(String status);
 }

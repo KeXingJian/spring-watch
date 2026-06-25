@@ -51,8 +51,8 @@ export function useAppidFromRoute(): Ref<string | null> {
 
   function sync() {
     const q = route.query.appid
-    if (q) {
-      appid.value = String(q)
+    if (typeof q === 'string' && /^\d+$/.test(q)) {
+      appid.value = q
     } else if (appStore.currentAppid) {
       appid.value = appStore.currentAppid
     } else {

@@ -1,5 +1,6 @@
 package com.springwatch.web;
 
+import com.springwatch.model.dto.AlertHistoryView;
 import com.springwatch.model.dto.AlertRuleRequest;
 import com.springwatch.model.dto.ApiResponse;
 import com.springwatch.model.entity.AlertHistory;
@@ -9,6 +10,10 @@ import com.springwatch.service.AlertRuleService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -19,21 +24,26 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.List;
-import java.util.Map;
-
 @Slf4j
 @RestController
 @RequestMapping("/api/alert")
 @RequiredArgsConstructor
 public class AlertController {
 
+    private static final int MAX_PAGE_SIZE = 200;
+
     private final AlertRuleService alertRuleService;
     private final AlertHistoryRepository alertHistoryRepository;
 
     @GetMapping("/rules")
-    public ApiResponse<List<AlertRule>> listRules(@RequestParam(value = "appid", required = false) Long appid) {
-        List<AlertRule> rules = (appid == null) ? alertRuleService.listAll() : alertRuleService.listByAppid(appid);
+    public ApiResponse<Page<AlertRule>> listRules(
+            @RequestParam(value = "appid", required = false) Long appid,
+            @RequestParam(value = "page", defaultValue = "0") int page,
+            @RequestParam(value = "size", defaultValue = "20") int size) {
+        Pageable pageable = PageRequest.of(page, clampSize(size), Sort.by("id").descending());
+        Page<AlertRule> rules = (appid == null)
+                ? alertRuleService.listAll(pageable)
+                : alertRuleService.listByAppid(appid, pageable);
         return ApiResponse.ok(rules);
     }
 
@@ -70,14 +80,20 @@ public class AlertController {
     }
 
     @GetMapping("/history")
-    public ApiResponse<List<AlertHistory>> listHistory(
+    public ApiResponse<Page<AlertHistoryView>> listHistory(
             @RequestParam(value = "appid", required = false) Long appid,
-            @RequestParam(value = "limit", defaultValue = "200") int limit) {
-        List<AlertHistory> all = alertHistoryRepository.findAll();
-        List<AlertHistory> filtered = (appid == null) ? all : all.stream()
-                .filter(h -> h.getApp() != null && appid.equals(h.getApp().getAppid()))
-                .toList();
-        int size = Math.min(filtered.size(), limit <= 0 ? 200 : limit);
-        return ApiResponse.ok(filtered.subList(0, size));
+            @RequestParam(value = "page", defaultValue = "0") int page,
+            @RequestParam(value = "size", defaultValue = "20") int size) {
+        Pageable pageable = PageRequest.of(page, clampSize(size), Sort.by("createdAt").descending());
+        Page<AlertHistory> history = (appid == null)
+                ? alertHistoryRepository.findAll(pageable)
+                : alertHistoryRepository.findByAppAppid(appid, pageable);
+        Page<AlertHistoryView> views = history.map(AlertHistoryView::from);
+        return ApiResponse.ok(views);
+    }
+
+    private static int clampSize(int size) {
+        if (size <= 0) return 20;
+        return Math.min(size, MAX_PAGE_SIZE);
     }
 }

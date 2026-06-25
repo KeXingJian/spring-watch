@@ -11,6 +11,11 @@ export interface AppInfo {
 
 const STORAGE_KEY = 'spring_watch.currentAppid'
 
+function isValidAppid(v: unknown): v is string {
+  if (typeof v !== 'string') return false
+  return /^\d+$/.test(v) && v !== '0'
+}
+
 export const useAppStore = defineStore('app', () => {
   const currentAppid = ref<string | null>(null)
   const apps = ref<AppInfo[]>([])
@@ -24,11 +29,12 @@ export const useAppStore = defineStore('app', () => {
       return
     }
     const stored = localStorage.getItem(STORAGE_KEY)
-    if (stored) currentAppid.value = stored
+    if (isValidAppid(stored)) currentAppid.value = stored
+    else if (stored) localStorage.removeItem(STORAGE_KEY)
   }
 
   function setAppid(appid: string | number | null) {
-    if (appid == null || appid === '') {
+    if (appid == null || appid === '' || !isValidAppid(String(appid))) {
       localStorage.removeItem(STORAGE_KEY)
       currentAppid.value = null
     } else {

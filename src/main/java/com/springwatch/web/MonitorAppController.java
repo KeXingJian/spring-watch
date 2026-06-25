@@ -7,6 +7,10 @@ import com.springwatch.service.MonitorAppService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -14,9 +18,9 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.List;
 import java.util.Map;
 
 @Slf4j
@@ -25,18 +29,24 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class MonitorAppController {
 
+    private static final int MAX_PAGE_SIZE = 200;
+
     private final MonitorAppService monitorAppService;
 
     @GetMapping
-    public ApiResponse<List<MonitorApp>> list() {
-        log.debug("[spring-watch: 列出全部应用]");
-        return ApiResponse.ok(monitorAppService.listAll());
+    public ApiResponse<Page<MonitorApp>> list(
+            @RequestParam(value = "page", defaultValue = "0") int page,
+            @RequestParam(value = "size", defaultValue = "20") int size) {
+        Pageable pageable = PageRequest.of(page, clampSize(size), Sort.by("id").descending());
+        return ApiResponse.ok(monitorAppService.listAll(pageable));
     }
 
     @GetMapping("/active")
-    public ApiResponse<List<MonitorApp>> listActive() {
-        log.debug("[spring-watch: 列出active应用]");
-        return ApiResponse.ok(monitorAppService.listActive());
+    public ApiResponse<Page<MonitorApp>> listActive(
+            @RequestParam(value = "page", defaultValue = "0") int page,
+            @RequestParam(value = "size", defaultValue = "20") int size) {
+        Pageable pageable = PageRequest.of(page, clampSize(size), Sort.by("id").descending());
+        return ApiResponse.ok(monitorAppService.listActive(pageable));
     }
 
     @GetMapping("/{id}")
@@ -87,5 +97,10 @@ public class MonitorAppController {
     @GetMapping("/{id}/otel-config")
     public ApiResponse<Map<String, Object>> otelConfig(@PathVariable Long id) {
         return ApiResponse.ok(monitorAppService.generateOtelConfig(id));
+    }
+
+    private static int clampSize(int size) {
+        if (size <= 0) return 20;
+        return Math.min(size, MAX_PAGE_SIZE);
     }
 }

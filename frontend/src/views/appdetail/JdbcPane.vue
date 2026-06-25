@@ -130,7 +130,7 @@ async function refresh() {
 
   // QPS
   try {
-    const qpsSeries = await fetchSeries(appid, 'db_client_connections_use_time_milliseconds_count', {}, from, to)
+    const qpsSeries = await fetchSeries(appid, 'db_client_connections_use_time_milliseconds_count', { agg: 'rate' }, from, to)
     const arr = qpsSeries.map((s) => ({
       name: extractTagValue(s.name, 'pool_name') || 'QPS',
       points: (s.points || []).map((p) => [p.t, p.v] as [string, number | null])
@@ -270,13 +270,19 @@ watch(() => [props.appid, props.rangeSec], refresh)
     </div>
   </div>
 
-  <div class="chart-row">
+    <div class="chart-row">
     <div class="chart-panel">
-      <div class="panel-head">连接使用耗时 P50/P95/P99</div>
+      <div class="panel-head">创建连接次数趋势(累计 count)</div>
       <div class="panel-body has-chart">
-        <Chart v-if="useQuantile.length" type="line" :series="useQuantile" y-axis-name="ms" />
-        <EmptyState v-else inline>{{ emptyMap['jdbc-use-quantile'] || '暂无数据' }}</EmptyState>
+        <Chart v-if="createDist.length" type="line" :series="createDist" y-axis-name="count" />
+        <EmptyState v-else inline>{{ emptyMap['jdbc-create-dist'] || '暂无数据' }}</EmptyState>
       </div>
+    </div>
+  </div>
+    </div>
+  </div>
+    </div>
+  </div>
     </div>
     <div class="chart-panel">
       <div class="panel-head">连接使用时长分布(le 桶)</div>

@@ -92,11 +92,11 @@ async function refresh() {
   }
 
   await renderMemPie(appid)
-  await renderGroupedBar(appid, 'system_disk_io_bytes_total', diskIoBar, 'os-disk-io-by-dir', { valueTransform: (v: number) => v / 1048576, yAxisName: 'MB', emptyMsg: '暂无磁盘 IO 数据' })
-  await renderGroupedBar(appid, 'system_disk_operations_total', diskIopsBar, 'os-disk-iops-by-dir', { yAxisName: 'ops', emptyMsg: '暂无磁盘 IOPS 数据' })
-  await renderGroupedBar(appid, 'system_network_io_bytes_total', netIoBar, 'os-net-io-by-dir', { valueTransform: (v: number) => v / 1048576, yAxisName: 'MB', emptyMsg: '暂无网络 IO 数据' })
-  await renderGroupedBar(appid, 'system_network_packets_total', netPktsBar, 'os-net-pkts-by-dir', { yAxisName: 'pkts', emptyMsg: '暂无网络包数据' })
-  await renderGroupedBar(appid, 'system_network_errors_total', netErrsBar, 'os-net-errors-by-dir', { yAxisName: 'errs', emptyMsg: '暂无网络错误数据', dangerAboveZero: true })
+  await renderGroupedBar(appid, 'system_disk_io_bytes_total', diskIoBar, 'os-disk-io-by-dir', { agg: 'rate', valueTransform: (v: number) => v / 1048576, yAxisName: 'MB/s', emptyMsg: '暂无磁盘 IO 数据' })
+  await renderGroupedBar(appid, 'system_disk_operations_total', diskIopsBar, 'os-disk-iops-by-dir', { agg: 'rate', yAxisName: 'ops/s', emptyMsg: '暂无磁盘 IOPS 数据' })
+  await renderGroupedBar(appid, 'system_network_io_bytes_total', netIoBar, 'os-net-io-by-dir', { agg: 'rate', valueTransform: (v: number) => v / 1048576, yAxisName: 'MB/s', emptyMsg: '暂无网络 IO 数据' })
+  await renderGroupedBar(appid, 'system_network_packets_total', netPktsBar, 'os-net-pkts-by-dir', { agg: 'rate', yAxisName: 'pkts/s', emptyMsg: '暂无网络包数据' })
+  await renderGroupedBar(appid, 'system_network_errors_total', netErrsBar, 'os-net-errors-by-dir', { agg: 'rate', yAxisName: 'errs/s', emptyMsg: '暂无网络错误数据', dangerAboveZero: true })
 }
 
 async function renderMemPie(appid: string) {
@@ -125,10 +125,10 @@ async function renderGroupedBar(
   metric: string,
   target: Ref<{ categories: string[]; series: BarSeriesItem[] }>,
   elId: string,
-  opts: { yAxisName?: string; valueTransform?: (v: number) => number | null; emptyMsg?: string; dangerAboveZero?: boolean }
+  opts: { agg?: string; yAxisName?: string; valueTransform?: (v: number) => number | null; emptyMsg?: string; dangerAboveZero?: boolean }
 ) {
   try {
-    const r = await api.get<GroupedResp>('/api/metrics/grouped', { appid, metric, groupBy: 'device,direction' })
+    const r = await api.get<GroupedResp>('/api/metrics/grouped', { appid, metric, groupBy: 'device,direction', agg: opts.agg || 'last' })
     const groups = r?.groups || []
     if (groups.length === 0) {
       setEmpty(elId, opts.emptyMsg || '暂无数据')

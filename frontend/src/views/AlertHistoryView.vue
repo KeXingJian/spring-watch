@@ -31,7 +31,7 @@ const filtered = computed(() => {
 
 async function loadAll() {
   try {
-    allRows.value = (await api.get<any[]>('/api/alert/history', { limit: 500 })) || []
+    allRows.value = await api.page<any>('/api/alert/history', { limit: 500 })
   } catch (e: any) {
     toast.error('加载失败: ' + e.message)
   }

@@ -71,13 +71,15 @@ body {
 
 .app-info-bar {
     display: flex;
+    flex-direction: row;
     flex-wrap: wrap;
     gap: 18px;
     font-size: 0.85rem;
     align-items: center;
 }
 .app-info-bar .label { color: var(--c-text-muted); margin-right: 4px; }
-.app-info-bar .value { color: var(--c-text); font-weight: 500; }
+.app-info-bar .value { color: var(--c-text); font-weight: 500; white-space: nowrap; }
+.app-info-bar > span { min-width: 0; }
 
 /* ============================ Tabs ============================ */
 .tabs { display: flex; margin-bottom: 16px; align-items: center; gap: 2px; }

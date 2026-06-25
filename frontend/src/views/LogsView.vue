@@ -20,6 +20,11 @@ const rangeOptions = [
   { sec: 86400, label: '24h' }
 ]
 
+const rangeLabel = computed(() => {
+  const opt = rangeOptions.find((o) => o.sec === rangeSec.value)
+  return opt ? opt.label : `${rangeSec.value}s`
+})
+
 const appid = computed<string | null>(() => appStore.currentAppid)
 
 const cardTotal = ref<number | null>(null)
@@ -86,8 +91,13 @@ async function loadOverview() {
     cardSpike.value = a?.spiking ? '是' : '否'
     cardSpikeClass.value = a?.spiking ? 'danger' : 'success'
     const cur = a?.stats?.errorRate || 0
-    const last = cur / 3.0
-    cardSpikeSub.value = `当前 ${(cur * 100).toFixed(2)}%(基线 ≈ ${(last * 100).toFixed(2)}%)`
+    const last = a?.lastRate
+    if (last == null) {
+      cardSpikeSub.value = `当前 ${(cur * 100).toFixed(2)}%(无基线,需 ≥ 2 个连续窗口)`
+    } else {
+      const ratio = cur / last
+      cardSpikeSub.value = `当前 ${(cur * 100).toFixed(2)}% · 基线 ${(last * 100).toFixed(2)}% · ${ratio.toFixed(2)}×`
+    }
   } catch (e) {
     cardSpike.value = '-'
   }
@@ -185,9 +195,18 @@ async function loadPatterns() {
       patternsEmpty.value = '暂无异常模式'
       patternsBar.value = { categories: [], series: [] }
     } else {
+      // count 是 InfluxDB 保留的"首条"数, dedupCount 是 PG 累加的去重丢弃数
+      // 显示"总次数" = count + dedupCount(hover 提示里能看到 count / dedupCount 原始值)
       patternsBar.value = {
         categories: list.map((p) => shortMsg(p.fingerprint, 12)),
-        series: [{ name: '次数', data: list.map((p) => p.count) }]
+        series: [{
+          name: '总次数',
+          data: list.map((p) => {
+            const c = p.count || 0
+            const d = p.dedupCount || 0
+            return { value: c + d, rawCount: c, rawDedup: d } as any
+          })
+        }]
       }
       patternsEmpty.value = ''
     }
@@ -305,7 +324,7 @@ watch(rangeSec, () => {
     </div>
 
     <div class="metric-cards" style="grid-template-columns: repeat(4, 1fr);">
-      <div class="metric-card"><div class="title">总日志(全级别)</div><div class="value">{{ cardTotal ?? '-' }}</div><div class="sub">最近 1h</div></div>
+      <div class="metric-card"><div class="title">总日志(全级别)</div><div class="value">{{ cardTotal ?? '-' }}</div><div class="sub">最近 {{ rangeLabel }}</div></div>
       <div class="metric-card"><div class="title">ERROR 数</div><div class="value danger">{{ cardError ?? '-' }}</div><div class="sub">{{ cardErrorSub }}</div></div>
       <div class="metric-card"><div class="title">WARN 数</div><div class="value warn">{{ cardWarn ?? '-' }}</div><div class="sub">告警关注</div></div>
       <div class="metric-card"><div class="title">错误率突增</div><div class="value" :class="cardSpikeClass">{{ cardSpike }}</div><div class="sub">{{ cardSpikeSub }}</div></div>
@@ -315,12 +334,12 @@ watch(rangeSec, () => {
       <div class="chart-panel">
         <div class="panel-head">错误率时序 <span class="tag">total / error / warn,1m 窗口</span></div>
         <div class="panel-body has-chart">
-          <Chart v-if="errorRateSeries.length" type="line" :series="errorRateSeries" :area="true" y-axis-name="条" />
+          <Chart v-if="errorRateSeries.length" type="line" :series="errorRateSeries" :area="true" y-axis-name="条/分" />
           <EmptyState v-else inline>{{ errorRateEmpty || '暂无数据' }}</EmptyState>
         </div>
       </div>
       <div class="chart-panel">
-        <div class="panel-head">级别分布 <span class="tag">最近 1h</span></div>
+        <div class="panel-head">级别分布 <span class="tag">最近 {{ rangeLabel }}</span></div>
         <div class="panel-body has-chart">
           <Chart v-if="levelsPie.length" type="pie" :data="levelsPie" name="级别" :donut="true" />
           <EmptyState v-else inline>{{ levelsEmpty || '暂无数据' }}</EmptyState>
@@ -332,7 +351,7 @@ watch(rangeSec, () => {
       <div class="card-body p-0">
         <div class="px-4 py-2.5 border-b border-base-300 flex items-center font-medium text-sm">
           <span>日志检索</span>
-          <span class="ml-auto text-xs text-muted font-normal">{{ searchCount }} 条</span>
+          <span class="ml-auto text-xs text-muted font-normal">显示 {{ searchCount }} 条(最近 {{ rangeLabel }} 内,按 limit 截断)</span>
         </div>
         <div class="flex flex-wrap gap-2 p-3 border-b border-base-300 items-center bg-base-200/40">
           <span class="label">关键字:</span>
@@ -402,14 +421,14 @@ watch(rangeSec, () => {
 
     <div class="chart-row">
       <div class="chart-panel">
-        <div class="panel-head">Top 异常模式 <span class="tag">按 fingerprint 聚合</span></div>
+        <div class="panel-head">Top 异常模式 <span class="tag">按 fingerprint 聚合, 总次数 = 首条 + 去重</span></div>
         <div class="panel-body has-chart">
           <Chart v-if="patternsBar.categories.length" type="bar" :categories="patternsBar.categories" :series="patternsBar.series" :horizontal="true" />
           <EmptyState v-else inline>{{ patternsEmpty || '暂无数据' }}</EmptyState>
         </div>
       </div>
       <div class="chart-panel">
-        <div class="panel-head">高频去重模式 <span class="tag">滑动窗口 1m 内重复</span></div>
+        <div class="panel-head">高频去重模式 <span class="tag">近 1h 滑动窗口内被丢弃的重复条数</span></div>
         <div class="panel-body has-chart">
           <Chart v-if="dedupBar.categories.length" type="bar" :categories="dedupBar.categories" :series="dedupBar.series" :horizontal="true" />
           <EmptyState v-else inline>{{ dedupEmpty || '暂无数据' }}</EmptyState>

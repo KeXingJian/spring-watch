@@ -8,6 +8,8 @@ import com.springwatch.repository.AlertRuleRepository;
 import com.springwatch.repository.MonitorAppRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -24,14 +26,20 @@ public class AlertRuleService {
     private final MonitorAppRepository monitorAppRepository;
     private final AlertRuleCache ruleCache;
 
+    public Page<AlertRule> listAll(Pageable pageable) {
+        return alertRuleRepository.findAll(pageable);
+    }
+
+    public Page<AlertRule> listByAppid(Long appid, Pageable pageable) {
+        return alertRuleRepository.findByAppAppid(appid, pageable);
+    }
+
     public List<AlertRule> listAll() {
         return alertRuleRepository.findAll();
     }
 
     public List<AlertRule> listByAppid(Long appid) {
-        return alertRuleRepository.findAll().stream()
-                .filter(r -> r.getApp() != null && r.getApp().getAppid().equals(appid))
-                .toList();
+        return alertRuleRepository.findByAppAppid(appid);
     }
 
     public Optional<AlertRule> findById(Long id) {

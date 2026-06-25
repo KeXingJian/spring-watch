@@ -17,6 +17,12 @@ public class JexlExprEvaluator {
 
     private final JexlEngine jexlEngine;
 
+    /**
+     * P1-3: 复用 MapContext，避免每次评估分配新的 Map+底层数组。
+     * 告警评估通常在虚拟线程或固定线程上执行，ThreadLocal 不会跨线程泄漏。
+     */
+    private static final ThreadLocal<MapContext> CTX = ThreadLocal.withInitial(MapContext::new);
+
     public boolean evaluate(String expression, MetricEvent event) {
         if (expression == null || expression.isBlank() || event == null) {
             log.debug("[Alerter] JEXL evaluate 跳过 - expression={}, event={}", expression, event);
@@ -24,7 +30,8 @@ public class JexlExprEvaluator {
         }
         try {
             JexlExpression expr = jexlEngine.createExpression(expression);
-            JexlContext ctx = new MapContext();
+            MapContext ctx = CTX.get();
+            ctx.clear();
             ctx.set("value", event.getValue());
             ctx.set("metric", event.getMetricName());
             ctx.set("__app__", event.getAppid() != null ? String.valueOf(event.getAppid()) : "");

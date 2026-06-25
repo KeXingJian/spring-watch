@@ -127,11 +127,12 @@ public class LogController {
                                                      @RequestParam(defaultValue = "3.0") double multiplier) {
         Instant now = Instant.now();
         var stats = logAggregator.errorRate(appid, now.minusSeconds(windowSeconds), now);
-        boolean spiking = anomalyDetector.isErrorRateSpiking(appid, stats.errorRate(), multiplier);
+        var result = anomalyDetector.isErrorRateSpiking(appid, stats.errorRate(), multiplier);
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("windowSeconds", windowSeconds);
         out.put("multiplier", multiplier);
-        out.put("spiking", spiking);
+        out.put("spiking", result.spiking());
+        out.put("lastRate", result.lastRate());
         out.put("stats", stats);
         return ApiResponse.ok(out);
     }

@@ -26,7 +26,9 @@ const kv = reactive({
   uptimeSub: '-',
   threadsSub: '-',
   appsSub: '加载中…',
-  retrySub: '-'
+  retrySub: '-',
+  procRss: '-',
+  procRssSub: '-'
 })
 
 const cardHeap = ref<number | null>(null)
@@ -71,8 +73,9 @@ const meterFlat = computed(() => {
   return result
 })
 
-function fmtUptime(sec: number | null | undefined) {
-  if (sec == null) return '-'
+function fmtUptime(ms: number | null | undefined) {
+  if (ms == null) return '-'
+  const sec = Math.floor(ms / 1000)
   const d = Math.floor(sec / 86400)
   const h = Math.floor((sec % 86400) / 3600)
   const m = Math.floor((sec % 3600) / 60)
@@ -145,7 +148,7 @@ function renderCards() {
   cardCpu.value = cpu
   cardCpuCls.value = cpu > 0.85 ? 'danger' : cpu > 0.7 ? 'warn' : 'success'
   kv.cpuSub = '系统 ' + formatPercent(proc.systemCpuLoad || 0, 1)
-  cardUptime.value = fmtUptime(jvm.uptimeSec)
+  cardUptime.value = fmtUptime(jvm.uptimeMs)
   kv.uptimeSub = '采样 ' + (realtime.value.iso || '-')
   cardActive.value = gaugeVal('spring.watch.collector.http.active')
   cardRetry.value = gaugeVal('spring.watch.collector.retry.queue.size')
@@ -162,7 +165,17 @@ function renderCards() {
   kv.sysFree = formatBytes(proc.systemFreeBytes)
   kv.disk = formatBytes(proc.diskFreeBytes)
   kv.cores = (proc.cpuCores || 0) + ' 核'
-  kv.uptime = fmtUptime(jvm.uptimeSec)
+  kv.uptime = fmtUptime(jvm.uptimeMs)
+  // 进程 RSS:任务管理器看到的数(包含堆 + 非堆 + 堆外 + GC + mmap)
+  if (proc.rssBytes != null && proc.rssBytes > 0) {
+    kv.procRss = formatBytes(proc.rssBytes)
+    const heap = proc.heapUsed || 0
+    const nonHeap = proc.nonHeapUsed || 0
+    kv.procRssSub = `堆 ${formatBytes(heap)} · 非堆 ${formatBytes(nonHeap)}`
+  } else {
+    kv.procRss = '-'
+    kv.procRssSub = '不支持该平台'
+  }
 
   if (heapPct > 0.9 || cpu > 0.9) healthPill.value = { cls: 'bad', text: '高负载' }
   else if (heapPct > 0.75 || cpu > 0.75) healthPill.value = { cls: 'warn', text: '负载偏高' }
@@ -285,7 +298,9 @@ function renderProcCpu() {
 }
 function renderProcRss() {
   procRssChart.value = [
-    { name: 'JVM 堆已用 MB', points: timeseries.value.map((s) => [s.ts, (s.process.rssBytes || 0) / 1048576] as [string, number | null]) },
+    { name: '进程 RSS MB', points: timeseries.value.map((s) => [s.ts, s.process.rssBytes > 0 ? s.process.rssBytes / 1048576 : null] as [string, number | null]) },
+    { name: 'JVM 堆已用 MB', points: timeseries.value.map((s) => [s.ts, (s.process.heapUsed || 0) / 1048576] as [string, number | null]) },
+    { name: 'JVM 非堆已用 MB', points: timeseries.value.map((s) => [s.ts, (s.process.nonHeapUsed || 0) / 1048576] as [string, number | null]) },
     { name: '进程虚拟内存 MB', points: timeseries.value.map((s) => [s.ts, (s.process.virtualBytes || 0) / 1048576] as [string, number | null]) }
   ]
 }
@@ -341,7 +356,7 @@ async function pollRealtime() {
     realtime.value = resp?.sample || null
     if (appCount.value == null) {
       try {
-        const apps = await api.get<any[]>('/api/apps/active')
+        const apps = await api.page<any>('/api/apps/active')
         appCount.value = (apps || []).length
       } catch {
         appCount.value = 0
@@ -390,6 +405,7 @@ onBeforeUnmount(() => {
     <div class="metric-cards">
       <div class="metric-card"><div class="title">在线应用</div><div><span class="value">{{ cardApps ?? '-' }}</span><span class="unit">个</span></div><div class="sub">{{ kv.appsSub }}</div></div>
       <div class="metric-card"><div class="title">JVM 堆使用率</div><div><span :class="['value', cardHeapCls]">{{ cardHeap != null ? formatPercent(cardHeap, 1) : '-' }}</span></div><div class="sub">{{ kv.heapSub }}</div></div>
+      <div class="metric-card"><div class="title">进程内存 (RSS)</div><div><span class="value">{{ kv.procRss }}</span></div><div class="sub">{{ kv.procRssSub }} · 任务管理器同源</div></div>
       <div class="metric-card"><div class="title">进程 CPU</div><div><span :class="['value', cardCpuCls]">{{ cardCpu != null ? formatPercent(cardCpu, 1) : '-' }}</span></div><div class="sub">{{ kv.cpuSub }}</div></div>
       <div class="metric-card"><div class="title">启动时长</div><div><span class="value">{{ cardUptime }}</span></div><div class="sub">{{ kv.uptimeSub }}</div></div>
       <div class="metric-card"><div class="title">活跃 HTTP 抓取</div><div><span class="value">{{ cardActive != null ? fmtNum(cardActive) : '-' }}</span><span class="unit">请求</span></div><div class="sub">实时并发数</div></div>
@@ -439,7 +455,7 @@ onBeforeUnmount(() => {
     <div class="section-title">7 · 进程与主机</div>
     <div class="chart-row cols-3">
       <div class="chart-panel"><div class="panel-head">CPU 占用<span class="tag">0~100%</span></div><div class="panel-body has-chart"><Chart v-if="procCpuChart.length" type="line" :series="procCpuChart" y-axis-name="%" /><EmptyState v-else inline>暂无数据</EmptyState></div></div>
-      <div class="chart-panel"><div class="panel-head">进程 RSS<span class="tag">MB</span></div><div class="panel-body has-chart"><Chart v-if="procRssChart.length" type="line" :series="procRssChart" y-axis-name="MB" /><EmptyState v-else inline>暂无数据</EmptyState></div></div>
+      <div class="chart-panel"><div class="panel-head">进程内存明细<span class="tag">RSS / JVM 堆 / JVM 非堆 / 虚拟内存,MB</span></div><div class="panel-body has-chart"><Chart v-if="procRssChart.length" type="line" :series="procRssChart" y-axis-name="MB" /><EmptyState v-else inline>暂无数据</EmptyState></div></div>
       <div class="chart-panel"><div class="panel-head">系统资源<span class="tag">MB / 核</span></div><div class="panel-body" style="padding: 12px 14px;"><div class="kv-grid">
         <div class="kv"><span class="k">系统 CPU 负载</span><span class="v">{{ kv.sysCpu }}</span></div>
         <div class="kv"><span class="k">系统总内存</span><span class="v">{{ kv.sysTotal }}</span></div>

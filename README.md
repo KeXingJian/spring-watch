@@ -231,7 +231,7 @@ java -jar target/spring-watch-1.0.0.jar
 
 ### TODO（正式版）
 
-- [ ] **渲染层升级** — 使用 Vue 重构前端，优化 UI/UX 与交互体验
+- [x] **渲染层升级** — Vite + Vue 3 + TypeScript + Pinia 重构完成,前端代码见 `frontend/`,开发 `cd frontend && npm i && npm run dev`(代理 `/api` 到 8080),生产 `npm run build` 后产物可覆盖到 `src/main/resources/static/`
 - [ ] **E2E 测试** — 补充端到端测试，覆盖采集→入湖→告警全链路
 - [ ] **内存优化** — 实现轻量化与高可用，降低常驻内存开销
 - [ ] **自研 Java Agent** —

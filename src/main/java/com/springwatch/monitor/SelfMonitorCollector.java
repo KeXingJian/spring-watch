@@ -26,13 +26,15 @@ import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * kxj: 自监控采集器 - 定时采样 JVM/进程/系统/Micrometer 指标
- * 保留最近 1h 快照(RingBuffer,采样间隔 10s)
+ * 自监控采集器 - 定时采样 JVM/进程/系统/Micrometer 指标。
+ * P1-6: 缩小 RING_SIZE 至 60（10min 历史）；引入 Meter 白名单，避免高基数 Gauge 撑爆堆。
  */
 @Slf4j
 @Component
@@ -40,8 +42,26 @@ import java.util.concurrent.TimeUnit;
 public class SelfMonitorCollector {
 
     private static final long SAMPLE_INTERVAL_SEC = 10L;
-    private static final int RING_SIZE = 360;
+    private static final int RING_SIZE = 60;
     private static final String METER_PREFIX = "spring.watch.";
+
+    /**
+     * 允许采集的 meter 名前缀白名单。前缀未匹配则跳过，避免高基数 Gauge（如 http_server_requests × appid）
+     * 撑爆 ring。
+     */
+    private static final Set<String> METER_WHITELIST_PREFIXES = Set.of(
+            "spring.watch.http.",
+            "spring.watch.collector.http.",
+            "spring.watch.collector.kafka.",
+            "spring.watch.consumer.",
+            "spring.watch.kafka.",
+            "spring.watch.jvm.",
+            "spring.watch.system.",
+            "spring.watch.process.",
+            "spring.watch.alert.",
+            "spring.watch.log.",
+            "spring.watch.ingest."
+    );
 
     private final MeterRegistry meterRegistry;
     private final KafkaFallbackQueue kafkaFallbackQueue;
@@ -51,13 +71,29 @@ public class SelfMonitorCollector {
     private final Deque<Sample> ring = new ArrayDeque<>(RING_SIZE);
     private final Object lock = new Object();
 
+    /** 增量更新：保留每个 meter 上次采样值，避免每次全量遍历拷贝。 */
+    private final Map<String, Double> lastCounterValues = new ConcurrentHashMap<>();
+    private final Map<String, TimerSnap> lastTimerSnaps = new ConcurrentHashMap<>();
+    private final Map<String, Double> lastGaugeValues = new ConcurrentHashMap<>();
+    private Counter filteredMeterCounter;
+    private Counter capturedMeterCounter;
+
     @PostConstruct
     void start() {
+        this.filteredMeterCounter = Counter.builder("spring.watch.self.monitor.capture.filtered")
+                .description("被白名单过滤掉的 meter 数量")
+                .register(meterRegistry);
+        this.capturedMeterCounter = Counter.builder("spring.watch.self.monitor.capture.captured")
+                .description("实际采集的 meter 数量")
+                .register(meterRegistry);
         Gauge.builder("spring.watch.collector.kafka.fallback.size", kafkaFallbackQueue, KafkaFallbackQueue::size)
                 .description("Kafka 兜底队列当前堆积")
                 .register(meterRegistry);
         Gauge.builder("spring.watch.collector.host_throttler.active", hostThrottler, h -> (double) h.activeHosts())
                 .description("已注册主机限流器数量")
+                .register(meterRegistry);
+        Gauge.builder("spring.watch.self.monitor.ring.size", this, s -> (double) s.size())
+                .description("自监控 ring 当前样本数")
                 .register(meterRegistry);
         this.scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "self-monitor-sampler");
@@ -65,7 +101,8 @@ public class SelfMonitorCollector {
             return t;
         });
         scheduler.scheduleWithFixedDelay(this::sample, 0L, SAMPLE_INTERVAL_SEC, TimeUnit.SECONDS);
-        log.info("[spring-watch: SelfMonitorCollector 启动 - interval={}s, ring={}]", SAMPLE_INTERVAL_SEC, RING_SIZE);
+        log.info("[spring-watch: SelfMonitorCollector 启动 - interval={}s, ring={}, whitelist={}]",
+                SAMPLE_INTERVAL_SEC, RING_SIZE, METER_WHITELIST_PREFIXES.size());
     }
 
     @PreDestroy
@@ -93,7 +130,7 @@ public class SelfMonitorCollector {
     }
 
     public List<Sample> window(int size) {
-        int n = size <= 0 ? 60 : Math.min(size, RING_SIZE);
+        int n = size <= 0 ? Math.min(60, RING_SIZE) : Math.min(size, RING_SIZE);
         synchronized (lock) {
             List<Sample> out = new ArrayList<>(Math.min(n, ring.size()));
             int skip = Math.max(0, ring.size() - n);
@@ -159,30 +196,125 @@ public class SelfMonitorCollector {
         double procCpu = clamp(os.getProcessCpuLoad(), 0d, 1d);
         double sysCpu = clamp(os.getCpuLoad(), 0d, 1d);
         long virt = safe(os::getCommittedVirtualMemorySize, 0L);
+        // 真实 RSS:OperatingSystemMXBean 没现成 API,Linux 上读 /proc/self/status 的 VmRSS
+        long rss = readRssBytes();
         long heapUsed = (ManagementFactory.getMemoryMXBean().getHeapMemoryUsage().getUsed());
+        long nonHeapUsed = (ManagementFactory.getMemoryMXBean().getNonHeapMemoryUsage().getUsed());
         long sysTotal = os.getTotalMemorySize();
         long sysFree = os.getFreeMemorySize();
         long diskFree = safe(SelfMonitorCollector::freeDiskBytes, 0L);
-        return new ProcessSnap(procCpu, sysCpu, heapUsed, virt, sysTotal, sysFree, diskFree, Runtime.getRuntime().availableProcessors());
+        return new ProcessSnap(procCpu, sysCpu, rss, virt, heapUsed, nonHeapUsed, sysTotal, sysFree, diskFree, Runtime.getRuntime().availableProcessors());
+    }
+
+    /**
+     * 拿当前进程真实 RSS(bytes)。JDK 标准 API 没暴露,这里按平台走两条路:
+     * - Linux:读 /proc/self/status 的 VmRSS
+     * - Windows:起 powershell 查 (Get-Process -Id <pid>).WorkingSet64
+     * - 其它:返回 -1(上层降级)
+     */
+    private static long readRssBytes() {
+        String os = System.getProperty("os.name", "").toLowerCase();
+        if (os.contains("linux") || os.contains("nix") || os.contains("nux") || os.contains("aix")) {
+            return readRssBytesLinux();
+        }
+        if (os.contains("win")) {
+            return readRssBytesWindows();
+        }
+        return -1L;
+    }
+
+    private static long readRssBytesLinux() {
+        try {
+            File f = new File("/proc/self/status");
+            if (!f.exists() || !f.canRead()) return -1L;
+            try (java.io.BufferedReader r = new java.io.BufferedReader(new java.io.FileReader(f))) {
+                String line;
+                while ((line = r.readLine()) != null) {
+                    if (line.startsWith("VmRSS:")) {
+                        // VmRSS:	  123456 kB
+                        String[] parts = line.split("\\s+");
+                        if (parts.length >= 2) {
+                            long kb = Long.parseLong(parts[1]);
+                            return kb * 1024L;
+                        }
+                    }
+                }
+            }
+        } catch (Throwable t) {
+            log.debug("[spring-watch: SelfMonitorCollector 读Linux VmRSS失败 - error={}]", t.getMessage());
+        }
+        return -1L;
+    }
+
+    private static long readRssBytesWindows() {
+        Process p = null;
+        try {
+            long pid = ProcessHandle.current().pid();
+            p = new ProcessBuilder("powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+                    "(Get-Process -Id " + pid + " -ErrorAction SilentlyContinue).WorkingSet64")
+                    .redirectErrorStream(true)
+                    .start();
+            try (java.io.BufferedReader r = new java.io.BufferedReader(
+                    new java.io.InputStreamReader(p.getInputStream(), java.nio.charset.StandardCharsets.UTF_8))) {
+                String line = r.readLine();
+                if (line != null && !line.isBlank()) {
+                    return Long.parseLong(line.trim());
+                }
+            }
+        } catch (Throwable t) {
+            log.debug("[spring-watch: SelfMonitorCollector 读Windows WorkingSet64失败 - error={}]", t.getMessage());
+        } finally {
+            if (p != null && p.isAlive()) {
+                try {
+                    boolean finished = p.waitFor(2, java.util.concurrent.TimeUnit.SECONDS);
+                    if (!finished) p.destroyForcibly();
+                } catch (Throwable ignore) {
+                    p.destroyForcibly();
+                }
+            }
+        }
+        return -1L;
     }
 
     private MeterSnap captureMeters() {
         Map<String, Double> counters = new LinkedHashMap<>();
         Map<String, TimerSnap> timers = new LinkedHashMap<>();
         Map<String, Double> gauges = new LinkedHashMap<>();
+        int captured = 0;
+        int filtered = 0;
         for (Meter m : meterRegistry.getMeters()) {
             String name = m.getId().getName();
-            if (!name.startsWith(METER_PREFIX)) continue;
+            if (!name.startsWith(METER_PREFIX) || !isWhitelisted(name)) {
+                filtered++;
+                continue;
+            }
+            captured++;
             if (m instanceof Counter c) {
-                counters.put(name, c.count());
+                double v = c.count();
+                counters.put(name, v);
+                lastCounterValues.put(name, v);
             } else if (m instanceof Timer t) {
-                timers.put(name, new TimerSnap(t.count(), t.totalTime(TimeUnit.MILLISECONDS), -1.0, t.max(TimeUnit.MILLISECONDS)));
+                TimerSnap snap = new TimerSnap(t.count(), t.totalTime(TimeUnit.MILLISECONDS), -1.0, t.max(TimeUnit.MILLISECONDS));
+                timers.put(name, snap);
+                lastTimerSnaps.put(name, snap);
             } else if (m instanceof Gauge g) {
                 double v = g.value();
-                if (!Double.isNaN(v) && !Double.isInfinite(v)) gauges.put(name, v);
+                if (!Double.isNaN(v) && !Double.isInfinite(v)) {
+                    gauges.put(name, v);
+                    lastGaugeValues.put(name, v);
+                }
             }
         }
+        if (filtered > 0) filteredMeterCounter.increment(filtered);
+        if (captured > 0) capturedMeterCounter.increment(captured);
         return new MeterSnap(counters, timers, gauges);
+    }
+
+    private static boolean isWhitelisted(String meterName) {
+        for (String prefix : METER_WHITELIST_PREFIXES) {
+            if (meterName.startsWith(prefix)) return true;
+        }
+        return false;
     }
 
     private static long freeDiskBytes() {
@@ -215,7 +347,7 @@ public class SelfMonitorCollector {
     public record MemSnap(long used, long committed, long max, long init) {}
 
     public record JvmSnap(MemSnap heap, MemSnap nonHeap, MemSnap metaspace,
-                          ThreadSnap threads, ClassSnap classes, long uptimeSec, List<GcSnap> gc) {}
+                          ThreadSnap threads, ClassSnap classes, long uptimeMs, List<GcSnap> gc) {}
 
     public record ThreadSnap(int current, int daemon, int peak, int deadlocked) {}
 
@@ -224,6 +356,7 @@ public class SelfMonitorCollector {
     public record GcSnap(String name, long count, long timeMs) {}
 
     public record ProcessSnap(double cpuLoad, double systemCpuLoad, long rssBytes, long virtualBytes,
+                              long heapUsed, long nonHeapUsed,
                               long systemTotalBytes, long systemFreeBytes, long diskFreeBytes, int cpuCores) {}
 
     public record TimerSnap(long count, double totalMs, double meanMs, double maxMs) {}

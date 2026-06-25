@@ -2,16 +2,19 @@ package com.springwatch.service;
 
 import com.springwatch.collector.OtelConfigGenerator;
 import com.springwatch.collector.schedule.CollectScheduleRegistry;
+import com.springwatch.collector.schedule.HostThrottler;
 import com.springwatch.model.dto.AppRegisterRequest;
 import com.springwatch.model.entity.MonitorApp;
 import com.springwatch.repository.MonitorAppRepository;
 import com.springwatch.util.SnowFlakeIdGenerator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.Instant;
+import java.net.URI;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -25,15 +28,18 @@ public class MonitorAppService {
     private final MonitorAppRepository monitorAppRepository;
     private final CollectScheduleRegistry collectScheduleRegistry;
     private final OtelConfigGenerator otelConfigGenerator;
+    private final HostThrottler hostThrottler;
 
-    public List<MonitorApp> listAll() {
-        return monitorAppRepository.findAll();
+    public Page<MonitorApp> listAll(Pageable pageable) {
+        return monitorAppRepository.findAll(pageable);
     }
 
-    public List<MonitorApp> listActive() {
-        return monitorAppRepository.findAll().stream()
-                .filter(a -> "active".equalsIgnoreCase(a.getStatus()))
-                .toList();
+    public Page<MonitorApp> listActive(Pageable pageable) {
+        return monitorAppRepository.findByStatusIgnoreCase("active", pageable);
+    }
+
+    public List<MonitorApp> listAllActive() {
+        return monitorAppRepository.findByStatusIgnoreCase("active");
     }
 
     public Optional<MonitorApp> findById(Long id) {
@@ -98,6 +104,16 @@ public class MonitorAppService {
         } catch (Exception e) {
             log.warn("[spring-watch: 调度注销失败 - appid={}, error={}]", app.getAppid(), e.getMessage());
         }
+        // P1-5: 释放 HostThrottler 中该 host 的限流器，避免 hostSemaphores 缓慢泄漏
+        String host = parseHost(app.getEndpoint());
+        if (host != null) {
+            try {
+                hostThrottler.cleanup(host);
+            } catch (Exception e) {
+                log.warn("[spring-watch: 主机限流器清理失败 - appid={}, host={}, error={}]",
+                        app.getAppid(), host, e.getMessage());
+            }
+        }
         monitorAppRepository.deleteById(id);
     }
 
@@ -124,7 +140,7 @@ public class MonitorAppService {
         try {
             collectScheduleRegistry.upsert(saved);
         } catch (Exception e) {
-            log.warn("[spring-watch: 恢复调度失败 - appid={}, error={}]", app.getAppid(), e.getMessage());
+            log.warn("[spring-watch: 恢复调度失败 - appid={}, error={}]", saved.getAppid(), e.getMessage());
         }
         return saved;
     }
@@ -144,5 +160,14 @@ public class MonitorAppService {
         return out;
     }
 
-
+    private static String parseHost(String endpoint) {
+        if (endpoint == null || endpoint.isEmpty()) {
+            return null;
+        }
+        try {
+            return URI.create(endpoint).getHost();
+        } catch (Exception e) {
+            return null;
+        }
+    }
 }

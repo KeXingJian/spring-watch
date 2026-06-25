@@ -6,6 +6,8 @@ import com.springwatch.model.entity.AlertNotificationConfig;
 import com.springwatch.repository.AlertNotificationConfigRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -20,8 +22,16 @@ public class NotificationConfigService {
     private final AlertNotificationConfigRepository repository;
     private final AlertNotifier alertNotifier;
 
+    public Page<AlertNotificationConfig> listAll(Pageable pageable) {
+        return repository.findAll(pageable);
+    }
+
     public List<AlertNotificationConfig> listAll() {
         return repository.findAll();
+    }
+
+    public Page<AlertNotificationConfig> listByAppid(Long appid, Pageable pageable) {
+        return repository.findByAppid(appid, pageable);
     }
 
     public List<AlertNotificationConfig> listByAppid(Long appid) {

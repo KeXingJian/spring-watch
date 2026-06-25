@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
 
 public interface LogDedupCountRepository extends JpaRepository<LogDedupCount, Long> {
@@ -28,4 +29,18 @@ public interface LogDedupCountRepository extends JpaRepository<LogDedupCount, Lo
     @Query("SELECT d FROM LogDedupCount d WHERE d.appid = :appid ORDER BY d.dedupCount DESC, d.lastSeenAt DESC")
     List<LogDedupCount> findTopByAppidOrderByCount(@Param("appid") Long appid,
                                                    org.springframework.data.domain.Pageable pageable);
+
+    /**
+     * 批量查若干 fingerprint 的去重计数,返回 fingerprint -> dedup_count 映射(没有返回 0)
+     * 给 topFingerprints 补真实总次数用
+     */
+    @Query("SELECT d.fingerprint AS fp, d.dedupCount AS cnt FROM LogDedupCount d " +
+            "WHERE d.appid = :appid AND d.fingerprint IN :fps")
+    List<FpCount> sumDedupByFingerprints(@Param("appid") Long appid,
+                                          @Param("fps") Collection<String> fps);
+
+    interface FpCount {
+        String getFp();
+        Long getCnt();
+    }
 }

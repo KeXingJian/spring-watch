@@ -40,7 +40,7 @@ const apps = computed(() => appStore.apps)
 
 async function loadApps() {
   try {
-    const list = await api.get<any[]>('/api/apps/active')
+    const list = await api.page<any>('/api/apps/active')
     appStore.setApps(list || [])
   } catch {
     /* ignore */
@@ -49,7 +49,7 @@ async function loadApps() {
 
 async function loadRules() {
   try {
-    rules.value = (await api.get<any[]>('/api/alert/rules')) || []
+    rules.value = await api.page<any>('/api/alert/rules')
   } catch (e: any) {
     toast.error('加载失败: ' + e.message)
   }
