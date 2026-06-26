@@ -33,6 +33,9 @@ public class InfluxDBConfig {
     @Value("${influxdb.log-bucket}")
     private String logBucket;
 
+    @Value("${influxdb.self-metrics-bucket:self_metrics}")
+    private String selfMetricsBucket;
+
     @Value("${influxdb.write.batch-size:1000}")
     private int writeBatchSize;
 
@@ -72,6 +75,11 @@ public class InfluxDBConfig {
     @Bean
     public WriteParameters logWriteParameters() {
         return new WriteParameters(logBucket, influxOrg, WritePrecision.NS);
+    }
+
+    @Bean
+    public WriteParameters selfMetricsWriteParameters() {
+        return new WriteParameters(selfMetricsBucket, influxOrg, WritePrecision.NS);
     }
 
     @Bean(destroyMethod = "close")

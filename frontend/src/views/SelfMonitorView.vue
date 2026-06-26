@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, reactive, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { api } from '@/api/client'
 import { formatBytes, formatPercent, formatNumber } from '@/utils/format'
 import Chart from '@/charts/Chart.vue'
@@ -7,9 +7,90 @@ import EmptyState from '@/components/EmptyState.vue'
 import MetricCard from '@/components/MetricCard.vue'
 import type { LineSeriesItem, BarSeriesItem } from '@/charts/types'
 
+type Range = '5m' | '15m' | '1h' | '6h' | '24h'
+type Agg = 'mean' | 'max' | 'min' | 'sum' | 'last' | 'rate'
+type Point = [number, number | null]
+type FetchOpts = { category: 'jvm' | 'process' | 'meter'; metric: string; meterType?: string; gcName?: string; agg: Agg; every?: string; field?: string }
+
 const realtime = ref<any>(null)
-const timeseries = ref<any[]>([])
 const appCount = ref<number | null>(null)
+const rangeLoading = ref(false)
+const rangeError = ref<string | null>(null)
+
+/** 时间范围：5m/15m/1h/6h/24h 统一走 InfluxDB series 接口（自监控已落 self_metrics 桶，保留 25h） */
+const range = ref<Range>('5m')
+const rangeOptions: Range[] = ['5m', '15m', '1h', '6h', '24h']
+const rangeStartTs = computed(() => Date.now() - rangeMs())
+const rangeEndTs = computed(() => Date.now())
+
+/** 刷新挡位：30s / 60s；图表、顶部 cards、底部 meter 表统一这一个节奏 */
+const pollSec = ref<number>(30)
+const pollOptions = [30, 60] as const
+function rangeMs() {
+  if (range.value === '5m') return 5 * 60 * 1000
+  if (range.value === '15m') return 15 * 60 * 1000
+  if (range.value === '6h') return 6 * 3600 * 1000
+  if (range.value === '24h') return 24 * 3600 * 1000
+  return 3600 * 1000
+}
+/** 自适应步长：与服务端 defaultEvery 保持一致 */
+function everyForRange() {
+  if (range.value === '6h') return '30s'
+  if (range.value === '24h') return '1m'
+  return '10s'
+}
+
+/**
+ * 拉单个 metric 的时序，返回 [[tsMs, value], ...]
+ * 失败 / 无数据时返回空数组，前端走 EmptyState。
+ * field 默认为 "value"；timer 想看 count / total_ms 速率时传 "count" / "total_ms"。
+ */
+async function fetchSeries(opts: FetchOpts): Promise<Point[]> {
+  const params: Record<string, unknown> = {
+    category: opts.category,
+    metric: opts.metric,
+    from: new Date(rangeStartTs.value).toISOString(),
+    to: new Date(rangeEndTs.value).toISOString(),
+    agg: opts.agg,
+    every: opts.every ?? everyForRange()
+  }
+  if (opts.meterType) params.meterType = opts.meterType
+  if (opts.gcName) params.gcName = opts.gcName
+  if (opts.field) params.field = opts.field
+  try {
+    const resp: any = await api.get('/api/self/series', params)
+    const series = resp?.series || []
+    if (!series.length) return []
+    return (series[0].points || []).map((p: any) => [
+      new Date(p.t).getTime(),
+      p.v == null ? null : Number(p.v)
+    ])
+  } catch {
+    return []
+  }
+}
+
+async function fetchSeriesMulti(opts: FetchOpts): Promise<Point[][]> {
+  const params: Record<string, unknown> = {
+    category: opts.category,
+    metric: opts.metric,
+    from: new Date(rangeStartTs.value).toISOString(),
+    to: new Date(rangeEndTs.value).toISOString(),
+    agg: opts.agg,
+    every: opts.every ?? everyForRange()
+  }
+  if (opts.meterType) params.meterType = opts.meterType
+  if (opts.gcName) params.gcName = opts.gcName
+  try {
+    const resp: any = await api.get('/api/self/series', params)
+    const series = resp?.series || []
+    return series.map((s: any) =>
+      (s.points || []).map((p: any) => [new Date(p.t).getTime(), p.v == null ? null : Number(p.v)])
+    )
+  } catch {
+    return []
+  }
+}
 
 const healthPill = ref({ cls: 'warn', text: '采样中' })
 
@@ -89,24 +170,6 @@ function fmtNum(n: number | null | undefined) {
   return n.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')
 }
 
-function rateAt(idx: number, key: string): number {
-  if (idx <= 0) return 0
-  const cur = timeseries.value[idx].meters.counters[key] || 0
-  const prev = timeseries.value[idx - 1].meters.counters[key] || 0
-  const dt = (timeseries.value[idx].ts - timeseries.value[idx - 1].ts) / 1000
-  return dt > 0 ? (cur - prev) / dt : 0
-}
-
-function meanLatencyAt(idx: number, key: string): number | null {
-  if (idx <= 0) return null
-  const cur = (timeseries.value[idx].meters.timers || {})[key]
-  const prev = (timeseries.value[idx - 1].meters.timers || {})[key]
-  if (!cur || !prev) return null
-  const dc = cur.count - prev.count
-  const dt = cur.totalMs - prev.totalMs
-  return dc > 0 ? dt / dc : null
-}
-
 function gaugeVal(name: string) {
   if (!realtime.value || !realtime.value.meters) return null
   return (realtime.value.meters.gauges || {})[name]
@@ -180,130 +243,9 @@ function renderCards() {
   if (heapPct > 0.9 || cpu > 0.9) healthPill.value = { cls: 'bad', text: '高负载' }
   else if (heapPct > 0.75 || cpu > 0.75) healthPill.value = { cls: 'warn', text: '负载偏高' }
   else healthPill.value = { cls: 'ok', text: '正常' }
-  kv.meta = '采样间隔 10s · 环形缓冲 1h · ' + (realtime.value.iso || '')
+  kv.meta = '采样间隔 10s · InfluxDB 25h 保留 · ' + (realtime.value.iso || '')
 }
 
-function renderTraffic() {
-  trafficChart.value = [
-    { name: '指标 received/s', points: timeseries.value.map((s, i) => [s.ts, rateAt(i, 'spring.watch.consumer.metric.received')] as [string, number | null]), area: true },
-    { name: '日志 received/s', points: timeseries.value.map((s, i) => [s.ts, rateAt(i, 'spring.watch.consumer.log.received')] as [string, number | null]) },
-    { name: '日志 kept/s', points: timeseries.value.map((s, i) => [s.ts, rateAt(i, 'spring.watch.consumer.log.kept')] as [string, number | null]) },
-    { name: 'DLQ persisted/s', points: timeseries.value.map((s, i) => [s.ts, rateAt(i, 'spring.watch.consumer.dlq.persisted')] as [string, number | null]) }
-  ]
-}
-function renderDedup() {
-  dedupChart.value = [
-    { name: '日志 deduped/s', points: timeseries.value.map((s, i) => [s.ts, rateAt(i, 'spring.watch.consumer.log.deduped')] as [string, number | null]), area: true },
-    { name: '告警候选/s', points: timeseries.value.map((s, i) => [s.ts, rateAt(i, 'spring.watch.consumer.log.alert_candidate')] as [string, number | null]) }
-  ]
-}
-function renderFail() {
-  failChart.value = [
-    { name: '指标 parse_fail', points: timeseries.value.map((s, i) => [s.ts, rateAt(i, 'spring.watch.consumer.metric.parse_fail')] as [string, number | null]), area: true },
-    { name: '指标 write_fail', points: timeseries.value.map((s, i) => [s.ts, rateAt(i, 'spring.watch.consumer.metric.write_fail')] as [string, number | null]) },
-    { name: '日志 parse_fail', points: timeseries.value.map((s, i) => [s.ts, rateAt(i, 'spring.watch.consumer.log.parse_fail')] as [string, number | null]) },
-    { name: '日志 write_fail', points: timeseries.value.map((s, i) => [s.ts, rateAt(i, 'spring.watch.consumer.log.write_fail')] as [string, number | null]) },
-    { name: 'DLQ persist_fail', points: timeseries.value.map((s, i) => [s.ts, rateAt(i, 'spring.watch.consumer.dlq.persist_fail')] as [string, number | null]) }
-  ]
-}
-function renderWrite() {
-  writeChart.value = [
-    { name: '指标写入均延迟 ms', points: timeseries.value.map((s, i) => [s.ts, meanLatencyAt(i, 'spring.watch.consumer.metric.write') || 0] as [string, number | null]) },
-    { name: '日志写入均延迟 ms', points: timeseries.value.map((s, i) => [s.ts, meanLatencyAt(i, 'spring.watch.consumer.log.write') || 0] as [string, number | null]) }
-  ]
-}
-function renderDedupOp() {
-  dedupOpChart.value = [
-    { name: 'keep/s', points: timeseries.value.map((s, i) => [s.ts, rateAt(i, 'spring.watch.ingest.log.dedup.keep')] as [string, number | null]), area: true },
-    { name: 'drop/s', points: timeseries.value.map((s, i) => [s.ts, rateAt(i, 'spring.watch.ingest.log.dedup.drop')] as [string, number | null]) },
-    { name: 'flush/s', points: timeseries.value.map((s, i) => [s.ts, rateAt(i, 'spring.watch.ingest.log.dedup.flush')] as [string, number | null]) },
-    { name: 'flush_fail/s', points: timeseries.value.map((s, i) => [s.ts, rateAt(i, 'spring.watch.ingest.log.dedup.flush_fail')] as [string, number | null]) }
-  ]
-}
-function renderMetricQuery() {
-  const samples = timeseries.value
-  const last = samples[samples.length - 1]
-  if (!last) { metricQBar.value = { categories: [], series: [] }; return }
-  const allKeys = Object.keys(last.meters.counters || {}).filter((k) => k.startsWith('spring.watch.metric.query.') && k.endsWith('.fail'))
-  const cats = allKeys.map((k) => k.slice('spring.watch.metric.query.'.length).replace(/\.fail$/, ''))
-  const failData = allKeys.map((k) => rateAt(samples.length - 1, k))
-  const emptyData = allKeys.map((k) => rateAt(samples.length - 1, k.replace('.fail', '.empty_result')))
-  metricQBar.value = {
-    categories: cats,
-    series: [
-      { name: 'fail/s', data: failData },
-      { name: 'empty_result/s', data: emptyData }
-    ]
-  }
-}
-function renderLogQuery() {
-  const samples = timeseries.value
-  const last = samples[samples.length - 1]
-  if (!last) { logQBar.value = { categories: [], series: [] }; return }
-  const allKeys = Object.keys(last.meters.counters || {}).filter((k) => k.startsWith('spring.watch.log.query.') && k.endsWith('.fail'))
-  const cats = allKeys.map((k) => k.slice('spring.watch.log.query.'.length).replace(/\.fail$/, ''))
-  const failData = allKeys.map((k) => rateAt(samples.length - 1, k))
-  logQBar.value = { categories: cats, series: [{ name: 'fail/s', data: failData }] }
-}
-function renderHttpOutcome() {
-  httpOutcomeChart.value = [
-    { name: 'success/s', points: timeseries.value.map((s, i) => [s.ts, rateAt(i, 'spring.watch.collector.http.success')] as [string, number | null]), area: true },
-    { name: 'failure/s', points: timeseries.value.map((s, i) => [s.ts, rateAt(i, 'spring.watch.collector.http.failure')] as [string, number | null]) },
-    { name: 'timeout/s', points: timeseries.value.map((s, i) => [s.ts, rateAt(i, 'spring.watch.collector.http.timeout')] as [string, number | null]) },
-    { name: 'non2xx/s', points: timeseries.value.map((s, i) => [s.ts, rateAt(i, 'spring.watch.collector.http.non2xx')] as [string, number | null]) }
-  ]
-}
-function renderHttpLat() {
-  httpLatChart.value = [
-    { name: '均延迟 ms', points: timeseries.value.map((s, i) => [s.ts, meanLatencyAt(i, 'spring.watch.collector.http.request') || 0] as [string, number | null]) },
-    { name: '重投 enqueue/s', points: timeseries.value.map((s, i) => [s.ts, rateAt(i, 'spring.watch.collector.retry.enqueued')] as [string, number | null]) },
-    { name: '重投 dropped/s', points: timeseries.value.map((s, i) => [s.ts, rateAt(i, 'spring.watch.collector.retry.dropped')] as [string, number | null]) }
-  ]
-}
-function renderJvmMem() {
-  jvmMemChart.value = [
-    { name: '堆已用 MB', points: timeseries.value.map((s) => [s.ts, (s.jvm.heap.used || 0) / 1048576] as [string, number | null]), area: true },
-    { name: 'Metaspace MB', points: timeseries.value.map((s) => [s.ts, (s.jvm.metaspace.used || 0) / 1048576] as [string, number | null]) },
-    { name: '非堆 MB', points: timeseries.value.map((s) => [s.ts, (s.jvm.nonHeap.used || 0) / 1048576] as [string, number | null]) }
-  ]
-}
-function renderJvmThreads() {
-  jvmThreadsChart.value = [
-    { name: '线程数', points: timeseries.value.map((s) => [s.ts, s.jvm.threads.current || 0] as [string, number | null]) },
-    { name: '守护线程', points: timeseries.value.map((s) => [s.ts, s.jvm.threads.daemon || 0] as [string, number | null]) },
-    { name: '已加载类', points: timeseries.value.map((s) => [s.ts, s.jvm.classes.loaded || 0] as [string, number | null]) }
-  ]
-}
-function renderJvmGc() {
-  const keys = new Set<string>()
-  timeseries.value.forEach((s) => (s.jvm.gc || []).forEach((g: any) => keys.add(g.name)))
-  const series: LineSeriesItem[] = []
-  for (const name of keys) {
-    const points: [string, number | null][] = []
-    for (let i = 0; i < timeseries.value.length; i++) {
-      const cur = (timeseries.value[i].jvm.gc || []).find((g: any) => g.name === name)
-      const prev = i > 0 ? (timeseries.value[i - 1].jvm.gc || []).find((g: any) => g.name === name) : null
-      const inc = cur && prev ? (cur.timeMs - prev.timeMs) : 0
-      points.push([timeseries.value[i].ts, inc])
-    }
-    series.push({ name, points, area: true })
-  }
-  jvmGcChart.value = series
-}
-function renderProcCpu() {
-  procCpuChart.value = [
-    { name: '进程 CPU', points: timeseries.value.map((s) => [s.ts, (s.process.cpuLoad || 0) * 100] as [string, number | null]) },
-    { name: '系统 CPU', points: timeseries.value.map((s) => [s.ts, (s.process.systemCpuLoad || 0) * 100] as [string, number | null]) }
-  ]
-}
-function renderProcRss() {
-  procRssChart.value = [
-    { name: '进程 RSS MB', points: timeseries.value.map((s) => [s.ts, s.process.rssBytes > 0 ? s.process.rssBytes / 1048576 : null] as [string, number | null]) },
-    { name: 'JVM 堆已用 MB', points: timeseries.value.map((s) => [s.ts, (s.process.heapUsed || 0) / 1048576] as [string, number | null]) },
-    { name: 'JVM 非堆已用 MB', points: timeseries.value.map((s) => [s.ts, (s.process.nonHeapUsed || 0) / 1048576] as [string, number | null]) },
-    { name: '进程虚拟内存 MB', points: timeseries.value.map((s) => [s.ts, (s.process.virtualBytes || 0) / 1048576] as [string, number | null]) }
-  ]
-}
 function renderMeterTable() {
   if (!realtime.value || !realtime.value.meters) {
     meterRows.value = []
@@ -330,24 +272,177 @@ function renderMeterTable() {
   meterCount.value = rows.length
 }
 
-function renderAll() {
-  renderCards()
-  if (timeseries.value.length < 2) return
-  renderTraffic()
-  renderDedup()
-  renderFail()
-  renderWrite()
-  renderDedupOp()
-  renderMetricQuery()
-  renderLogQuery()
-  renderHttpOutcome()
-  renderHttpLat()
-  renderJvmMem()
-  renderJvmThreads()
-  renderJvmGc()
-  renderProcCpu()
-  renderProcRss()
-  renderMeterTable()
+/**
+ * 5m/15m/1h/6h/24h 视图：从 InfluxDB 拉每个 chart 所需的 metric，填充到同一组 chart refs。
+ * 用 Promise.all 并发拉取，减少切换时的等待感。
+ * 失败 / 缺数据时该 chart 留空，前端走 EmptyState。
+ * meter 表与 cards 由 pollRealtime() 单独驱动(5s 轮询 /realtime),不复用本函数的 InfluxDB 路径。
+ */
+async function renderAllRange() {
+  // 兜底：先把所有 chart 引用重置为 []，确保任意分支出错也能显示 EmptyState 而不是"什么都没有"
+  const empty: LineSeriesItem[] = []
+  trafficChart.value = empty
+  dedupChart.value = empty
+  failChart.value = empty
+  writeChart.value = empty
+  dedupOpChart.value = empty
+  httpOutcomeChart.value = empty
+  httpLatChart.value = empty
+  jvmMemChart.value = empty
+  jvmThreadsChart.value = empty
+  jvmGcChart.value = empty
+  procCpuChart.value = empty
+  procRssChart.value = empty
+  metricQBar.value = { categories: [], series: [] }
+  logQBar.value = { categories: [], series: [] }
+
+  const m = (category: 'jvm' | 'process' | 'meter', metric: string, agg: Agg, meterType?: string, gcName?: string) => {
+    const o: { category: 'jvm' | 'process' | 'meter'; metric: string; agg: Agg; meterType?: string; gcName?: string } = { category, metric, agg }
+    if (meterType) o.meterType = meterType
+    if (gcName) o.gcName = gcName
+    return o
+  }
+
+  const safe = async <T,>(p: Promise<T>, fallback: T): Promise<T> => {
+    try { return await p } catch (e) { console.warn('[self-monitor series fetch fail]', e); return fallback }
+  }
+
+  const [
+    recv_metric, recv_log, kept_log, persisted_dlq,
+    deduped, alert_cand,
+    parse_fail_m, write_fail_m, parse_fail_l, write_fail_l, persist_fail_dlq,
+    keep, drop, flush, flush_fail,
+    http_ok, http_fail, http_timeout, http_non2xx,
+    http_calls, retry_enq, retry_drop,
+    write_calls_m, write_calls_l,
+    jvm_heap, jvm_meta, jvm_nonheap,
+    jvm_thr_cur, jvm_thr_daemon, jvm_cls_loaded,
+    proc_cpu, proc_sys_cpu,
+    proc_rss, proc_heap, proc_nonheap, proc_virt,
+    gc_time_multi
+  ] = await Promise.all([
+    safe(fetchSeries(m('meter', 'spring.watch.consumer.metric.received', 'rate', 'counter')), []),
+    safe(fetchSeries(m('meter', 'spring.watch.consumer.log.received', 'rate', 'counter')), []),
+    safe(fetchSeries(m('meter', 'spring.watch.consumer.log.kept', 'rate', 'counter')), []),
+    safe(fetchSeries(m('meter', 'spring.watch.consumer.dlq.persisted', 'rate', 'counter')), []),
+    safe(fetchSeries(m('meter', 'spring.watch.consumer.log.deduped', 'rate', 'counter')), []),
+    safe(fetchSeries(m('meter', 'spring.watch.consumer.log.alert_candidate', 'rate', 'counter')), []),
+    safe(fetchSeries(m('meter', 'spring.watch.consumer.metric.parse_fail', 'rate', 'counter')), []),
+    safe(fetchSeries(m('meter', 'spring.watch.consumer.metric.write_fail', 'rate', 'counter')), []),
+    safe(fetchSeries(m('meter', 'spring.watch.consumer.log.parse_fail', 'rate', 'counter')), []),
+    safe(fetchSeries(m('meter', 'spring.watch.consumer.log.write_fail', 'rate', 'counter')), []),
+    safe(fetchSeries(m('meter', 'spring.watch.consumer.dlq.persist_fail', 'rate', 'counter')), []),
+    safe(fetchSeries(m('meter', 'spring.watch.ingest.log.dedup.keep', 'rate', 'counter')), []),
+    safe(fetchSeries(m('meter', 'spring.watch.ingest.log.dedup.drop', 'rate', 'counter')), []),
+    safe(fetchSeries(m('meter', 'spring.watch.ingest.log.dedup.flush', 'rate', 'counter')), []),
+    safe(fetchSeries(m('meter', 'spring.watch.ingest.log.dedup.flush_fail', 'rate', 'counter')), []),
+    safe(fetchSeries(m('meter', 'spring.watch.collector.http.success', 'rate', 'counter')), []),
+    safe(fetchSeries(m('meter', 'spring.watch.collector.http.failure', 'rate', 'counter')), []),
+    safe(fetchSeries(m('meter', 'spring.watch.collector.http.timeout', 'rate', 'counter')), []),
+    safe(fetchSeries(m('meter', 'spring.watch.collector.http.non2xx', 'rate', 'counter')), []),
+    safe(fetchSeries({ ...m('meter', 'spring.watch.collector.http.request', 'rate', 'timer'), field: 'count' }), []),
+    safe(fetchSeries(m('meter', 'spring.watch.collector.retry.enqueued', 'rate', 'counter')), []),
+    safe(fetchSeries(m('meter', 'spring.watch.collector.retry.dropped', 'rate', 'counter')), []),
+    safe(fetchSeries({ ...m('meter', 'spring.watch.consumer.metric.write', 'rate', 'timer'), field: 'count' }), []),
+    safe(fetchSeries({ ...m('meter', 'spring.watch.consumer.log.write', 'rate', 'timer'), field: 'count' }), []),
+    safe(fetchSeries(m('jvm', 'heap.used', 'last')).then((p) => p.map(toMb)), []),
+    safe(fetchSeries(m('jvm', 'metaspace.used', 'last')).then((p) => p.map(toMb)), []),
+    safe(fetchSeries(m('jvm', 'nonHeap.used', 'last')).then((p) => p.map(toMb)), []),
+    safe(fetchSeries(m('jvm', 'threads.current', 'last')), []),
+    safe(fetchSeries(m('jvm', 'threads.daemon', 'last')), []),
+    safe(fetchSeries(m('jvm', 'classes.loaded', 'last')), []),
+    safe(fetchSeries(m('process', 'cpu_load', 'mean')).then((p) => p.map(toPercent)), []),
+    safe(fetchSeries(m('process', 'system_cpu_load', 'mean')).then((p) => p.map(toPercent)), []),
+    safe(fetchSeries(m('process', 'rss_bytes', 'last')).then((p) => p.map(toMb)), []),
+    safe(fetchSeries(m('process', 'heap_used', 'last')).then((p) => p.map(toMb)), []),
+    safe(fetchSeries(m('process', 'non_heap_used', 'last')).then((p) => p.map(toMb)), []),
+    safe(fetchSeries(m('process', 'virtual_bytes', 'last')).then((p) => p.map(toMb)), []),
+    safe(fetchSeriesMulti(m('jvm', 'gc.time_ms', 'rate')), [])
+  ])
+
+  trafficChart.value = [
+    { name: '指标 received/s', points: pack(recv_metric) },
+    { name: '日志 received/s', points: pack(recv_log) },
+    { name: '日志 kept/s', points: pack(kept_log) },
+    { name: 'DLQ persisted/s', points: pack(persisted_dlq) }
+  ]
+  dedupChart.value = [
+    { name: '日志 deduped/s', points: pack(deduped) },
+    { name: '告警候选/s', points: pack(alert_cand) }
+  ]
+  failChart.value = [
+    { name: '指标 parse_fail', points: pack(parse_fail_m) },
+    { name: '指标 write_fail', points: pack(write_fail_m) },
+    { name: '日志 parse_fail', points: pack(parse_fail_l) },
+    { name: '日志 write_fail', points: pack(write_fail_l) },
+    { name: 'DLQ persist_fail', points: pack(persist_fail_dlq) }
+  ]
+  // Timer mean latency 服务端难精确表达：用 count 速率（calls/s）当"忙碌度"占位。
+  // 若要看 ms 级延迟,看 /api/self/realtime 的 realtime snapshot（卡里有 max/total/count）。
+  writeChart.value = [
+    { name: '指标 write calls/s', points: pack(write_calls_m) },
+    { name: '日志 write calls/s', points: pack(write_calls_l) }
+  ]
+  dedupOpChart.value = [
+    { name: 'keep/s', points: pack(keep) },
+    { name: 'drop/s', points: pack(drop) },
+    { name: 'flush/s', points: pack(flush) },
+    { name: 'flush_fail/s', points: pack(flush_fail) }
+  ]
+  httpOutcomeChart.value = [
+    { name: 'success/s', points: pack(http_ok) },
+    { name: 'failure/s', points: pack(http_fail) },
+    { name: 'timeout/s', points: pack(http_timeout) },
+    { name: 'non2xx/s', points: pack(http_non2xx) }
+  ]
+  httpLatChart.value = [
+    { name: 'HTTP 请求调用/s', points: pack(http_calls) },
+    { name: '重投 enqueue/s', points: pack(retry_enq) },
+    { name: '重投 dropped/s', points: pack(retry_drop) }
+  ]
+  jvmMemChart.value = [
+    { name: '堆已用 MB', points: pack(jvm_heap), area: true },
+    { name: 'Metaspace MB', points: pack(jvm_meta) },
+    { name: '非堆 MB', points: pack(jvm_nonheap) }
+  ]
+  jvmThreadsChart.value = [
+    { name: '线程数', points: pack(jvm_thr_cur) },
+    { name: '守护线程', points: pack(jvm_thr_daemon) },
+    { name: '已加载类', points: pack(jvm_cls_loaded) }
+  ]
+  procCpuChart.value = [
+    { name: '进程 CPU', points: pack(proc_cpu) },
+    { name: '系统 CPU', points: pack(proc_sys_cpu) }
+  ]
+  procRssChart.value = [
+    { name: '进程 RSS MB', points: pack(proc_rss) },
+    { name: 'JVM 堆已用 MB', points: pack(proc_heap) },
+    { name: 'JVM 非堆已用 MB', points: pack(proc_nonheap) },
+    { name: '进程虚拟内存 MB', points: pack(proc_virt) }
+  ]
+
+  // GC: 多个 gc_name tag 分裂成多条 series，rate = derivative of time_ms
+  jvmGcChart.value = (gc_time_multi || []).map((points) => ({
+    name: 'GC ms/s',
+    points: points as [number, number | null][],
+    area: true
+  }))
+}
+
+/** Timer 指标的 mean 延迟近似：服务端难精确表达（需要 ratio of derivatives），
+ *  5m/15m/1h/6h/24h 视图统一用 count 速率（events/s）当"忙碌度"占位,
+ *  要看 ms 级别延迟请看底部 Micrometer 原始指标表的 max/total/count（realtime snapshot）。 */
+
+function pack(points: Point[]): [number, number | null][] {
+  return points.map(([t, v]) => [t, v])
+}
+
+function toMb([t, v]: Point): Point {
+  return [t, v == null ? null : v / 1048576]
+}
+
+function toPercent([t, v]: Point): Point {
+  return [t, v == null ? null : v * 100]
 }
 
 async function pollRealtime() {
@@ -368,28 +463,66 @@ async function pollRealtime() {
   }
 }
 
-async function pollTimeseries() {
+async function pollRange() {
+  rangeLoading.value = true
+  rangeError.value = null
   try {
-    const resp = await api.get<any>('/api/self/timeseries', { window: 60 })
-    timeseries.value = resp?.samples || []
-    renderAll()
-  } catch {
-    /* 静默 */
+    await renderAllRange()
+  } catch (e: any) {
+    rangeError.value = e?.message || String(e)
+    console.error('[spring-watch: renderAllRange 出错]', e)
+  } finally {
+    rangeLoading.value = false
   }
+  // meter 表基于 realtime snapshot,放在 chart 刷新之后,确保用最新一帧渲染。
+  renderMeterTable()
 }
 
 let timer1: number | null = null
 let timer2: number | null = null
 
-onMounted(() => {
+/**
+ * 图表、cards、meter 表统一按 pollSec 挡位刷新(30s / 60s)。
+ */
+function rangePollMs() {
+  return pollSec.value * 1000
+}
+
+function setPoll(sec: number) {
+  if (pollSec.value === sec) return
+  pollSec.value = sec
+  startPolling()
+}
+
+/** 手动刷新:立即拉一次,不动 timer。loading 态由 pollRange 自己维护。 */
+function manualRefresh() {
   pollRealtime()
-  pollTimeseries()
-  timer1 = window.setInterval(pollRealtime, 5000)
-  timer2 = window.setInterval(pollTimeseries, 10000)
+  pollRange()
+}
+
+function startPolling() {
+  if (timer1) { clearInterval(timer1); timer1 = null }
+  if (timer2) { clearInterval(timer2); timer2 = null }
+  pollRealtime()
+  pollRange()
+  const ms = rangePollMs()
+  timer1 = window.setInterval(pollRealtime, ms)
+  timer2 = window.setInterval(pollRange, ms)
+}
+
+onMounted(() => {
+  startPolling()
 })
 onBeforeUnmount(() => {
   if (timer1) clearInterval(timer1)
   if (timer2) clearInterval(timer2)
+})
+
+watch(range, () => {
+  startPolling()
+})
+watch(pollSec, () => {
+  startPolling()
 })
 </script>
 
@@ -397,8 +530,20 @@ onBeforeUnmount(() => {
   <div class="page">
     <div class="page-header">
       <h2>自身监控</h2>
-      <span class="meta">{{ kv.meta }}</span>
+      <span class="meta">{{ kv.meta }} · 范围 {{ range }}</span>
       <span class="spacer" />
+      <div class="range-toggle" role="group" aria-label="时间范围">
+        <button v-for="r in rangeOptions" :key="r"
+                :class="['range-btn', { active: range === r }]"
+                @click="range = r">{{ r }}</button>
+      </div>
+      <div class="range-toggle" role="group" aria-label="刷新间隔">
+        <button v-for="s in pollOptions" :key="s"
+                :class="['range-btn', { active: pollSec === s }]"
+                :title="`每 ${s} 秒自动刷新`"
+                @click="setPoll(s)">{{ s }}s</button>
+      </div>
+      <button class="btn btn-ghost btn-sm" :disabled="rangeLoading" @click="manualRefresh" title="立即刷新一次(不影响定时器)">刷新</button>
       <span :class="['status-pill', healthPill.cls]">{{ healthPill.text }}</span>
     </div>
 
@@ -414,9 +559,9 @@ onBeforeUnmount(() => {
       <div class="metric-card"><div class="title">线程数</div><div><span class="value">{{ cardThreads != null ? fmtNum(cardThreads) : '-' }}</span></div><div class="sub">{{ kv.threadsSub }}</div></div>
     </div>
 
-    <div class="section-title">1 · 采集流量(事件/秒)</div>
+    <div class="section-title">1 · 采集流量(事件/秒) <span v-if="rangeLoading" class="tag">加载中…</span><span v-if="rangeError" class="tag" style="color: oklch(var(--er))">异常: {{ rangeError }}</span></div>
     <div class="chart-row">
-      <div class="chart-panel"><div class="panel-head">指标 / 日志 / DLQ 接收速率<span class="tag">{{ timeseries.length }} 个采样点</span></div><div class="panel-body has-chart"><Chart v-if="trafficChart.length" type="line" :series="trafficChart" :area="true" y-axis-name="evt/s" /><EmptyState v-else inline>暂无数据</EmptyState></div></div>
+      <div class="chart-panel"><div class="panel-head">指标 / 日志 / DLQ 接收速率<span class="tag">InfluxDB series · {{ range }}</span></div><div class="panel-body has-chart"><Chart v-if="trafficChart.length" type="line" :series="trafficChart" :area="true" y-axis-name="evt/s" /><EmptyState v-else inline>{{ rangeError ? '查询异常' : '暂无数据' }}</EmptyState></div></div>
       <div class="chart-panel"><div class="panel-head">日志去重 & 告警候选<span class="tag">drop/s vs alert/s</span></div><div class="panel-body has-chart"><Chart v-if="dedupChart.length" type="line" :series="dedupChart" :area="true" y-axis-name="evt/s" /><EmptyState v-else inline>暂无数据</EmptyState></div></div>
     </div>
 
@@ -427,20 +572,20 @@ onBeforeUnmount(() => {
 
     <div class="section-title">3 · 写入与去重耗时</div>
     <div class="chart-row">
-      <div class="chart-panel"><div class="panel-head">指标 / 日志 写入平均延迟<span class="tag">ms</span></div><div class="panel-body has-chart"><Chart v-if="writeChart.length" type="line" :series="writeChart" y-axis-name="ms" /><EmptyState v-else inline>暂无数据</EmptyState></div></div>
+      <div class="chart-panel"><div class="panel-head">指标 / 日志 写入调用速率<span class="tag">calls/s</span></div><div class="panel-body has-chart"><Chart v-if="writeChart.length" type="line" :series="writeChart" y-axis-name="calls/s" /><EmptyState v-else inline>暂无数据</EmptyState></div></div>
       <div class="chart-panel"><div class="panel-head">日志去重 keep/drop/flush 速率<span class="tag">op/s</span></div><div class="panel-body has-chart"><Chart v-if="dedupOpChart.length" type="line" :series="dedupOpChart" :area="true" y-axis-name="op/s" /><EmptyState v-else inline>暂无数据</EmptyState></div></div>
     </div>
 
     <div class="section-title">4 · 查询服务(请求/秒)</div>
     <div class="chart-row">
-      <div class="chart-panel"><div class="panel-head">指标查询 QPS<span class="tag">最近 10 分钟</span></div><div class="panel-body has-chart"><Chart v-if="metricQBar.categories.length" type="bar" :categories="metricQBar.categories" :series="metricQBar.series" :horizontal="true" y-axis-name="req/s" /><EmptyState v-else inline>暂无数据</EmptyState></div></div>
-      <div class="chart-panel"><div class="panel-head">日志查询 QPS<span class="tag">最近 10 分钟</span></div><div class="panel-body has-chart"><Chart v-if="logQBar.categories.length" type="bar" :categories="logQBar.categories" :series="logQBar.series" :horizontal="true" y-axis-name="req/s" /><EmptyState v-else inline>暂无数据</EmptyState></div></div>
+      <div class="chart-panel"><div class="panel-head">指标查询 QPS<span class="tag">最近 {{ range }}</span></div><div class="panel-body has-chart"><Chart v-if="metricQBar.categories.length" type="bar" :categories="metricQBar.categories" :series="metricQBar.series" :horizontal="true" y-axis-name="req/s" /><EmptyState v-else inline>暂无数据</EmptyState></div></div>
+      <div class="chart-panel"><div class="panel-head">日志查询 QPS<span class="tag">最近 {{ range }}</span></div><div class="panel-body has-chart"><Chart v-if="logQBar.categories.length" type="bar" :categories="logQBar.categories" :series="logQBar.series" :horizontal="true" y-axis-name="req/s" /><EmptyState v-else inline>暂无数据</EmptyState></div></div>
     </div>
 
     <div class="section-title">5 · 主动抓取客户端</div>
     <div class="chart-row">
       <div class="chart-panel"><div class="panel-head">抓取结果分布<span class="tag">req/s</span></div><div class="panel-body has-chart"><Chart v-if="httpOutcomeChart.length" type="line" :series="httpOutcomeChart" :area="true" y-axis-name="req/s" /><EmptyState v-else inline>暂无数据</EmptyState></div></div>
-      <div class="chart-panel"><div class="panel-head">抓取平均延迟<span class="tag">ms</span></div><div class="panel-body has-chart"><Chart v-if="httpLatChart.length" type="line" :series="httpLatChart" y-axis-name="ms / op·s" /><EmptyState v-else inline>暂无数据</EmptyState></div></div>
+      <div class="chart-panel"><div class="panel-head">抓取调用速率<span class="tag">calls/s</span></div><div class="panel-body has-chart"><Chart v-if="httpLatChart.length" type="line" :series="httpLatChart" y-axis-name="calls/s" /><EmptyState v-else inline>暂无数据</EmptyState></div></div>
     </div>
 
     <div class="section-title">6 · JVM 运行时</div>

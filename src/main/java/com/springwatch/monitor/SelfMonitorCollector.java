@@ -1,5 +1,9 @@
 package com.springwatch.monitor;
 
+import com.influxdb.client.WriteApi;
+import com.influxdb.client.domain.WritePrecision;
+import com.influxdb.client.write.Point;
+import com.influxdb.client.write.WriteParameters;
 import com.springwatch.collector.KafkaFallbackQueue;
 import com.springwatch.collector.schedule.HostThrottler;
 import com.sun.management.OperatingSystemMXBean;
@@ -35,6 +39,12 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * 自监控采集器 - 定时采样 JVM/进程/系统/Micrometer 指标。
  * P1-6: 缩小 RING_SIZE 至 60（10min 历史）；引入 Meter 白名单，避免高基数 Gauge 撑爆堆。
+ *
+ * 持久化（与 BatchMetricConsumer 保持同款 InfluxDB 写入路径）：
+ * - 每次采样落 InfluxDB self_metrics 桶，measurement=self_monitor_metrics
+ * - tags: appid=self, category=jvm|process|meter, metric=<扁平名>, meter_type=counter|gauge|timer, gc_name=<仅 GC>
+ * - field: value（double）；timer 还会带 count/total_ms/max_ms
+ * - 内存 ring 仅供 /realtime（5s 轮询）做卡片/列表的快速缓存；1h/6h/24h 历史曲线统一走 SelfMetricQueryService 查 InfluxDB
  */
 @Slf4j
 @Component
@@ -44,6 +54,13 @@ public class SelfMonitorCollector {
     private static final long SAMPLE_INTERVAL_SEC = 10L;
     private static final int RING_SIZE = 60;
     private static final String METER_PREFIX = "spring.watch.";
+
+    /** InfluxDB: measurement / appid 标记，方便查询侧复用 appid 过滤模式 */
+    private static final String MEASUREMENT = "self_monitor_metrics";
+    private static final String APPID_SELF = "self";
+    private static final String CAT_JVM = "jvm";
+    private static final String CAT_PROCESS = "process";
+    private static final String CAT_METER = "meter";
 
     /**
      * 允许采集的 meter 名前缀白名单。前缀未匹配则跳过，避免高基数 Gauge（如 http_server_requests × appid）
@@ -66,6 +83,8 @@ public class SelfMonitorCollector {
     private final MeterRegistry meterRegistry;
     private final KafkaFallbackQueue kafkaFallbackQueue;
     private final HostThrottler hostThrottler;
+    private final WriteApi writeApi;
+    private final WriteParameters selfMetricsWriteParameters;
 
     private ScheduledExecutorService scheduler;
     private final Deque<Sample> ring = new ArrayDeque<>(RING_SIZE);
@@ -77,6 +96,8 @@ public class SelfMonitorCollector {
     private final Map<String, Double> lastGaugeValues = new ConcurrentHashMap<>();
     private Counter filteredMeterCounter;
     private Counter capturedMeterCounter;
+    private Counter persistedCounter;
+    private Counter persistFailCounter;
 
     @PostConstruct
     void start() {
@@ -85,6 +106,12 @@ public class SelfMonitorCollector {
                 .register(meterRegistry);
         this.capturedMeterCounter = Counter.builder("spring.watch.self.monitor.capture.captured")
                 .description("实际采集的 meter 数量")
+                .register(meterRegistry);
+        this.persistedCounter = Counter.builder("spring.watch.self.monitor.persist.ok")
+                .description("自监控指标写入 InfluxDB 成功条数")
+                .register(meterRegistry);
+        this.persistFailCounter = Counter.builder("spring.watch.self.monitor.persist.fail")
+                .description("自监控指标写入 InfluxDB 失败次数")
                 .register(meterRegistry);
         Gauge.builder("spring.watch.collector.kafka.fallback.size", kafkaFallbackQueue, KafkaFallbackQueue::size)
                 .description("Kafka 兜底队列当前堆积")
@@ -118,9 +145,157 @@ public class SelfMonitorCollector {
                 if (ring.size() >= RING_SIZE) ring.pollFirst();
                 ring.addLast(s);
             }
+            persist(s);
         } catch (Throwable t) {
             log.warn("[spring-watch: SelfMonitorCollector 采样异常 - error={}]", t.getMessage());
         }
+    }
+
+    /**
+     * 把一次 sample 扁平化后批量写入 InfluxDB self_metrics 桶。
+     * 与 BatchMetricConsumer 走同一个 WriteApi（共享写缓冲/重试/限速），失败仅打点不抛。
+     */
+    private void persist(Sample s) {
+        List<Point> points;
+        try {
+            points = toPoints(s);
+        } catch (Throwable t) {
+            persistFailCounter.increment();
+            log.warn("[spring-watch: SelfMonitorCollector 转换InfluxDB Point失败 - error={}]", t.getMessage());
+            return;
+        }
+        if (points.isEmpty()) return;
+        try {
+            writeApi.writePoints(points, selfMetricsWriteParameters);
+            persistedCounter.increment(points.size());
+        } catch (Throwable t) {
+            persistFailCounter.increment();
+            log.warn("[spring-watch: SelfMonitorCollector 写InfluxDB失败 - size={}, error={}]",
+                    points.size(), t.getMessage());
+        }
+    }
+
+    /**
+     * 把 Sample 拆成扁平 InfluxDB Point 列表：
+     * - jvm 段 → category=jvm, metric=heap.used / nonHeap.used / ... / gc.count(gc_name) / gc.time_ms(gc_name) ...
+     * - process 段 → category=process, metric=cpu_load / rss_bytes / ...
+     * - meters 段 → category=meter, meter_type=counter|gauge|timer, metric=<原始 meter 名>
+     *
+     * 这样查询时与 MetricQueryService.querySeries 走同一套 Flux 模板（measurement + appid + metric + _field=value），
+     * 减少新增查询路径的心智负担。
+     */
+    private List<Point> toPoints(Sample s) {
+        long tsNs = s.ts * 1_000_000L;
+        List<Point> out = new ArrayList<>(64);
+
+        JvmSnap jvm = s.jvm;
+        if (jvm != null) {
+            if (jvm.heap() != null) {
+                add(out, tsNs, CAT_JVM, "heap.used", jvm.heap().used());
+                add(out, tsNs, CAT_JVM, "heap.committed", jvm.heap().committed());
+                add(out, tsNs, CAT_JVM, "heap.max", jvm.heap().max());
+                add(out, tsNs, CAT_JVM, "heap.init", jvm.heap().init());
+            }
+            if (jvm.nonHeap() != null) {
+                add(out, tsNs, CAT_JVM, "nonHeap.used", jvm.nonHeap().used());
+                add(out, tsNs, CAT_JVM, "nonHeap.committed", jvm.nonHeap().committed());
+                add(out, tsNs, CAT_JVM, "nonHeap.max", jvm.nonHeap().max());
+                add(out, tsNs, CAT_JVM, "nonHeap.init", jvm.nonHeap().init());
+            }
+            if (jvm.metaspace() != null) {
+                add(out, tsNs, CAT_JVM, "metaspace.used", jvm.metaspace().used());
+                add(out, tsNs, CAT_JVM, "metaspace.committed", jvm.metaspace().committed());
+            }
+            if (jvm.threads() != null) {
+                add(out, tsNs, CAT_JVM, "threads.current", jvm.threads().current());
+                add(out, tsNs, CAT_JVM, "threads.daemon", jvm.threads().daemon());
+                add(out, tsNs, CAT_JVM, "threads.peak", jvm.threads().peak());
+                add(out, tsNs, CAT_JVM, "threads.deadlocked", jvm.threads().deadlocked());
+            }
+            if (jvm.classes() != null) {
+                add(out, tsNs, CAT_JVM, "classes.loaded", jvm.classes().loaded());
+                add(out, tsNs, CAT_JVM, "classes.totalLoaded", jvm.classes().totalLoaded());
+                add(out, tsNs, CAT_JVM, "classes.unloaded", jvm.classes().unloaded());
+            }
+            add(out, tsNs, CAT_JVM, "uptime_ms", jvm.uptimeMs());
+            if (jvm.gc() != null) {
+                for (GcSnap g : jvm.gc()) {
+                    if (g == null || g.name() == null) continue;
+                    add(out, tsNs, CAT_JVM, "gc.count", g.count(), Map.of("gc_name", g.name()));
+                    add(out, tsNs, CAT_JVM, "gc.time_ms", g.timeMs(), Map.of("gc_name", g.name()));
+                }
+            }
+        }
+
+        ProcessSnap proc = s.process;
+        if (proc != null) {
+            add(out, tsNs, CAT_PROCESS, "cpu_load", proc.cpuLoad());
+            add(out, tsNs, CAT_PROCESS, "system_cpu_load", proc.systemCpuLoad());
+            add(out, tsNs, CAT_PROCESS, "rss_bytes", proc.rssBytes());
+            add(out, tsNs, CAT_PROCESS, "virtual_bytes", proc.virtualBytes());
+            add(out, tsNs, CAT_PROCESS, "heap_used", proc.heapUsed());
+            add(out, tsNs, CAT_PROCESS, "non_heap_used", proc.nonHeapUsed());
+            add(out, tsNs, CAT_PROCESS, "system_total_bytes", proc.systemTotalBytes());
+            add(out, tsNs, CAT_PROCESS, "system_free_bytes", proc.systemFreeBytes());
+            add(out, tsNs, CAT_PROCESS, "disk_free_bytes", proc.diskFreeBytes());
+            add(out, tsNs, CAT_PROCESS, "cpu_cores", proc.cpuCores());
+        }
+
+        MeterSnap meters = s.meters;
+        if (meters != null) {
+            if (meters.counters() != null) {
+                for (Map.Entry<String, Double> e : meters.counters().entrySet()) {
+                    add(out, tsNs, CAT_METER, e.getKey(), e.getValue(), Map.of("meter_type", "counter"));
+                }
+            }
+            if (meters.gauges() != null) {
+                for (Map.Entry<String, Double> e : meters.gauges().entrySet()) {
+                    add(out, tsNs, CAT_METER, e.getKey(), e.getValue(), Map.of("meter_type", "gauge"));
+                }
+            }
+            if (meters.timers() != null) {
+                for (Map.Entry<String, TimerSnap> e : meters.timers().entrySet()) {
+                    TimerSnap t = e.getValue();
+                    if (t == null) continue;
+                    Point p = Point.measurement(MEASUREMENT)
+                            .addTag("appid", APPID_SELF)
+                            .addTag("category", CAT_METER)
+                            .addTag("meter_type", "timer")
+                            .addTag("metric", e.getKey())
+                            .addField("count", t.count())
+                            .addField("total_ms", t.totalMs())
+                            .addField("max_ms", t.maxMs())
+                            .addField("value", t.totalMs())
+                            .time(tsNs, WritePrecision.NS);
+                    out.add(p);
+                }
+            }
+        }
+        return out;
+    }
+
+    private static void add(List<Point> out, long tsNs, String category, String metric, long value) {
+        if (value < 0) return; // -1 在 RSS/磁盘/非堆 max 等场景代表"不支持"，直接落库会污染图表
+        add(out, tsNs, category, metric, (double) value, Map.of());
+    }
+
+    private static void add(List<Point> out, long tsNs, String category, String metric, double value) {
+        if (Double.isNaN(value) || Double.isInfinite(value)) return;
+        add(out, tsNs, category, metric, value, Map.of());
+    }
+
+    private static void add(List<Point> out, long tsNs, String category, String metric, double value,
+                            Map<String, String> extraTags) {
+        Point p = Point.measurement(MEASUREMENT)
+                .addTag("appid", APPID_SELF)
+                .addTag("category", category)
+                .addTag("metric", metric)
+                .addField("value", value)
+                .time(tsNs, WritePrecision.NS);
+        for (Map.Entry<String, String> e : extraTags.entrySet()) {
+            p.addTag(e.getKey(), e.getValue() == null ? "" : e.getValue());
+        }
+        out.add(p);
     }
 
     public Sample latest() {

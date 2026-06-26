@@ -37,6 +37,9 @@ public class InfluxDBBucketInitializer {
     @Value("${influxdb.log-bucket}")
     private String logBucket;
 
+    @Value("${influxdb.self-metrics-bucket:self_metrics}")
+    private String selfMetricsBucket;
+
     @Value("${influxdb.metrics-downsample-bucket:metrics_5m}")
     private String metricsDownsampleBucket;
 
@@ -48,6 +51,9 @@ public class InfluxDBBucketInitializer {
 
     @Value("${influxdb.retention.log-seconds:604800}")
     private int logRetentionSeconds;
+
+    @Value("${influxdb.retention.self-metrics-seconds:90000}")
+    private int selfMetricsRetentionSeconds;
 
     @Value("${influxdb.retention.downsample-seconds:31536000}")
     private int downsampleRetentionSeconds;
@@ -77,6 +83,7 @@ public class InfluxDBBucketInitializer {
             }
             ensureBucket(metricsBucket, org, metricsRetentionSeconds);
             ensureBucket(logBucket, org, logRetentionSeconds);
+            ensureBucket(selfMetricsBucket, org, selfMetricsRetentionSeconds);
             if (downsampleEnabled) {
                 ensureBucket(metricsDownsampleBucket, org, downsampleRetentionSeconds);
                 ensureBucket(logDownsampleBucket, org, downsampleRetentionSeconds);

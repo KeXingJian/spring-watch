@@ -58,6 +58,7 @@ const searchPage = ref(1)
 const searchPageSize = ref(20)
 const searchTotalPages = ref(0)
 const jumpPage = ref(1)
+const searchError = ref('')
 const showAppHint = ref(false)
 
 const showDetail = ref(false)
@@ -172,7 +173,8 @@ async function doSearch() {
   if (filters.trace) params.traceId = filters.trace
   if (filters.fp) params.fingerprint = filters.fp
   try {
-    const r = await api.get<{ rows: any[]; total: number; page: number; pageSize: number }>('/api/logs/search', params)
+    const r = await api.get<{ rows: any[]; total: number; page: number; pageSize: number; error?: string }>('/api/logs/search', params)
+    searchError.value = r?.error || ''
     searchResults.value = r?.rows || []
     searchTotal.value = r?.total || 0
     searchPage.value = r?.page || 1
@@ -182,7 +184,11 @@ async function doSearch() {
       : 0
     await loadPatterns()
   } catch (e: any) {
-    toast.error('检索失败: ' + e.message)
+    searchError.value = e?.message || String(e)
+    searchResults.value = []
+    searchTotal.value = 0
+    searchTotalPages.value = 0
+    toast.error('检索失败: ' + (e?.message || e))
   }
 }
 
@@ -374,10 +380,17 @@ watch(rangeSec, () => {
         <div class="px-4 py-2.5 border-b border-base-300 flex items-center font-medium text-sm">
           <span>日志检索</span>
           <span class="ml-auto text-xs text-muted font-normal">
-            共 <strong>{{ searchTotal }}</strong> 条(基础 count,最近 {{ rangeLabel }} 内)
-            · 第 <strong>{{ searchPage }}</strong> / {{ searchTotalPages || 1 }} 页
-            · 显示 <strong>{{ searchResults.length }}</strong> 条
+            <template v-if="searchError">查询失败</template>
+            <template v-else>
+              共 <strong>{{ searchTotal }}</strong> 条(基础 count,最近 {{ rangeLabel }} 内)
+              · 第 <strong>{{ searchPage }}</strong> / {{ searchTotalPages || 1 }} 页
+              · 显示 <strong>{{ searchResults.length }}</strong> 条
+            </template>
           </span>
+        </div>
+        <div v-if="searchError" class="px-4 py-2 bg-error/10 text-error text-xs flex items-start gap-2 border-b border-base-300">
+          <span class="font-medium shrink-0">检索出错:</span>
+          <code class="break-all whitespace-pre-wrap">{{ searchError }}</code>
         </div>
         <div class="flex flex-wrap gap-2 p-3 border-b border-base-300 items-center bg-base-200/40">
           <span class="label">关键字:</span>
@@ -417,7 +430,10 @@ watch(rangeSec, () => {
             </thead>
             <tbody>
               <tr v-if="searchResults.length === 0">
-                <td colspan="7"><EmptyState inline>设置过滤条件后点击 [查询]</EmptyState></td>
+                <td colspan="7">
+                  <EmptyState v-if="searchError" inline>查询失败,见上方错误信息</EmptyState>
+                  <EmptyState v-else inline>设置过滤条件后点击 [查询]</EmptyState>
+                </td>
               </tr>
               <tr
                 v-for="(r, idx) in searchResults"

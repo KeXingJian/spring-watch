@@ -1,5 +1,6 @@
 package com.springwatch.service;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.influxdb.client.QueryApi;
 import com.influxdb.query.FluxRecord;
 import com.influxdb.query.FluxTable;
@@ -85,18 +86,7 @@ public class LogQueryService {
         int skip = (safePage - 1) * safeSize;
         try {
             // 公共 filter 段(level/logger/threadName)
-            StringBuilder commonFilter = new StringBuilder();
-            commonFilter.append("  |> filter(fn: (r) => r._measurement == \"").append(MEASUREMENT)
-                    .append("\" and r.appid == \"").append(appid).append("\"");
-            if (level != null && !level.isBlank()) {
-                commonFilter.append(" and r.level == \"").append(escape(level)).append("\"");
-            }
-            if (logger != null && !logger.isBlank()) {
-                commonFilter.append(" and r.logger == \"").append(escape(logger)).append("\"");
-            }
-            if (threadName != null && !threadName.isBlank()) {
-                commonFilter.append(" and r.threadName == \"").append(escape(threadName)).append("\"");
-            }
+            String commonFilter = buildFilter(appid, level, logger, threadName, null, null, null, null);
             // 关键:inKeyword-filter / inTrace-filter / inFp-filter 都在 parseRows 之后做内存过滤,
             // 所以 total 也得用同样的内存过滤逻辑;为了精确,total 由客户端传回的 row 数量得到。
             // 但是 count 必须用 Flux 的 count(),所以这里**只对 base 字段做 count**,
@@ -106,11 +96,18 @@ public class LogQueryService {
                     + "  |> range(start: " + formatInstant(from) + ", stop: " + formatInstant(to) + ")\n"
                     + commonFilter;
 
-            // count 查询
-            String countFlux = commonHead + "\n  |> count()";
-            // 分页查询
+            // count 查询:只数 _field == "message" 的 record 数 = 日志条数(每条日志恰好 1 条 message field)
+            // 否则会算上 level/logger/threadName/throwable/...所有 field,total 远大于真实日志数,
+            // 导致前端分页器 totalPages 虚高。
+            String countFlux = commonHead
+                    + "\n  |> filter(fn: (r) => r._field == \"message\")"
+                    + "\n  |> count()";
+            // 分页查询:pivot 后必须 |> group() 合并所有 table,否则 limit 是 per-table 限
+            // (数据按 host/logger/level/threadName/fingerprint 等 tag 分到 N 个 FluxTable,每个表都限 20,
+            //  N=几十时 rows 就几百~上千,完全失控)
             String pageFlux = commonHead
                     + "\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")"
+                    + "\n  |> group()"
                     + "\n  |> sort(columns: [\"_time\"], desc: true)"
                     + "\n  |> limit(n: " + safeSize + ", offset: " + skip + ")";
 
@@ -136,11 +133,11 @@ public class LogQueryService {
             if (fingerprint != null && !fingerprint.isBlank()) {
                 rows.removeIf(row -> !fingerprint.equals(row.fingerprint));
             }
-            return new SearchResult(rows, totalBase, safePage, safeSize);
+            return new SearchResult(rows, totalBase, safePage, safeSize, null);
         } catch (Exception e) {
             queryFailCounter.increment();
             log.warn("[spring-watch: log search失败 - appid={}, keyword={}, error={}]", appid, keyword, e.getMessage());
-            return new SearchResult(List.of(), 0L, safePage, safeSize);
+            return new SearchResult(List.of(), 0L, safePage, safeSize, e.getMessage());
         } finally {
             searchTimer.record(System.nanoTime() - start, java.util.concurrent.TimeUnit.NANOSECONDS);
         }
@@ -156,7 +153,7 @@ public class LogQueryService {
             StringBuilder sb = new StringBuilder();
             sb.append("from(bucket: \"").append(bucket).append("\")\n");
             sb.append("  |> range(start: ").append(formatInstant(from)).append(", stop: ").append(formatInstant(to)).append(")\n");
-            sb.append("  |> filter(fn: (r) => r._measurement == \"").append(MEASUREMENT).append("\" and r.appid == \"").append(appid).append("\" and r._field == \"message\")\n");
+            sb.append(buildFilter(appid, null, null, null, null, null, null, "message")).append("\n");
             sb.append("  |> keep(columns: [\"level\", \"_value\"])\n");
             sb.append("  |> group(columns: [\"level\"])\n");
             sb.append("  |> count(column: \"_value\")\n");
@@ -193,7 +190,7 @@ public class LogQueryService {
         StringBuilder sb = new StringBuilder();
         sb.append("from(bucket: \"").append(bucket).append("\")\n");
         sb.append("  |> range(start: ").append(formatInstant(from)).append(", stop: ").append(formatInstant(to)).append(")\n");
-        sb.append("  |> filter(fn: (r) => r._measurement == \"").append(MEASUREMENT).append("\" and r.appid == \"").append(appid).append("\" and r._field == \"message\")\n");
+        sb.append(buildFilter(appid, null, null, null, null, null, null, "message")).append("\n");
         sb.append("  |> group(columns: [\"level\"])\n");
         sb.append("  |> aggregateWindow(every: ").append(window).append(", fn: count, createEmpty: false)\n");
         sb.append("  |> keep(columns: [\"_time\", \"_value\", \"level\"])\n");
@@ -234,11 +231,7 @@ public class LogQueryService {
             StringBuilder sb = new StringBuilder();
             sb.append("from(bucket: \"").append(bucket).append("\")\n");
             sb.append("  |> range(start: ").append(formatInstant(from)).append(", stop: ").append(formatInstant(to)).append(")\n");
-            sb.append("  |> filter(fn: (r) => r._measurement == \"").append(MEASUREMENT).append("\" and r.appid == \"").append(appid).append("\" and r._field == \"message\"");
-            if (level != null && !level.isBlank()) {
-                sb.append(" and r.level == \"").append(escape(level)).append("\"");
-            }
-            sb.append(")\n");
+            sb.append(buildFilter(appid, level, null, null, null, null, null, "message")).append("\n");
             sb.append("  |> group(columns: [\"fingerprint\"])\n");
             sb.append("  |> count()\n");
             sb.append("  |> sort(columns: [\"_value\"], desc: true)\n");
@@ -290,8 +283,7 @@ public class LogQueryService {
             StringBuilder sb = new StringBuilder();
             sb.append("from(bucket: \"").append(bucket).append("\")\n");
             sb.append("  |> range(start: ").append(formatInstant(from)).append(", stop: ").append(formatInstant(to)).append(")\n");
-            sb.append("  |> filter(fn: (r) => r._measurement == \"").append(MEASUREMENT).append("\" and r.appid == \"").append(appid).append("\"\n");
-            sb.append("                    and r.fingerprint == \"").append(escape(fingerprint)).append("\")\n");
+            sb.append(buildFilter(appid, null, null, null, fingerprint, null, null, null)).append("\n");
             sb.append("  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n");
             sb.append("  |> sort(columns: [\"_time\"], desc: true)\n");
             sb.append("  |> limit(n: 1)\n");
@@ -327,11 +319,7 @@ public class LogQueryService {
             StringBuilder sb = new StringBuilder();
             sb.append("from(bucket: \"").append(bucket).append("\")\n");
             sb.append("  |> range(start: -24h)\n");
-            sb.append("  |> filter(fn: (r) => r._measurement == \"").append(MEASUREMENT).append("\" and r._field == \"message\"\n");
-            sb.append("                    and r.traceId == \"").append(escape(traceId)).append("\"\n");
-            if (appid != null) {
-                sb.append("                    and r.appid == \"").append(appid).append("\"\n");
-            }
+            sb.append(buildFilter(appid, null, null, null, null, traceId, null, "message")).append("\n");
             sb.append("  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n");
             sb.append("  |> sort(columns: [\"_time\"])\n");
             sb.append("  |> limit(n: 200)\n");
@@ -360,17 +348,7 @@ public class LogQueryService {
             StringBuilder sb = new StringBuilder();
             sb.append("from(bucket: \"").append(bucket).append("\")\n");
             sb.append("  |> range(start: ").append(formatInstant(from)).append(", stop: ").append(formatInstant(to)).append(")\n");
-            sb.append("  |> filter(fn: (r) => r._measurement == \"").append(MEASUREMENT).append("\" and r.appid == \"").append(appid).append("\" and r._field == \"message\"");
-            if (threadName != null && !threadName.isBlank()) {
-                sb.append(" and r.threadName == \"").append(escape(threadName)).append("\"");
-            }
-            if (logger != null && !logger.isBlank()) {
-                sb.append(" and r.logger == \"").append(escape(logger)).append("\"");
-            }
-            if (host != null && !host.isBlank()) {
-                sb.append(" and r.host == \"").append(escape(host)).append("\"");
-            }
-            sb.append(")\n");
+            sb.append(buildFilter(appid, null, logger, threadName, null, null, host, "message")).append("\n");
             sb.append("  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n");
             sb.append("  |> sort(columns: [\"_time\"])\n");
             sb.append("  |> limit(n: ").append(limit <= 0 ? 100 : limit).append(")\n");
@@ -429,8 +407,7 @@ public class LogQueryService {
         StringBuilder sb = new StringBuilder();
         sb.append("from(bucket: \"").append(bucket).append("\")\n");
         sb.append("  |> range(start: -24h)\n");
-        sb.append("  |> filter(fn: (r) => r._measurement == \"").append(MEASUREMENT)
-                .append("\" and r.appid == \"").append(appid).append("\" and r._field == \"message\")\n");
+        sb.append(buildFilter(appid, null, null, null, null, null, null, "message")).append("\n");
         sb.append("  |> filter(fn: (r) => ").append(orClause).append(")\n");
         sb.append("  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n");
         sb.append("  |> group(columns: [\"fingerprint\"])\n");
@@ -459,6 +436,31 @@ public class LogQueryService {
     }
 
     /* ============================ helpers ============================ */
+
+    /**
+     * 拼装 Flux filter 管道(带 2 空格缩进,含首尾 `|> filter(fn: (r) => ...)`).
+     * 任意参数为 null/blank 时跳过该条件,避免产生恒真条件,统一由 helper 负责闭合括号,杜绝漏写 `)`。
+     */
+    private String buildFilter(Long appid, String level, String logger, String threadName,
+                                String fingerprint, String traceId, String host, String field) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("  |> filter(fn: (r) => r._measurement == \"").append(MEASUREMENT).append("\"");
+        appendEq(sb, "r.appid", appid == null ? null : appid.toString());
+        appendEq(sb, "r._field", field);
+        appendEq(sb, "r.level", level);
+        appendEq(sb, "r.logger", logger);
+        appendEq(sb, "r.threadName", threadName);
+        appendEq(sb, "r.fingerprint", fingerprint);
+        appendEq(sb, "r.traceId", traceId);
+        appendEq(sb, "r.host", host);
+        sb.append(")");
+        return sb.toString();
+    }
+
+    private static void appendEq(StringBuilder sb, String field, String value) {
+        if (value == null || value.isBlank()) return;
+        sb.append(" and ").append(field).append(" == \"").append(escape(value)).append("\"");
+    }
 
     private List<LogRow> parseRows(List<FluxTable> tables, String keyword) {
         Map<String, LogRow> byTime = new LinkedHashMap<>();
@@ -580,8 +582,10 @@ public class LogQueryService {
     /**
      * search 分页结果。total 是 base count(还没在内存里过 keyword/traceId/fingerprint 过滤的条数),
      * rows 是过完所有过滤后的当页数据。当 keyword/trace/fp 命中 0 条但 base > 0 时,total > 0 但 rows 为空。
+     * error 非空表示查询失败(rows/total 无意义),前端应在空态里展示原因,避免出现"静默 0 条"。
      */
-    public record SearchResult(List<LogRow> rows, long total, int page, int pageSize) {
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public record SearchResult(List<LogRow> rows, long total, int page, int pageSize, String error) {
         public int totalPages() {
             if (pageSize <= 0 || total <= 0) return 0;
             return (int) ((total + pageSize - 1) / pageSize);
