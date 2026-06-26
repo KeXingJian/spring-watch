@@ -9,6 +9,14 @@ spring:
     driver-class-name: org.h2.Driver
     username: sa
     password:
+    hikari:
+      pool-name: mock-test-pool
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 5000
+      idle-timeout: 60000
+      max-lifetime: 600000
+      register-mbeans: true
   sql:
     init:
       mode: always
@@ -22,9 +30,37 @@ logging:
 mock:
   sim:
     enabled: true
-    steady-interval-ms: 1000
-    business-interval-ms: 8000
-    stress-pool-burst-ms: 60000
-    stress-slow-query-ms: 90000
-    log-warn-burst-ms: 120000
-    log-error-burst-ms: 300000
+    steady:
+      interval-ms: 1000
+      batch-min: 8
+      batch-max: 20
+      jdbc-ratio: 0.35
+      http-ratio: 0.5
+      error-ratio: 0.1
+      slow-call-ratio: 0.15
+      slow-call-duration-ms: 800
+      background-slow-threads: 3
+      background-slow-min-ms: 500
+      background-slow-max-ms: 1500
+    business:
+      interval-ms: 3000
+      error-rate: 0.15
+    stress:
+      pool-burst-ms: 20000
+      pool-concurrent: 30
+      pool-hold-seconds: 4
+      pool-burst-waves: 3
+      pool-burst-wave-gap-ms: 500
+      slow-query-ms: 30000
+      slow-query-duration-ms: 3000
+      slow-query-count: 8
+      slow-query-interval-ms: 150
+    log-burst:
+      warn-burst-ms: 60000
+      warn-count: 100
+      warn-duration-ms: 10000
+      error-burst-ms: 180000
+      error-count: 60
+      error-duration-ms: 10000
+      continuous-error-ms: 15000
+      continuous-error-rate: 0.3

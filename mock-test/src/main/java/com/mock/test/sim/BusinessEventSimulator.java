@@ -9,6 +9,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
 import java.util.*;
+import java.util.concurrent.ThreadLocalRandom;
 
 @Slf4j
 @Component
@@ -22,8 +23,11 @@ public class BusinessEventSimulator extends BaseSimulator {
     private final CartService cartService;
     private final JdbcTemplate jdbcTemplate;
 
-    @Value("${mock.sim.business-interval-ms:8000}")
+    @Value("${mock.sim.business.interval-ms:3000}")
     private long intervalMs;
+
+    @Value("${mock.sim.business.error-rate:0.15}")
+    private double errorRate;
 
     public BusinessEventSimulator(OrderService orderService, CartService cartService, JdbcTemplate jdbcTemplate) {
         super("business-event", "biz");
@@ -39,34 +43,37 @@ public class BusinessEventSimulator extends BaseSimulator {
 
     @Override
     protected void tick() {
-        int roll = new Random().nextInt(100);
-        if (roll < 30) {
-            doCreate();
-        } else if (roll < 55) {
-            doPay();
-        } else if (roll < 70) {
-            doShip();
-        } else if (roll < 80) {
-            doComplete();
-        } else if (roll < 85) {
-            doCancel();
-        } else if (roll < 95) {
-            doAddCart();
-        } else {
+        double errR = ThreadLocalRandom.current().nextDouble();
+        if (errR < errorRate) {
             doAnomaly();
+            return;
+        }
+        int roll = ThreadLocalRandom.current().nextInt(100);
+        if (roll < 35) {
+            doCreate();
+        } else if (roll < 60) {
+            doPay();
+        } else if (roll < 75) {
+            doShip();
+        } else if (roll < 85) {
+            doComplete();
+        } else if (roll < 90) {
+            doCancel();
+        } else {
+            doAddCart();
         }
     }
 
     private void doCreate() {
-        long userId = USER_IDS[new Random().nextInt(USER_IDS.length)];
+        long userId = USER_IDS[ThreadLocalRandom.current().nextInt(USER_IDS.length)];
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("userId", userId);
         List<Map<String, Object>> items = new ArrayList<>();
-        int n = 1 + new Random().nextInt(3);
+        int n = 1 + ThreadLocalRandom.current().nextInt(3);
         for (int i = 0; i < n; i++) {
             Map<String, Object> it = new LinkedHashMap<>();
-            it.put("productId", PRODUCT_IDS[new Random().nextInt(PRODUCT_IDS.length)]);
-            it.put("quantity", 1 + new Random().nextInt(3));
+            it.put("productId", PRODUCT_IDS[ThreadLocalRandom.current().nextInt(PRODUCT_IDS.length)]);
+            it.put("quantity", 1 + ThreadLocalRandom.current().nextInt(3));
             items.add(it);
         }
         body.put("items", items);
@@ -88,7 +95,10 @@ public class BusinessEventSimulator extends BaseSimulator {
 
     private void doShip() {
         Long id = pickOrderByStatus("paid");
-        if (id == null) return;
+        if (id == null) {
+            doPay();
+            return;
+        }
         Map<String, Object> r = orderService.shipOrder(id);
         log.info("[kxj: 业务事件] 发货订单 id={} result={}", id,
                 r != null && !r.containsKey("error") ? "ok" : "skip");
@@ -96,7 +106,10 @@ public class BusinessEventSimulator extends BaseSimulator {
 
     private void doComplete() {
         Long id = pickOrderByStatus("shipped");
-        if (id == null) return;
+        if (id == null) {
+            doShip();
+            return;
+        }
         Map<String, Object> r = orderService.completeOrder(id);
         log.info("[kxj: 业务事件] 完成订单 id={} result={}", id,
                 r != null && !r.containsKey("error") ? "ok" : "skip");
@@ -107,33 +120,51 @@ public class BusinessEventSimulator extends BaseSimulator {
         if (id == null) {
             id = pickOrderByStatus("paid");
         }
-        if (id == null) return;
+        if (id == null) {
+            doCreate();
+            return;
+        }
         Map<String, Object> r = orderService.cancelOrder(id);
         log.info("[kxj: 业务事件] 取消订单 id={} result={}", id,
                 r != null && !r.containsKey("error") ? "ok" : "skip");
     }
 
     private void doAddCart() {
-        long userId = USER_IDS[new Random().nextInt(USER_IDS.length)];
-        long productId = PRODUCT_IDS[new Random().nextInt(PRODUCT_IDS.length)];
-        int qty = 1 + new Random().nextInt(5);
+        long userId = USER_IDS[ThreadLocalRandom.current().nextInt(USER_IDS.length)];
+        long productId = PRODUCT_IDS[ThreadLocalRandom.current().nextInt(PRODUCT_IDS.length)];
+        int qty = 1 + ThreadLocalRandom.current().nextInt(5);
         Map<String, Object> r = cartService.addToCart(userId, productId, qty);
         log.info("[kxj: 业务事件] 加购物车 userId={} productId={} qty={} result={}",
                 userId, productId, qty, r != null ? "ok" : "not-found");
     }
 
     private void doAnomaly() {
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("userId", USER_IDS[new Random().nextInt(USER_IDS.length)]);
-        List<Map<String, Object>> items = new ArrayList<>();
-        Map<String, Object> it = new LinkedHashMap<>();
-        it.put("productId", 9999);
-        it.put("quantity", 1);
-        items.add(it);
-        body.put("items", items);
-        Map<String, Object> r = orderService.createOrder(body);
-        log.warn("[kxj: 业务事件-异常路径] 商品不存在 productId=9999 result={}",
-                r.containsKey("error") ? r.get("error") : "unexpected-ok");
+        double r = ThreadLocalRandom.current().nextDouble();
+        if (r < 0.5) {
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("userId", USER_IDS[ThreadLocalRandom.current().nextInt(USER_IDS.length)]);
+            List<Map<String, Object>> items = new ArrayList<>();
+            Map<String, Object> it = new LinkedHashMap<>();
+            it.put("productId", 9999);
+            it.put("quantity", 1);
+            items.add(it);
+            body.put("items", items);
+            Map<String, Object> res = orderService.createOrder(body);
+            log.warn("[kxj: 业务事件-异常路径] 商品不存在 productId=9999 result={}",
+                    res.containsKey("error") ? res.get("error") : "unexpected-ok");
+        } else if (r < 0.85) {
+            Map<String, Object> res = orderService.payOrder(9999L);
+            log.warn("[kxj: 业务事件-异常路径] 支付不存在订单 id=9999 result={}",
+                    res != null && res.containsKey("error") ? res.get("error") : "unexpected");
+        } else {
+            long userId = 9999L;
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("userId", userId);
+            body.put("items", List.of());
+            Map<String, Object> res = orderService.createOrder(body);
+            log.warn("[kxj: 业务事件-异常路径] 用户不存在 userId=9999 result={}",
+                    res.containsKey("error") ? res.get("error") : "unexpected-ok");
+        }
     }
 
     private Long pickOrderByStatus(String status) {

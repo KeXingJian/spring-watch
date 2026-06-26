@@ -37,10 +37,12 @@ public abstract class BaseSimulator {
         exec.scheduleAtFixedRate(this::safeTick, ms, ms, TimeUnit.MILLISECONDS);
         log.info("[kxj: Simulator启动] name={} interval={}ms thread=sim-{}",
                 name, ms, threadName);
+        onStart();
     }
 
     @PreDestroy
     void stop() {
+        onStop();
         if (exec != null) {
             log.info("[kxj: Simulator关闭] name={}", name);
             exec.shutdownNow();
@@ -50,6 +52,12 @@ public abstract class BaseSimulator {
     protected abstract long resolveIntervalMs();
 
     protected abstract void tick();
+
+    protected void onStart() {
+    }
+
+    protected void onStop() {
+    }
 
     private void safeTick() {
         try {
