@@ -1,6 +1,10 @@
 package com.springwatch.ingest;
 
 import com.springwatch.model.event.LogEvent;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import jakarta.annotation.PostConstruct;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -12,7 +16,10 @@ import java.util.regex.Pattern;
 
 @Slf4j
 @Component
+@RequiredArgsConstructor
 public class LogFingerprinter {
+
+    private final MeterRegistry meterRegistry;
 
     private static final Pattern NUMBER = Pattern.compile("\\b\\d+\\b");
     private static final Pattern UUID = Pattern.compile(
@@ -22,6 +29,19 @@ public class LogFingerprinter {
     private static final Pattern HEX_LONG = Pattern.compile("\\b0x[0-9a-fA-F]+\\b");
 
     private static final int PATTERN_MAX_LEN = 200;
+
+    /**
+     * M4-3: SHA-1 MessageDigest 复用次数计数,验证 P1-4 的实际效果。
+     * 1 kHz 摄入时,该计数应稳定以 ~1000/s 增长。
+     */
+    private Counter digestReusedCounter;
+
+    @PostConstruct
+    void initMetrics() {
+        digestReusedCounter = Counter.builder("spring.watch.ingest.log.fingerprint.digest.reused")
+                .description("LogFingerprinter SHA-1 MessageDigest 复用次数(P1-4 优化效果)")
+                .register(meterRegistry);
+    }
 
     /**
      * kxj: 指纹生成-message+throwable首行归一化后SHA-1
@@ -83,6 +103,7 @@ public class LogFingerprinter {
     private String sha1Hex(String input) {
         MessageDigest md = SHA1.get();
         md.reset();
+        digestReusedCounter.increment();
         byte[] bytes = md.digest(input.getBytes(StandardCharsets.UTF_8));
         return HexFormat.of().formatHex(bytes);
     }

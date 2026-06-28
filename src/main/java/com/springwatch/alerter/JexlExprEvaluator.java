@@ -1,9 +1,11 @@
 package com.springwatch.alerter;
 
 import com.springwatch.model.event.MetricEvent;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.jexl3.JexlContext;
 import org.apache.commons.jexl3.JexlEngine;
 import org.apache.commons.jexl3.JexlException;
 import org.apache.commons.jexl3.JexlExpression;
@@ -16,12 +18,26 @@ import org.springframework.stereotype.Component;
 public class JexlExprEvaluator {
 
     private final JexlEngine jexlEngine;
+    private final MeterRegistry meterRegistry;
 
     /**
      * P1-3: 复用 MapContext，避免每次评估分配新的 Map+底层数组。
      * 告警评估通常在虚拟线程或固定线程上执行，ThreadLocal 不会跨线程泄漏。
      */
     private static final ThreadLocal<MapContext> CTX = ThreadLocal.withInitial(MapContext::new);
+
+    /**
+     * M4-2: 复用次数计数,验证 P1-3 的实际效果。
+     * 评估总次数 = contextReused(复用) + newInstance(未复用,理论上为 0)。
+     */
+    private Counter contextReusedCounter;
+
+    @PostConstruct
+    void initMetrics() {
+        contextReusedCounter = Counter.builder("spring.watch.alerter.jexl.context.reused")
+                .description("JEXL MapContext 复用次数(P1-3 优化效果)")
+                .register(meterRegistry);
+    }
 
     public boolean evaluate(String expression, MetricEvent event) {
         if (expression == null || expression.isBlank() || event == null) {
@@ -32,6 +48,7 @@ public class JexlExprEvaluator {
             JexlExpression expr = jexlEngine.createExpression(expression);
             MapContext ctx = CTX.get();
             ctx.clear();
+            contextReusedCounter.increment();
             ctx.set("value", event.getValue());
             ctx.set("metric", event.getMetricName());
             ctx.set("__app__", event.getAppid() != null ? String.valueOf(event.getAppid()) : "");

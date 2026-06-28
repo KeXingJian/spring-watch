@@ -40,8 +40,8 @@ const apps = computed(() => appStore.apps)
 
 async function loadApps() {
   try {
-    const list = await api.page<any>('/api/apps/active')
-    appStore.setApps(list || [])
+    const res = await api.pageFull<any>('/api/apps/active', { size: 200 })
+    appStore.setApps(res.items || [])
   } catch {
     /* ignore */
   }
@@ -49,7 +49,8 @@ async function loadApps() {
 
 async function loadRules() {
   try {
-    rules.value = await api.page<any>('/api/alert/rules')
+    const res = await api.pageFull<any>('/api/alert/rules', { size: 200 })
+    rules.value = res.items || []
   } catch (e: any) {
     toast.error('加载失败: ' + e.message)
   }

@@ -49,7 +49,7 @@ public class AgentMetricsCollector {
                     kafkaProducerBridge.sendMetric(event);
                     metricCount[0]++;
                 });
-        log.info("[spring-watch: Agent拉取成功 - appid={}, app={}, url={}, metrics={}]",
+        log.trace("[spring-watch: Agent拉取成功 - appid={}, app={}, url={}, metrics={}]",
                 target.appid(), target.appName(), metricsUrl, metricCount[0]);
     }
 

@@ -28,7 +28,7 @@ public class SelfMetricQueryService {
     private static final String APPID_SELF = "self";
 
     private static final java.util.Set<String> EXCLUDED_TAG_KEYS = java.util.Set.of(
-            "appid", "category", "metric", "meter_type", "gc_name",
+            "appid", "category", "metric", "meter_type",
             "_field", "_measurement", "_start", "_stop", "_value", "_time", "result", "table", "host"
     );
 

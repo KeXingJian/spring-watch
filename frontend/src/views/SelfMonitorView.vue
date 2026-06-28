@@ -70,7 +70,7 @@ async function fetchSeries(opts: FetchOpts): Promise<Point[]> {
   }
 }
 
-async function fetchSeriesMulti(opts: FetchOpts): Promise<Point[][]> {
+async function fetchSeriesMulti(opts: FetchOpts): Promise<LineSeriesItem[]> {
   const params: Record<string, unknown> = {
     category: opts.category,
     metric: opts.metric,
@@ -84,9 +84,10 @@ async function fetchSeriesMulti(opts: FetchOpts): Promise<Point[][]> {
   try {
     const resp: any = await api.get('/api/self/series', params)
     const series = resp?.series || []
-    return series.map((s: any) =>
-      (s.points || []).map((p: any) => [new Date(p.t).getTime(), p.v == null ? null : Number(p.v)])
-    )
+    return series.map((s: any) => ({
+      name: s.name || opts.metric,
+      points: (s.points || []).map((p: any) => [new Date(p.t).getTime(), p.v == null ? null : Number(p.v)])
+    }))
   } catch {
     return []
   }
@@ -122,6 +123,9 @@ const cardRetry = ref<number | null>(null)
 const cardKafka = ref<number | null>(null)
 const cardThreads = ref<number | null>(null)
 const cardApps = ref<number | null>(null)
+/** M4-4: 新增两张失败/降级卡 */
+const cardBodyRejected = ref<number | null>(null)
+const cardKafkaRejected = ref<number | null>(null)
 
 const trafficChart = ref<LineSeriesItem[]>([])
 const dedupChart = ref<LineSeriesItem[]>([])
@@ -133,6 +137,7 @@ const logQBar = ref<{ categories: string[]; series: BarSeriesItem[] }>({ categor
 const httpOutcomeChart = ref<LineSeriesItem[]>([])
 const httpLatChart = ref<LineSeriesItem[]>([])
 const jvmMemChart = ref<LineSeriesItem[]>([])
+const jvmPoolChart = ref<LineSeriesItem[]>([])
 const jvmThreadsChart = ref<LineSeriesItem[]>([])
 const jvmGcChart = ref<LineSeriesItem[]>([])
 const procCpuChart = ref<LineSeriesItem[]>([])
@@ -175,6 +180,11 @@ function gaugeVal(name: string) {
   return (realtime.value.meters.gauges || {})[name]
 }
 
+function counterVal(name: string) {
+  if (!realtime.value || !realtime.value.meters) return null
+  return (realtime.value.meters.counters || {})[name]
+}
+
 function groupOf(name: string) {
   if (name.startsWith('spring.watch.consumer.metric')) return '指标采集'
   if (name.startsWith('spring.watch.consumer.log')) return '日志采集'
@@ -183,14 +193,17 @@ function groupOf(name: string) {
   if (name.startsWith('spring.watch.log.query')) return '日志查询'
   if (name.startsWith('spring.watch.aggregator.log')) return '日志聚合'
   if (name.startsWith('spring.watch.ingest.log.dedup')) return '日志去重'
+  if (name.startsWith('spring.watch.ingest.log.fingerprint')) return '日志指纹'
   if (name.startsWith('spring.watch.collector.http')) return 'HTTP 抓取'
   if (name.startsWith('spring.watch.collector.retry')) return '重投队列'
   if (name.startsWith('spring.watch.collector.kafka')) return 'Kafka 兜底'
   if (name.startsWith('spring.watch.collector.host')) return '主机限流'
+  if (name.startsWith('spring.watch.alerter.jexl')) return '告警评估'
+  if (name.startsWith('spring.watch.alert.history')) return '告警历史'
   return '其他'
 }
 function groupOrder() {
-  return ['指标采集', '日志采集', 'DLQ', '指标查询', '日志查询', '日志聚合', '日志去重', 'HTTP 抓取', '重投队列', 'Kafka 兜底', '主机限流', '其他']
+  return ['指标采集', '日志采集', 'DLQ', '指标查询', '日志查询', '日志聚合', '日志去重', '日志指纹', 'HTTP 抓取', '重投队列', 'Kafka 兜底', '主机限流', '告警评估', '告警历史', '其他']
 }
 
 function renderCards() {
@@ -217,6 +230,9 @@ function renderCards() {
   cardRetry.value = gaugeVal('spring.watch.collector.retry.queue.size')
   kv.retrySub = '已注册主机 ' + fmtNum(gaugeVal('spring.watch.collector.host_throttler.active'))
   cardKafka.value = gaugeVal('spring.watch.collector.kafka.fallback.size')
+  /** M4-4: body.rejected 与 kafka.fallback.rejected 都是 Counter,realtime snapshot 给的是 .count() */
+  cardBodyRejected.value = counterVal('spring.watch.collector.http.body.rejected')
+  cardKafkaRejected.value = counterVal('spring.watch.kafka.fallback.rejected')
   const th = jvm.threads || {}
   cardThreads.value = th.current == null ? null : th.current
   kv.threadsSub = '守护 ' + (th.daemon || 0) + ' / 峰值 ' + (th.peak || 0)
@@ -289,6 +305,7 @@ async function renderAllRange() {
   httpOutcomeChart.value = empty
   httpLatChart.value = empty
   jvmMemChart.value = empty
+  jvmPoolChart.value = empty
   jvmThreadsChart.value = empty
   jvmGcChart.value = empty
   procCpuChart.value = empty
@@ -312,10 +329,14 @@ async function renderAllRange() {
     deduped, alert_cand,
     parse_fail_m, write_fail_m, parse_fail_l, write_fail_l, persist_fail_dlq,
     keep, drop, flush, flush_fail,
-    http_ok, http_fail, http_timeout, http_non2xx,
+    http_ok, http_fail, http_timeout, http_non2xx, http_body_rej,
     http_calls, retry_enq, retry_drop,
     write_calls_m, write_calls_l,
+    kafka_rej,
+    metric_q_latest, metric_q_series, metric_q_grouped, metric_q_histogram, metric_q_fail,
+    log_q_search, log_q_patterns, log_q_levels, log_q_trace, log_q_context, log_q_dedup_top, log_q_fail,
     jvm_heap, jvm_meta, jvm_nonheap,
+    jvm_pool_used,
     jvm_thr_cur, jvm_thr_daemon, jvm_cls_loaded,
     proc_cpu, proc_sys_cpu,
     proc_rss, proc_heap, proc_nonheap, proc_virt,
@@ -340,14 +361,37 @@ async function renderAllRange() {
     safe(fetchSeries(m('meter', 'spring.watch.collector.http.failure', 'rate', 'counter')), []),
     safe(fetchSeries(m('meter', 'spring.watch.collector.http.timeout', 'rate', 'counter')), []),
     safe(fetchSeries(m('meter', 'spring.watch.collector.http.non2xx', 'rate', 'counter')), []),
+    safe(fetchSeries(m('meter', 'spring.watch.collector.http.body.rejected', 'rate', 'counter')), []),
     safe(fetchSeries({ ...m('meter', 'spring.watch.collector.http.request', 'rate', 'timer'), field: 'count' }), []),
     safe(fetchSeries(m('meter', 'spring.watch.collector.retry.enqueued', 'rate', 'counter')), []),
     safe(fetchSeries(m('meter', 'spring.watch.collector.retry.dropped', 'rate', 'counter')), []),
     safe(fetchSeries({ ...m('meter', 'spring.watch.consumer.metric.write', 'rate', 'timer'), field: 'count' }), []),
     safe(fetchSeries({ ...m('meter', 'spring.watch.consumer.log.write', 'rate', 'timer'), field: 'count' }), []),
+    safe(fetchSeries(m('meter', 'spring.watch.kafka.fallback.rejected', 'rate', 'counter')), []),
+    safe(fetchSeries({ ...m('meter', 'spring.watch.metric.query.latest', 'rate', 'timer'), field: 'count' }), []),
+    safe(fetchSeries({ ...m('meter', 'spring.watch.metric.query.series', 'rate', 'timer'), field: 'count' }), []),
+    safe(fetchSeries({ ...m('meter', 'spring.watch.metric.query.grouped', 'rate', 'timer'), field: 'count' }), []),
+    safe(fetchSeries({ ...m('meter', 'spring.watch.metric.query.histogram', 'rate', 'timer'), field: 'count' }), []),
+    safe(fetchSeries(m('meter', 'spring.watch.metric.query.fail', 'rate', 'counter')), []),
+    safe(fetchSeries(m('meter', 'spring.watch.log.query.search', 'rate', 'counter')), []),
+    safe(fetchSeries(m('meter', 'spring.watch.log.query.patterns', 'rate', 'counter')), []),
+    safe(fetchSeries(m('meter', 'spring.watch.log.query.levels', 'rate', 'counter')), []),
+    safe(fetchSeries(m('meter', 'spring.watch.log.query.trace', 'rate', 'counter')), []),
+    safe(fetchSeries(m('meter', 'spring.watch.log.query.context', 'rate', 'counter')), []),
+    safe(fetchSeries(m('meter', 'spring.watch.log.query.dedup_top', 'rate', 'counter')), []),
+    safe(fetchSeries(m('meter', 'spring.watch.log.query.fail', 'rate', 'counter')), []),
     safe(fetchSeries(m('jvm', 'heap.used', 'last')).then((p) => p.map(toMb)), []),
     safe(fetchSeries(m('jvm', 'metaspace.used', 'last')).then((p) => p.map(toMb)), []),
     safe(fetchSeries(m('jvm', 'nonHeap.used', 'last')).then((p) => p.map(toMb)), []),
+    safe(
+      fetchSeriesMulti(m('jvm', 'pool.used', 'last')).then((arr) =>
+        arr.map((s) => ({
+          name: s.name,
+          points: (s.points as Point[]).map(toMb)
+        }))
+      ),
+      []
+    ),
     safe(fetchSeries(m('jvm', 'threads.current', 'last')), []),
     safe(fetchSeries(m('jvm', 'threads.daemon', 'last')), []),
     safe(fetchSeries(m('jvm', 'classes.loaded', 'last')), []),
@@ -375,7 +419,9 @@ async function renderAllRange() {
     { name: '指标 write_fail', points: pack(write_fail_m) },
     { name: '日志 parse_fail', points: pack(parse_fail_l) },
     { name: '日志 write_fail', points: pack(write_fail_l) },
-    { name: 'DLQ persist_fail', points: pack(persist_fail_dlq) }
+    { name: 'DLQ persist_fail', points: pack(persist_fail_dlq) },
+    { name: 'HTTP body 超限', points: pack(http_body_rej) },
+    { name: 'Kafka 兜底被拒', points: pack(kafka_rej) }
   ]
   // Timer mean latency 服务端难精确表达：用 count 速率（calls/s）当"忙碌度"占位。
   // 若要看 ms 级延迟,看 /api/self/realtime 的 realtime snapshot（卡里有 max/total/count）。
@@ -405,6 +451,10 @@ async function renderAllRange() {
     { name: 'Metaspace MB', points: pack(jvm_meta) },
     { name: '非堆 MB', points: pack(jvm_nonheap) }
   ]
+  jvmPoolChart.value = (jvm_pool_used || []).map((s) => ({
+    name: poolLabel(s.name),
+    points: s.points
+  }))
   jvmThreadsChart.value = [
     { name: '线程数', points: pack(jvm_thr_cur) },
     { name: '守护线程', points: pack(jvm_thr_daemon) },
@@ -422,11 +472,20 @@ async function renderAllRange() {
   ]
 
   // GC: 多个 gc_name tag 分裂成多条 series，rate = derivative of time_ms
-  jvmGcChart.value = (gc_time_multi || []).map((points) => ({
-    name: 'GC ms/s',
-    points: points as [number, number | null][],
+  jvmGcChart.value = (gc_time_multi || []).map((s) => ({
+    name: gcLabel(s.name),
+    points: s.points,
     area: true
   }))
+
+  metricQBar.value = buildQpsBar(
+    ['最新', '时序', '分组', '直方图', '失败'],
+    [metric_q_latest, metric_q_series, metric_q_grouped, metric_q_histogram, metric_q_fail]
+  )
+  logQBar.value = buildQpsBar(
+    ['搜索', '模式', '级别', '链路', '上下文', '去重 Top', '失败'],
+    [log_q_search, log_q_patterns, log_q_levels, log_q_trace, log_q_context, log_q_dedup_top, log_q_fail]
+  )
 }
 
 /** Timer 指标的 mean 延迟近似：服务端难精确表达（需要 ratio of derivatives），
@@ -437,6 +496,24 @@ function pack(points: Point[]): [number, number | null][] {
   return points.map(([t, v]) => [t, v])
 }
 
+/**
+ * 从 series 名（形如 `gc.time_ms{gc_name=G1 Young Generation}`）里抽出 gc_name 作为图例。
+ * 抽不到就原样返回，避免把内部 metric 名直接抛到 UI 上。
+ */
+function gcLabel(seriesName: string): string {
+  const m = /\{gc_name=([^}]*)\}/.exec(seriesName || '')
+  return m ? m[1] : seriesName
+}
+
+/**
+ * 从 series 名（形如 `pool.used{pool_name=Eden Space}`）里抽出 pool_name 作为图例。
+ * 抽不到就原样返回。
+ */
+function poolLabel(seriesName: string): string {
+  const m = /\{pool_name=([^}]*)\}/.exec(seriesName || '')
+  return m ? m[1] : seriesName
+}
+
 function toMb([t, v]: Point): Point {
   return [t, v == null ? null : v / 1048576]
 }
@@ -445,14 +522,42 @@ function toPercent([t, v]: Point): Point {
   return [t, v == null ? null : v * 100]
 }
 
+/**
+ * 把一段 rate 时序压成"窗口平均 QPS"：取所有非 null 点的算术平均。
+ * 空序列返回 0，方便 BarSeriesItem.data 全部为数值。
+ */
+function meanRate(points: Point[]): number {
+  let sum = 0
+  let n = 0
+  for (const [, v] of points) {
+    if (v == null || isNaN(v as number)) continue
+    sum += v as number
+    n++
+  }
+  return n === 0 ? 0 : sum / n
+}
+
+/**
+ * 把多个 rate 时序列成"按调用类型分桶"的横向柱图数据。
+ * 所有桶全为 0 时返回空结构,触发 EmptyState,避免空柱图占位。
+ */
+function buildQpsBar(labels: string[], series: Point[][]): { categories: string[]; series: BarSeriesItem[] } {
+  const data = series.map(meanRate)
+  if (data.every((v) => v === 0)) return { categories: [], series: [] }
+  return {
+    categories: labels,
+    series: [{ name: 'QPS', data }]
+  }
+}
+
 async function pollRealtime() {
   try {
     const resp = await api.get<any>('/api/self/realtime')
     realtime.value = resp?.sample || null
     if (appCount.value == null) {
       try {
-        const apps = await api.page<any>('/api/apps/active')
-        appCount.value = (apps || []).length
+        const res = await api.pageFull<any>('/api/apps/active', { size: 1 })
+        appCount.value = res.total
       } catch {
         appCount.value = 0
       }
@@ -556,6 +661,8 @@ watch(pollSec, () => {
       <div class="metric-card"><div class="title">活跃 HTTP 抓取</div><div><span class="value">{{ cardActive != null ? fmtNum(cardActive) : '-' }}</span><span class="unit">请求</span></div><div class="sub">实时并发数</div></div>
       <div class="metric-card"><div class="title">重试队列</div><div><span class="value">{{ cardRetry != null ? fmtNum(cardRetry) : '-' }}</span><span class="unit">条</span></div><div class="sub">{{ kv.retrySub }}</div></div>
       <div class="metric-card"><div class="title">Kafka 兜底队列</div><div><span class="value">{{ cardKafka != null ? fmtNum(cardKafka) : '-' }}</span><span class="unit">条</span></div><div class="sub">Kafka 发送失败时本地堆积</div></div>
+      <div class="metric-card"><div class="title">Kafka 兜底被拒</div><div><span :class="['value', cardKafkaRejected && cardKafkaRejected > 0 ? 'danger' : '']">{{ cardKafkaRejected != null ? fmtNum(cardKafkaRejected) : '-' }}</span><span class="unit">次</span></div><div class="sub">队列满后丢弃的累计数</div></div>
+      <div class="metric-card"><div class="title">Agent 响应体超限</div><div><span :class="['value', cardBodyRejected && cardBodyRejected > 0 ? 'danger' : '']">{{ cardBodyRejected != null ? fmtNum(cardBodyRejected) : '-' }}</span><span class="unit">次</span></div><div class="sub">&gt; 4MB 被拒收的累计数</div></div>
       <div class="metric-card"><div class="title">线程数</div><div><span class="value">{{ cardThreads != null ? fmtNum(cardThreads) : '-' }}</span></div><div class="sub">{{ kv.threadsSub }}</div></div>
     </div>
 
@@ -591,6 +698,7 @@ watch(pollSec, () => {
     <div class="section-title">6 · JVM 运行时</div>
     <div class="chart-row">
       <div class="chart-panel"><div class="panel-head">内存分布<span class="tag">MB</span></div><div class="panel-body has-chart"><Chart v-if="jvmMemChart.length" type="line" :series="jvmMemChart" :area="true" y-axis-name="MB" /><EmptyState v-else inline>暂无数据</EmptyState></div></div>
+      <div class="chart-panel"><div class="panel-head">堆各区已用<span class="tag">按 pool_name 分线,MB</span></div><div class="panel-body has-chart"><Chart v-if="jvmPoolChart.length" type="line" :series="jvmPoolChart" y-axis-name="MB" /><EmptyState v-else inline>暂无数据</EmptyState></div></div>
       <div class="chart-panel"><div class="panel-head">线程数与类加载<span class="tag">个</span></div><div class="panel-body has-chart"><Chart v-if="jvmThreadsChart.length" type="line" :series="jvmThreadsChart" y-axis-name="个" /><EmptyState v-else inline>暂无数据</EmptyState></div></div>
     </div>
     <div class="chart-row full">

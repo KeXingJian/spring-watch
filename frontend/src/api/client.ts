@@ -4,6 +4,14 @@ export interface ApiResp<T = unknown> {
   data: T
 }
 
+export interface PageResult<T> {
+  items: T[]
+  total: number
+  page: number
+  size: number
+  totalPages: number
+}
+
 function buildQs(params?: Record<string, unknown>): string {
   if (!params) return ''
   const pairs: string[] = []
@@ -76,6 +84,40 @@ export const api = {
       return []
     } catch {
       return []
+    }
+  },
+  /**
+   * 分页接口,返回完整分页元数据(items / total / page / size / totalPages)。
+   * 兼容后端 Spring Data Web 三种响应形态:
+   *  1) 平铺 Page(默认模式): { content, totalElements, totalPages, number, size }
+   *  2) VIA_DTO 模式(Spring Data 3.x+): { content, page: { totalElements, totalPages, number, size } }
+   *  3) ApiResponse 包裹以上任一: { code, data: <Page|PagedModel> }
+   * 失败时回退到空分页。
+   */
+  async pageFull<T = unknown>(
+    url: string,
+    params?: Record<string, unknown>
+  ): Promise<PageResult<T>> {
+    const empty: PageResult<T> = { items: [], total: 0, page: 0, size: 0, totalPages: 0 }
+    try {
+      const r = await request<any>(url, 'GET', undefined, params)
+      if (r == null) return empty
+      const unwrapped = Array.isArray(r?.content)
+        ? r
+        : Array.isArray(r?.data?.content)
+        ? r.data
+        : null
+      if (!unwrapped || !Array.isArray(unwrapped.content)) return empty
+      const meta = unwrapped.page ?? unwrapped
+      return {
+        items: (unwrapped.content ?? []) as T[],
+        total: Number(meta.totalElements ?? meta.total ?? 0),
+        page: Number(meta.number ?? meta.page ?? 0),
+        size: Number(meta.size ?? 0),
+        totalPages: Number(meta.totalPages ?? 0)
+      }
+    } catch {
+      return empty
     }
   },
   post<T = unknown>(url: string, body?: unknown, params?: Record<string, unknown>): Promise<T> {

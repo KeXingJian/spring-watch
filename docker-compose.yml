@@ -32,6 +32,9 @@ services:
   influxdb:
     image: influxdb:2.7
     container_name: sc-influxdb
+    mem_limit: 1g
+    mem_reservation: 512m
+    memswap_limit: 1g
     ports:
       - "8086:8086"
     environment:
@@ -41,8 +44,10 @@ services:
       DOCKER_INFLUXDB_INIT_ORG: spring-watch
       DOCKER_INFLUXDB_INIT_BUCKET: metrics
       DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: sw-token-2024
+      INFLUXD_CONFIG_PATH: /etc/influxdb2/config.toml
     volumes:
       - .data/influxdb_data:/var/lib/influxdb2
+      - ./influxdb.conf:/etc/influxdb2/config.toml:ro
     healthcheck:
       test: ["CMD", "influx", "ping"]
       interval: 10s

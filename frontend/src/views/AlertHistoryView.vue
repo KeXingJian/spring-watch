@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { api } from '@/api/client'
 import { useToast } from '@/utils/toast'
 import { formatTime } from '@/utils/format'
@@ -19,6 +19,33 @@ const statusFilter = ref('')
 const allRows = ref<any[]>([])
 const expanded = ref<Record<number, boolean>>({})
 
+/** M4-5: 总行数 + 最近一次清理行数 / 时间,从 /api/self/realtime 拉 */
+const totalRows = ref<number | null>(null)
+const lastPurgedRows = ref<number | null>(null)
+const lastPurgedAt = ref<string | null>(null)
+let pollTimer: number | null = null
+
+function gaugeVal(realtime: any, name: string): number | null {
+  if (!realtime || !realtime.meters) return null
+  return (realtime.meters.gauges || {})[name] ?? null
+}
+
+async function loadRetention() {
+  try {
+    const rt: any = await api.get('/api/self/realtime')
+    totalRows.value = gaugeVal(rt, 'spring.watch.alert.history.total_rows')
+    lastPurgedRows.value = gaugeVal(rt, 'spring.watch.alert.history.purged.last_rows')
+    const epoch = gaugeVal(rt, 'spring.watch.alert.history.purged.last_at_epoch')
+    if (epoch && epoch > 0) {
+      lastPurgedAt.value = new Date(epoch).toISOString()
+    } else {
+      lastPurgedAt.value = null
+    }
+  } catch {
+    /* 静默:列表页能加载就够,自监控读取失败不影响主流程 */
+  }
+}
+
 const filtered = computed(() => {
   return allRows.value.filter((r) => {
     if (levelFilter.value && (r.alertLevel || 'warning') !== levelFilter.value) return false
@@ -31,7 +58,8 @@ const filtered = computed(() => {
 
 async function loadAll() {
   try {
-    allRows.value = await api.page<any>('/api/alert/history', { limit: 500 })
+    const res = await api.pageFull<any>('/api/alert/history', { size: 200 })
+    allRows.value = res.items || []
   } catch (e: any) {
     toast.error('加载失败: ' + e.message)
   }
@@ -45,7 +73,24 @@ function appLabel(r: any) {
   return r.app ? `${r.app.appName} (${r.app.appid})` : '-'
 }
 
-onMounted(loadAll)
+function formatPurgedAt(iso: string | null): string {
+  if (!iso) return '尚未触发清理'
+  const d = new Date(iso)
+  if (isNaN(d.getTime()) || d.getTime() < 1000) return '尚未触发清理'
+  return formatTime(iso) + ' (' + d.toLocaleString() + ')'
+}
+
+onMounted(() => {
+  loadAll()
+  loadRetention()
+  pollTimer = window.setInterval(loadRetention, 30_000)
+})
+onBeforeUnmount(() => {
+  if (pollTimer != null) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
+})
 </script>
 
 <template>
@@ -71,6 +116,25 @@ onMounted(loadAll)
         <svg viewBox="0 0 20 20" fill="currentColor" class="w-4 h-4"><path fill-rule="evenodd" d="M4 2a1 1 0 0 1 1 1v2.101a7.002 7.002 0 0 1 11.601 2.566 1 1 0 1 1-1.885.666A5.002 5.002 0 0 0 5.999 7H9a1 1 0 0 1 0 2H4a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1zm.008 9.057a1 1 0 0 1 1.276.61A5.002 5.002 0 0 0 14.001 13H11a1 1 0 1 1 0-2h5a1 1 0 0 1 1 1v5a1 1 0 1 1-2 0v-2.1a7.002 7.002 0 0 1-11.601-2.566 1 1 0 0 1 .61-1.277z" clip-rule="evenodd"/></svg>
         刷新
       </button>
+    </div>
+
+    <!-- M4-5: 顶部 3 张统计卡,验证 P0-5 清理策略按预期执行 -->
+    <div class="metric-cards">
+      <div class="metric-card">
+        <div class="title">alert_history 总行数</div>
+        <div><span class="value">{{ totalRows != null ? totalRows.toLocaleString() : '-' }}</span><span class="unit">条</span></div>
+        <div class="sub">PG 表当前总行数(实时)</div>
+      </div>
+      <div class="metric-card">
+        <div class="title">累计清理行数</div>
+        <div><span class="value">{{ lastPurgedRows != null ? lastPurgedRows.toLocaleString() : '-' }}</span><span class="unit">条/次</span></div>
+        <div class="sub">最近一次定时清理删除的行数</div>
+      </div>
+      <div class="metric-card">
+        <div class="title">最近一次清理</div>
+        <div><span class="value" style="font-size: 0.95rem;">{{ formatPurgedAt(lastPurgedAt) }}</span></div>
+        <div class="sub">每日 03:30 cron 触发,保留期默认 90 天</div>
+      </div>
     </div>
 
     <div class="card bg-base-100 border border-base-300 shadow-sm">

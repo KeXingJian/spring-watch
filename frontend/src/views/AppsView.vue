@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, reactive } from 'vue'
+import { onMounted, ref, reactive, computed } from 'vue'
 import { api } from '@/api/client'
 import { useToast } from '@/utils/toast'
 import { shortJson } from '@/utils/format'
@@ -24,6 +24,18 @@ interface AppItem {
 
 const apps = ref<AppItem[]>([])
 const loading = ref(false)
+const total = ref(0)
+const page = ref(0)
+const size = ref(20)
+const pageSizes = [10, 20, 50, 100]
+
+const totalPages = computed(() => (size.value > 0 ? Math.max(1, Math.ceil(total.value / size.value)) : 1))
+const pageRange = computed(() => {
+  if (total.value === 0) return '0-0'
+  const from = page.value * size.value + 1
+  const to = Math.min(page.value * size.value + apps.value.length, total.value)
+  return `${from}-${to}`
+})
 
 const showEdit = ref(false)
 const showOtel = ref(false)
@@ -53,12 +65,27 @@ const isCron = ref(false)
 async function loadApps() {
   loading.value = true
   try {
-    apps.value = await api.page<AppItem>('/api/apps')
+    const res = await api.pageFull<AppItem>('/api/apps', { page: page.value, size: size.value })
+    apps.value = res.items
+    total.value = res.total
   } catch (e: any) {
     toast.error('加载失败: ' + e.message)
   } finally {
     loading.value = false
   }
+}
+
+function changeSize(v: number) {
+  size.value = v
+  page.value = 0
+  loadApps()
+}
+
+function goPage(p: number) {
+  const target = Math.max(0, Math.min(p, totalPages.value - 1))
+  if (target === page.value) return
+  page.value = target
+  loadApps()
 }
 
 onMounted(loadApps)
@@ -201,7 +228,7 @@ function formatHeartbeat(t?: string) {
         <svg viewBox="0 0 20 20" fill="currentColor" class="w-4 h-4"><path d="M10 3a1 1 0 0 1 1 1v5h5a1 1 0 1 1 0 2h-5v5a1 1 0 1 1-2 0v-5H4a1 1 0 1 1 0-2h5V4a1 1 0 0 1 1-1z"/></svg>
         新建应用
       </button>
-      <span class="text-xs text-muted ml-1">共 {{ apps.length }} 个应用</span>
+      <span class="text-xs text-muted ml-1">共 {{ total }} 个应用</span>
       <span class="right" />
       <button class="btn btn-ghost btn-sm" @click="loadApps">
         <svg viewBox="0 0 20 20" fill="currentColor" class="w-4 h-4"><path fill-rule="evenodd" d="M4 2a1 1 0 0 1 1 1v2.101a7.002 7.002 0 0 1 11.601 2.566 1 1 0 1 1-1.885.666A5.002 5.002 0 0 0 5.999 7H9a1 1 0 0 1 0 2H4a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1zm.008 9.057a1 1 0 0 1 1.276.61A5.002 5.002 0 0 0 14.001 13H11a1 1 0 1 1 0-2h5a1 1 0 0 1 1 1v5a1 1 0 1 1-2 0v-2.1a7.002 7.002 0 0 1-11.601-2.566 1 1 0 0 1 .61-1.277z" clip-rule="evenodd"/></svg>
@@ -282,6 +309,45 @@ function formatHeartbeat(t?: string) {
               </tr>
             </tbody>
           </table>
+        </div>
+
+        <div v-if="!loading && total > 0" class="pagination-bar">
+          <span class="text-xs text-muted">
+            第 {{ pageRange }} 条 / 共 {{ total }} 条
+          </span>
+          <span class="right" />
+          <div class="join">
+            <select
+              class="select select-bordered select-xs join-item"
+              :value="size"
+              @change="changeSize(Number(($event.target as HTMLSelectElement).value))"
+            >
+              <option v-for="s in pageSizes" :key="s" :value="s">{{ s }} / 页</option>
+            </select>
+            <button
+              class="btn btn-xs join-item"
+              :disabled="page <= 0"
+              @click="goPage(0)"
+            >«</button>
+            <button
+              class="btn btn-xs join-item"
+              :disabled="page <= 0"
+              @click="goPage(page - 1)"
+            >‹</button>
+            <button class="btn btn-xs join-item btn-active no-animation">
+              {{ page + 1 }} / {{ totalPages }}
+            </button>
+            <button
+              class="btn btn-xs join-item"
+              :disabled="page >= totalPages - 1"
+              @click="goPage(page + 1)"
+            >›</button>
+            <button
+              class="btn btn-xs join-item"
+              :disabled="page >= totalPages - 1"
+              @click="goPage(totalPages - 1)"
+            >»</button>
+          </div>
         </div>
       </div>
     </div>

@@ -42,7 +42,7 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * 持久化（与 BatchMetricConsumer 保持同款 InfluxDB 写入路径）：
  * - 每次采样落 InfluxDB self_metrics 桶，measurement=self_monitor_metrics
- * - tags: appid=self, category=jvm|process|meter, metric=<扁平名>, meter_type=counter|gauge|timer, gc_name=<仅 GC>
+     * - tags: appid=self, category=jvm|process|meter, metric=<扁平名>, meter_type=counter|gauge|timer, gc_name=<仅 GC>, pool_name=<仅内存池>
  * - field: value（double）；timer 还会带 count/total_ms/max_ms
  * - 内存 ring 仅供 /realtime（5s 轮询）做卡片/列表的快速缓存；1h/6h/24h 历史曲线统一走 SelfMetricQueryService 查 InfluxDB
  */
@@ -77,6 +77,7 @@ public class SelfMonitorCollector {
             "spring.watch.process.",
             "spring.watch.alert.",
             "spring.watch.log.",
+            "spring.watch.metric.",
             "spring.watch.ingest."
     );
 
@@ -177,7 +178,7 @@ public class SelfMonitorCollector {
 
     /**
      * 把 Sample 拆成扁平 InfluxDB Point 列表：
-     * - jvm 段 → category=jvm, metric=heap.used / nonHeap.used / ... / gc.count(gc_name) / gc.time_ms(gc_name) ...
+     * - jvm 段 → category=jvm, metric=heap.used / nonHeap.used / pool.used(pool_name) / gc.count(gc_name) / gc.time_ms(gc_name) ...
      * - process 段 → category=process, metric=cpu_load / rss_bytes / ...
      * - meters 段 → category=meter, meter_type=counter|gauge|timer, metric=<原始 meter 名>
      *
@@ -202,9 +203,22 @@ public class SelfMonitorCollector {
                 add(out, tsNs, CAT_JVM, "nonHeap.max", jvm.nonHeap().max());
                 add(out, tsNs, CAT_JVM, "nonHeap.init", jvm.nonHeap().init());
             }
-            if (jvm.metaspace() != null) {
-                add(out, tsNs, CAT_JVM, "metaspace.used", jvm.metaspace().used());
-                add(out, tsNs, CAT_JVM, "metaspace.committed", jvm.metaspace().committed());
+            if (jvm.pools() != null) {
+                for (PoolSnap ps : jvm.pools()) {
+                    if (ps == null || ps.name() == null || ps.name().isBlank()) continue;
+                    Map<String, String> tags = Map.of("pool_name", ps.name());
+                    if (ps.mem() != null) {
+                        add(out, tsNs, CAT_JVM, "pool.used", ps.mem().used(), tags);
+                        add(out, tsNs, CAT_JVM, "pool.committed", ps.mem().committed(), tags);
+                        add(out, tsNs, CAT_JVM, "pool.max", ps.mem().max(), tags);
+                        add(out, tsNs, CAT_JVM, "pool.init", ps.mem().init(), tags);
+                        // 兼容旧 jvmMemChart 上的 "Metaspace MB" 折线
+                        if ("Metaspace".equalsIgnoreCase(ps.name())) {
+                            add(out, tsNs, CAT_JVM, "metaspace.used", ps.mem().used());
+                            add(out, tsNs, CAT_JVM, "metaspace.committed", ps.mem().committed());
+                        }
+                    }
+                }
             }
             if (jvm.threads() != null) {
                 add(out, tsNs, CAT_JVM, "threads.current", jvm.threads().current());
@@ -341,15 +355,14 @@ public class SelfMonitorCollector {
         } catch (Throwable ignore) {}
         MemoryUsage heap = ManagementFactory.getMemoryMXBean().getHeapMemoryUsage();
         MemoryUsage nonHeap = ManagementFactory.getMemoryMXBean().getNonHeapMemoryUsage();
-        long metaspaceUsed = 0L, metaspaceCommitted = 0L;
+        List<PoolSnap> pools = new ArrayList<>();
         for (MemoryPoolMXBean p : ManagementFactory.getMemoryPoolMXBeans()) {
-            if ("Metaspace".equalsIgnoreCase(p.getName())) {
-                MemoryUsage u = p.getUsage();
-                if (u != null) {
-                    metaspaceUsed = u.getUsed();
-                    metaspaceCommitted = u.getCommitted();
-                }
-            }
+            MemoryUsage u = p.getUsage();
+            if (u == null) continue;
+            pools.add(new PoolSnap(
+                    p.getName(),
+                    new MemSnap(u.getUsed(), u.getCommitted(), u.getMax(), u.getInit())
+            ));
         }
         List<GcSnap> gcs = new ArrayList<>();
         for (var gm : ManagementFactory.getGarbageCollectorMXBeans()) {
@@ -358,7 +371,7 @@ public class SelfMonitorCollector {
         return new JvmSnap(
                 new MemSnap(heap.getUsed(), heap.getCommitted(), heap.getMax(), heap.getInit()),
                 new MemSnap(nonHeap.getUsed(), nonHeap.getCommitted(), nonHeap.getMax() < 0 ? nonHeap.getCommitted() : nonHeap.getMax(), nonHeap.getInit()),
-                new MemSnap(metaspaceUsed, metaspaceCommitted, -1L, -1L),
+                pools,
                 new ThreadSnap(tmx.getThreadCount(), tmx.getDaemonThreadCount(), tmx.getPeakThreadCount(), deadlocked),
                 new ClassSnap(cl.loaded(), cl.totalLoaded(), cl.unloaded()),
                 uptime,
@@ -521,8 +534,10 @@ public class SelfMonitorCollector {
 
     public record MemSnap(long used, long committed, long max, long init) {}
 
-    public record JvmSnap(MemSnap heap, MemSnap nonHeap, MemSnap metaspace,
+    public record JvmSnap(MemSnap heap, MemSnap nonHeap, List<PoolSnap> pools,
                           ThreadSnap threads, ClassSnap classes, long uptimeMs, List<GcSnap> gc) {}
+
+    public record PoolSnap(String name, MemSnap mem) {}
 
     public record ThreadSnap(int current, int daemon, int peak, int deadlocked) {}
 

@@ -31,8 +31,8 @@ onBeforeUnmount(() => {
 
 async function refreshApps() {
   try {
-    const apps = await api.page<AppInfo>('/api/apps/active')
-    appStore.setApps(apps || [])
+    const res = await api.pageFull<AppInfo>('/api/apps/active', { size: 200 })
+    appStore.setApps(res.items || [])
   } catch (e: any) {
     toast.error('应用列表加载失败: ' + e.message)
   }

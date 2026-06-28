@@ -86,13 +86,9 @@ public class InfluxDBBucketInitializer {
             ensureBucket(selfMetricsBucket, org, selfMetricsRetentionSeconds);
             if (downsampleEnabled) {
                 ensureBucket(metricsDownsampleBucket, org, downsampleRetentionSeconds);
-                ensureBucket(logDownsampleBucket, org, downsampleRetentionSeconds);
                 ensureDownsampleTask("spring-watch-downsample-metrics",
                         metricsBucket, metricsDownsampleBucket,
                         "springboot_metrics", downsampleEvery, downsampleWindow, downsampleTaskEvery, org);
-                ensureDownsampleTask("spring-watch-downsample-logs",
-                        logBucket, logDownsampleBucket,
-                        "app_log", downsampleEvery, downsampleWindow, downsampleTaskEvery, org);
             }
         } catch (Exception e) {
             log.error("[spring-watch: InfluxDB bucket 初始化失败 - error={}]", e.getMessage(), e);
@@ -151,6 +147,8 @@ public class InfluxDBBucketInitializer {
                 from(bucket: "%s")
                   |> range(start: -task.every)
                   |> filter(fn: (r) => r._measurement == "%s")
+                  |> filter(fn: (r) => exists r._value)
+                  |> map(fn: (r) => ({r with _value: float(v: r._value)}))
                   |> aggregateWindow(every: %s, fn: mean, createEmpty: false)
                   |> to(bucket: "%s", org: "%s")
                 """, taskName, taskEvery, sourceBucket, measurement, aggWindow, destBucket, influxOrg);
