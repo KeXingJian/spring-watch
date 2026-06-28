@@ -99,6 +99,14 @@ public class MonitorAppService {
     public void delete(Long id) {
         MonitorApp app = monitorAppRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("应用不存在: " + id));
+        // 自监控占位 app(endpoint = self://infra)由 InfrastructureAlertScheduler 启动时
+        // ensureSelfApp() 创建,承载基础设施告警的归属。误删后下次启动会重建,但告警历史
+        // 链会断(规则里有 app_id 外键,历史命中不到),所以这里硬挡一下。
+        if ("self://infra".equals(app.getEndpoint())) {
+            throw new IllegalArgumentException(
+                    "自监控占位应用不可删除 (id=" + id + ", name=" + app.getAppName()
+                            + "),如需关闭请在 spring-watch.infra-alerts.enabled=false 中禁用");
+        }
         try {
             collectScheduleRegistry.cancel(app.getAppid());
         } catch (Exception e) {

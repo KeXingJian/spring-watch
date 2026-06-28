@@ -13,6 +13,8 @@ public interface MonitorAppRepository extends JpaRepository<MonitorApp, Long> {
 
     Optional<MonitorApp> findByAppid(Long appid);
 
+    Optional<MonitorApp> findByAppName(String appName);
+
     List<MonitorApp> findAllByAppidIn(Collection<Long> appids);
 
     Page<MonitorApp> findByStatusIgnoreCase(String status, Pageable pageable);

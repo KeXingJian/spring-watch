@@ -61,6 +61,9 @@ services:
     ports:
       - "9092:9092"
       - "9093:9093"
+      # M-KafkaHealth: 把 broker 的 JMX 端口也暴露到宿主,让 spring-watch 进程的
+      # KafkaBrokerJmxMonitor 通过 RMI 连进来拉 BrokerTopicMetrics / ReplicaManager / JVM
+      - "9999:9999"
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
@@ -72,6 +75,21 @@ services:
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
       KAFKA_LOG_DIRS: /var/lib/kafka/data
+      # M-KafkaHealth: 启用 broker JMX,供 spring-watch 的 KafkaBrokerJmxMonitor 连入
+      #  - rmi.port=9999  关键:JMX 默认还会再开一个随机端口做 RMI callback,那个端口没 publish,
+      #    客户端拉 stub 后再连会卡死。把 callback 端口也锁在 9999,只需 expose 一个端口
+      #  - java.rmi.server.hostname=0.0.0.0  容器内 RMI registry 绑 0.0.0.0,
+      #    宿主机/其它容器连 localhost:9999 / sc-kafka:9999 都能通
+      #  - local.only=false  允许远程连接(同主机/同网络,认证靠 authenticate=false 兜底)
+      #  - 9999 端口已在 ports 里 expose 给宿主机
+      KAFKA_JMX_OPTS: >-
+        -Dcom.sun.management.jmxremote
+        -Dcom.sun.management.jmxremote.port=9999
+        -Dcom.sun.management.jmxremote.rmi.port=9999
+        -Dcom.sun.management.jmxremote.authenticate=false
+        -Dcom.sun.management.jmxremote.ssl=false
+        -Dcom.sun.management.jmxremote.local.only=false
+        -Djava.rmi.server.hostname=0.0.0.0
     volumes:
       - .data/kafka_data:/var/lib/kafka/data
 

@@ -78,6 +78,11 @@ public class CollectScheduleRegistry implements ApplicationRunner {
             log.warn("[spring-watch: upsert跳过 - app为空或appid为空, id={}]", app == null ? null : app.getId());
             return;
         }
+        if (app.getAppid() <= 0L) {
+            log.info("[spring-watch: upsert跳过 - appid={} 是 sentinel/infra 标记, 不注册采集任务, app={}",
+                    app.getAppid(), app.getAppName());
+            return;
+        }
         log.info("[spring-watch: upsert开始 - appid={}, app={}, status={}, scheduleType={}, scrapeInterval={}, cron={}]",
                 app.getAppid(), app.getAppName(), app.getStatus(),
                 app.getScheduleType(), app.getScrapeInterval(), app.getCronExpression());

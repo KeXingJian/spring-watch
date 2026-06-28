@@ -23,6 +23,8 @@ import java.lang.management.ManagementFactory;
 import java.lang.management.MemoryPoolMXBean;
 import java.lang.management.MemoryUsage;
 import java.lang.management.ThreadMXBean;
+import java.lang.reflect.Field;
+import java.util.concurrent.BlockingQueue;
 import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -73,6 +75,7 @@ public class SelfMonitorCollector {
             "spring.watch.consumer.",
             "spring.watch.kafka.",
             "spring.watch.jvm.",
+            "spring.watch.influxdb.",
             "spring.watch.system.",
             "spring.watch.process.",
             "spring.watch.alert.",
@@ -122,6 +125,52 @@ public class SelfMonitorCollector {
                 .register(meterRegistry);
         Gauge.builder("spring.watch.self.monitor.ring.size", this, s -> (double) s.size())
                 .description("自监控 ring 当前样本数")
+                .register(meterRegistry);
+
+        Gauge.builder("spring.watch.jvm.g1.eden.used", SelfMonitorCollector::readEdenUsed)
+                .description("G1 Eden Space 已用字节")
+                .register(meterRegistry);
+        Gauge.builder("spring.watch.jvm.g1.eden.max", SelfMonitorCollector::readEdenMax)
+                .description("G1 Eden Space 最大字节")
+                .register(meterRegistry);
+        Gauge.builder("spring.watch.jvm.g1.oldgen.used", SelfMonitorCollector::readOldGenUsed)
+                .description("G1 Old Gen 已用字节")
+                .register(meterRegistry);
+        Gauge.builder("spring.watch.jvm.g1.oldgen.max", SelfMonitorCollector::readOldGenMax)
+                .description("G1 Old Gen 最大字节")
+                .register(meterRegistry);
+        Gauge.builder("spring.watch.jvm.g1.oldgen.pct", SelfMonitorCollector::readOldGenPct)
+                .description("G1 Old Gen 使用率 %")
+                .register(meterRegistry);
+        Gauge.builder("spring.watch.jvm.g1.survivor.used", SelfMonitorCollector::readSurvivorUsed)
+                .description("G1 Survivor Space 已用字节")
+                .register(meterRegistry);
+        Gauge.builder("spring.watch.jvm.g1.survivor.max", SelfMonitorCollector::readSurvivorMax)
+                .description("G1 Survivor Space 最大字节")
+                .register(meterRegistry);
+
+        Gauge.builder("spring.watch.jvm.threads.current", () ->
+                        (double) ManagementFactory.getThreadMXBean().getThreadCount())
+                .description("当前 JVM 线程数")
+                .register(meterRegistry);
+        Gauge.builder("spring.watch.jvm.threads.daemon", () ->
+                        (double) ManagementFactory.getThreadMXBean().getDaemonThreadCount())
+                .description("守护线程数")
+                .register(meterRegistry);
+        Gauge.builder("spring.watch.jvm.threads.peak", () ->
+                        (double) ManagementFactory.getThreadMXBean().getPeakThreadCount())
+                .description("JVM 启动后峰值线程数")
+                .register(meterRegistry);
+        Gauge.builder("spring.watch.jvm.classes.loaded", () ->
+                        (double) ManagementFactory.getClassLoadingMXBean().getLoadedClassCount())
+                .description("当前已加载类数")
+                .register(meterRegistry);
+
+        Gauge.builder("spring.watch.influxdb.write.queue.size", writeApi, SelfMonitorCollector::readWriteApiQueueSize)
+                .description("InfluxDB WriteApi 内部 writeQueue 堆积(反射读,取不到时 -1)")
+                .register(meterRegistry);
+        Gauge.builder("spring.watch.influxdb.write.point.queued", writeApi, SelfMonitorCollector::readWriteApiPendingPoints)
+                .description("InfluxDB WriteApi 内部 pending points 估算")
                 .register(meterRegistry);
         this.scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "self-monitor-sampler");
@@ -237,6 +286,16 @@ public class SelfMonitorCollector {
                     if (g == null || g.name() == null) continue;
                     add(out, tsNs, CAT_JVM, "gc.count", g.count(), Map.of("gc_name", g.name()));
                     add(out, tsNs, CAT_JVM, "gc.time_ms", g.timeMs(), Map.of("gc_name", g.name()));
+                }
+            }
+            if (jvm.pools() != null) {
+                for (PoolSnap p : jvm.pools()) {
+                    if (p == null || p.name() == null || p.mem() == null) continue;
+                    add(out, tsNs, CAT_JVM, "pool.used", p.mem().used(), Map.of("pool_name", p.name()));
+                    add(out, tsNs, CAT_JVM, "pool.committed", p.mem().committed(), Map.of("pool_name", p.name()));
+                    if (p.mem().max() > 0) {
+                        add(out, tsNs, CAT_JVM, "pool.max", p.mem().max(), Map.of("pool_name", p.name()));
+                    }
                 }
             }
         }
@@ -521,6 +580,85 @@ public class SelfMonitorCollector {
 
     private static long safe(java.util.function.Supplier<Long> s, long def) {
         try { Long v = s.get(); return v == null ? def : v; } catch (Throwable t) { return def; }
+    }
+
+    private static double poolBytes(String poolName, java.util.function.ToLongFunction<MemoryUsage> extractor) {
+        for (MemoryPoolMXBean p : ManagementFactory.getMemoryPoolMXBeans()) {
+            if (poolName.equals(p.getName())) {
+                MemoryUsage u = p.getUsage();
+                if (u == null) return 0d;
+                long v = extractor.applyAsLong(u);
+                return v < 0 ? 0d : (double) v;
+            }
+        }
+        return 0d;
+    }
+
+    private static double readEdenUsed()    { return poolBytes("G1 Eden Space", MemoryUsage::getUsed); }
+    private static double readEdenMax()     { return poolBytes("G1 Eden Space", MemoryUsage::getMax); }
+    private static double readOldGenUsed()  { return poolBytes("G1 Old Gen", MemoryUsage::getUsed); }
+    private static double readOldGenMax()   { return poolBytes("G1 Old Gen", MemoryUsage::getMax); }
+    private static double readOldGenPct() {
+        double used = readOldGenUsed();
+        double max = readOldGenMax();
+        if (max <= 0d) return 0d;
+        return Math.min(100d, used / max * 100d);
+    }
+    private static double readSurvivorUsed() { return poolBytes("G1 Survivor Space", MemoryUsage::getUsed); }
+    private static double readSurvivorMax()  { return poolBytes("G1 Survivor Space", MemoryUsage::getMax); }
+
+    private static double readWriteApiQueueSize(WriteApi w) {
+        if (w == null) return -1d;
+        for (String fieldName : new String[]{"writeQueue", "pendingWrites", "dataPoints", "dataPointQueue"}) {
+            try {
+                Field f = w.getClass().getDeclaredField(fieldName);
+                f.setAccessible(true);
+                Object q = f.get(w);
+                if (q instanceof BlockingQueue<?> bq) {
+                    return bq.size();
+                }
+                if (q instanceof java.util.Collection<?> c) {
+                    return c.size();
+                }
+            } catch (NoSuchFieldException ignore) {
+            } catch (Throwable ignore) {
+                return -1d;
+            }
+        }
+        return -1d;
+    }
+
+    private static double readWriteApiPendingPoints(WriteApi w) {
+        if (w == null) return -1d;
+        for (String fieldName : new String[]{"writeQueue", "pendingWrites", "dataPoints", "dataPointQueue"}) {
+            try {
+                Field f = w.getClass().getDeclaredField(fieldName);
+                f.setAccessible(true);
+                Object q = f.get(w);
+                if (q instanceof BlockingQueue<?> bq) {
+                    int count = 0;
+                    for (Object item : bq) {
+                        if (item == null) continue;
+                        String s = item.toString();
+                        int idx = s.indexOf("points=");
+                        if (idx > 0) {
+                            int end = s.indexOf(',', idx);
+                            if (end < 0) end = s.length();
+                            try {
+                                count += Integer.parseInt(s.substring(idx + 7, end).trim());
+                            } catch (NumberFormatException ignore) {}
+                        } else {
+                            count++;
+                        }
+                    }
+                    return count;
+                }
+            } catch (NoSuchFieldException ignore) {
+            } catch (Throwable ignore) {
+                return -1d;
+            }
+        }
+        return -1d;
     }
 
     private record ClassLoadingMXBeanWrap(java.lang.management.ClassLoadingMXBean src) {

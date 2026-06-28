@@ -32,13 +32,6 @@ spring-watch:
       batch-size: 200 # 每批扫描条数
     history:
       retention-days: 90 # 告警历史保留天数（P0-5）
-  kafka:
-    fallback-queue:
-      capacity: 10000 # 兜底内存队列容量（P1-1: 50000 → 10000）
-      max-payload-bytes: 16384 # 单条 payload 截断阈值（字节，P1-1）
-      drain-interval-ms: 5000 # 队列排空间隔（毫秒）
-      send-timeout-ms: 2000 # 单条发送超时（毫秒）
-      alert-threshold: 1000 # 积压告警阈值
   log:
     env: dev # 当前环境标识（影响链路关联等行为）
     dedup:
@@ -52,8 +45,183 @@ spring-watch:
     alert:
       error-rate-window-seconds: 60 # 错误率计算窗口（秒）
       error-rate-interval-ms: 60000 # 错误率计算间隔（毫秒）
-    linker:
-      default-metric: jvm_memory_used_bytes # 关联时使用的默认指标
+  infra-metrics:
+    enabled: true # 启用三栈基础设施指标采集（InfluxDB /metrics 端点 + Kafka lag）
+    poll-interval-sec: 30 # 采集周期（秒）
+    request-timeout-ms: 5000 # HTTP 请求超时
+  influxdb:
+    admin-token: sw-token-2024 # 调 InfluxDB /metrics 端点用的 token（需含读权限）
+  kafka:
+    lag-monitor:
+      enabled: true
+      group-id: spring-watch # 与 spring.kafka.consumer.group-id 一致
+      topics: monitor-metrics,monitor-logs,monitor-heartbeat
+      poll-interval-sec: 30
+    health-monitor:
+      enabled: true # M-KafkaHealth: 集群健康 + producer 计数采集
+      poll-interval-sec: 30 # AdminClient 拉集群状态,30s 一次够用
+    producer-jmx:
+      enabled: true # M-KafkaHealth: spring-watch 自己这个 producer 内部 JMX 指标(record-send-rate / batch-size-avg / compression-rate 等)
+      poll-interval-sec: 30
+    broker-jmx:
+      enabled: true # M-KafkaHealth: 连 broker JMX 拉 BrokerTopicMetrics / ReplicaManager / ControllerStats / JVM
+      poll-interval-sec: 30
+      connect-timeout-sec: 5
+      # url 不配 = 跳过;配上形如 service:jmx:rmi:///jndi/rmi://broker-host:9999/jmxrmi
+      # broker 启动需加 -Dcom.sun.management.jmxremote.port=9999 等参数
+      url: ${KAFKA_BROKER_JMX_URL:}
+      username: ${KAFKA_BROKER_JMX_USER:}
+      password: ${KAFKA_BROKER_JMX_PASSWORD:}
+    fallback-queue:
+      capacity: 10000 # 兜底内存队列容量（P1-1: 50000 → 10000）
+      max-payload-bytes: 16384 # 单条 payload 截断阈值（字节，P1-1）
+      drain-interval-ms: 5000 # 队列排空间隔（毫秒）
+      send-timeout-ms: 2000 # 单条发送超时（毫秒）
+      alert-threshold: 1000 # 积压告警阈值
+  infra-alerts:
+    enabled: true
+    appid: -1 # 基础设施告警复用的 MonitorApp.appid（负数为 sentinel, CollectScheduleRegistry 会跳过）
+    app-name: infra-self
+    poll-interval-ms: 60000
+    rules:
+      - name: influxdb_tsm_cache_high
+        component: influxdb
+        metric: tsm1_engine.cacheSizeBytes
+        op: ">"
+        threshold: 200000000
+        level: warning
+        cooldown-seconds: 300
+      - name: jvm_old_gen_high_pct
+        component: springwatch
+        metric: jvm.g1.oldgen.pct
+        op: ">"
+        threshold: 85
+        level: critical
+        cooldown-seconds: 300
+      - name: influxdb_heap_high
+        component: influxdb
+        metric: go_memstats.heapInuseBytes
+        op: ">"
+        threshold: 800000000
+        level: warning
+        cooldown-seconds: 300
+      - name: kafka_lag_metrics_high
+        component: kafka
+        metric: consumer.lag.total
+        tag:
+          topic: monitor-metrics
+        op: ">"
+        threshold: 10000
+        level: warning
+        cooldown-seconds: 300
+      - name: kafka_lag_logs_high
+        component: kafka
+        metric: consumer.lag.total
+        tag:
+          topic: monitor-logs
+        op: ">"
+        threshold: 10000
+        level: warning
+        cooldown-seconds: 300
+      - name: influxdb_write_queue_high
+        component: springwatch
+        metric: spring.watch.influxdb.write.queue.size
+        op: ">"
+        threshold: 15000
+        level: warning
+        cooldown-seconds: 300
+      # M-KafkaHealth: 副本不足 partition 出现 = 集群有 broker 落后,任一 > 0 都要告警
+      - name: kafka_under_replicated
+        component: kafka
+        metric: kafka.under_replicated_partitions
+        op: ">"
+        threshold: 0
+        level: critical
+        cooldown-seconds: 300
+      # M-KafkaHealth: offline partition = 整个 partition 没 leader,producer 写入会卡/失败
+      - name: kafka_offline_partitions
+        component: kafka
+        metric: kafka.offline_partitions
+        op: ">"
+        threshold: 0
+        level: critical
+        cooldown-seconds: 300
+      # M-KafkaHealth: controller id = -1 意味着没有 active controller,集群基本不可用
+      - name: kafka_no_controller
+        component: kafka
+        metric: kafka.controller_id
+        op: "=="
+        threshold: -1
+        level: critical
+        cooldown-seconds: 300
+      # M-KafkaHealth: producer 失败累计(每个 topic 一条线)做绝对值告警,正常情况下不该涨
+      - name: kafka_producer_failed_metrics
+        component: kafka
+        metric: kafka.producer.failed
+        tag:
+          topic: monitor-metrics
+        op: ">"
+        threshold: 100
+        level: warning
+        cooldown-seconds: 600
+      - name: kafka_producer_failed_logs
+        component: kafka
+        metric: kafka.producer.failed
+        tag:
+          topic: monitor-logs
+        op: ">"
+        threshold: 100
+        level: warning
+        cooldown-seconds: 600
+      - name: kafka_producer_failed_heartbeat
+        component: kafka
+        metric: kafka.producer.failed
+        tag:
+          topic: monitor-heartbeat
+        op: ">"
+        threshold: 50
+        level: critical
+        cooldown-seconds: 600
+      # M-KafkaHealth: broker 端 URP 兜底(KafkaHealthMonitor 也算了一份,这里走 broker JMX 校准)
+      - name: kafka_broker_urp
+        component: kafka
+        metric: broker.under_replicated_partitions
+        op: ">"
+        threshold: 0
+        level: critical
+        cooldown-seconds: 300
+      # M-KafkaHealth: broker 端 JVM 堆使用率(> 80% 告警;字节数,需要看实际堆大小)
+      - name: kafka_broker_jvm_heap_high
+        component: kafka
+        metric: broker.jvm.heap_used
+        op: ">"
+        threshold: 6442450944 # 6 GB,按生产 broker 堆 8 GB 算 75% 警戒线
+        level: warning
+        cooldown-seconds: 300
+      # M-KafkaHealth: broker 处理 CPU 负载(0-1)> 0.85 持续超载
+      - name: kafka_broker_cpu_high
+        component: kafka
+        metric: broker.jvm.process_cpu_load
+        op: ">"
+        threshold: 0.85
+        level: warning
+        cooldown-seconds: 300
+      # M-KafkaHealth: 生产失败率(消息/秒)> 1
+      - name: kafka_broker_produce_failed_rate
+        component: kafka
+        metric: broker.produce_failed_rate
+        op: ">"
+        threshold: 1
+        level: warning
+        cooldown-seconds: 300
+      # M-KafkaHealth: producer 客户端 buffer 满(> 0 表示出现过阻塞)
+      - name: kafka_producer_buffer_exhausted
+        component: kafka
+        metric: producer.buffer_exhausted_rate
+        op: ">"
+        threshold: 0
+        level: warning
+        cooldown-seconds: 300
 
 spring:
   application:
@@ -148,11 +316,13 @@ influxdb:
   self-metrics-bucket: self_metrics # 自监控指标桶（与自监控 24h 展示对齐）
   metrics-downsample-bucket: metrics_5m # 5 分钟降采样指标桶
   log-downsample-bucket: logs_5m # 5 分钟降采样日志桶
+  infra-bucket: infra_metrics # 基础设施指标桶（InfluxDB _internal + Kafka lag 等）
   retention:
     metrics-seconds: 604800 # 原始指标保留时长（秒，7 天）
     log-seconds: 259200 # 原始日志保留时长（秒，3 天）
     self-metrics-seconds: 21600 # 自监控指标保留时长（秒，6h：自监控面板只显示 24h 留 1h 够用）
     downsample-seconds: 2592000 # 降采样数据保留时长（秒，30 天）
+    infra-seconds: 604800 # 基础设施指标保留时长（秒，7 天）
   downsample:
     enabled: true # 是否开启降采样
     every: 5m # 降采样执行频率
@@ -173,3 +343,5 @@ logging:
     com.springwatch: info # 自定义包日志级别（P2-3: debug → info，避免每次评估/采样都格式化 toString）
   file:
     path: ./.log # 日志输出目录
+
+

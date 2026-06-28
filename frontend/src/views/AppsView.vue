@@ -172,8 +172,19 @@ async function doAction(fn: () => Promise<unknown>, okMsg: string) {
 }
 
 function doDelete(id: number) {
+  const target = apps.value.find((x) => x.id === id)
+  if (target && isSelfMonitor(target)) {
+    toast.error('系统自监控占位不可删除')
+    return
+  }
   if (!confirm('确定删除该应用?该操作不可恢复,关联的指标数据将不再被采集。')) return
   doAction(() => api.del('/api/apps/' + id), '已删除')
+}
+
+/** 自监控占位应用:由后端 InfrastructureAlertScheduler.ensureSelfApp() 创建,endpoint 固定为 self://infra。 */
+const SELF_MONITOR_ENDPOINT = 'self://infra'
+function isSelfMonitor(a: AppItem): boolean {
+  return a.endpoint === SELF_MONITOR_ENDPOINT
 }
 
 async function openOtel(id: number) {
@@ -270,7 +281,14 @@ function formatHeartbeat(t?: string) {
               </tr>
               <tr v-for="a in apps" v-else :key="a.id">
                 <td>{{ a.id }}</td>
-                <td><strong>{{ a.appName }}</strong></td>
+                <td>
+                  <strong>{{ a.appName }}</strong>
+                  <span
+                    v-if="isSelfMonitor(a)"
+                    class="badge badge-sm badge-info ml-1"
+                    title="由 InfrastructureAlertScheduler 自动创建,承载基础设施告警归属,不可删除"
+                  >系统自监控</span>
+                </td>
                 <td><code class="text-xs">{{ a.appid }}</code></td>
                 <td class="truncate max-w-xs">{{ a.endpoint || '-' }}</td>
                 <td>{{ a.metricsPort || '-' }}</td>
@@ -303,7 +321,12 @@ function formatHeartbeat(t?: string) {
                       class="btn btn-ghost btn-xs"
                       @click="doAction(() => api.post('/api/apps/' + a.id + '/resume'), '已恢复')"
                     >恢复</button>
-                    <button class="btn btn-ghost btn-xs text-error" @click="doDelete(a.id)">删除</button>
+                    <button
+                      class="btn btn-ghost btn-xs text-error"
+                      :disabled="isSelfMonitor(a)"
+                      :title="isSelfMonitor(a) ? '系统自监控占位不可删除' : ''"
+                      @click="doDelete(a.id)"
+                    >删除</button>
                   </div>
                 </td>
               </tr>
