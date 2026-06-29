@@ -13,49 +13,35 @@ import org.springframework.kafka.config.TopicBuilder;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Properties;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 
-/**
- * 业务 topic 声明(partition 数 / 副本因子)。
- *
- * 修复记录(M-KafkaTopicInit / 2026-06-29 / v1.4):
- *   原版只声明 NewTopic bean,让 spring-kafka 的 KafkaAdmin 在容器启动时统一 createTopics。
- *   问题:KafkaAdmin 启动时如果 broker 还没就绪(KRaft controller 选举慢于 spring-kafka),
- *        createTopics 调用超时失败,spring-kafka **不重试**,后续 broker 就绪后
- *        topic 也不存在,consumer 报 UNKNOWN_TOPIC_OR_PARTITION。
- *
- *   修复:本类同时承担两件事——
- *     1) @Bean NewTopic:让 spring-kafka KafkaAdmin 处理(快路径,broker 已就绪时直接成功)
- *     2) @EventListener(ApplicationReadyEvent) onApplicationReady:兜底创建,
- *        解决 broker 启动慢于 spring-kafka 的时序问题。
- *        兜底会先 describeTopics 检查,只在 partition 数不匹配时才调 createTopics,
- *        不会重复创建已存在且 partition 数对的 topic。
- */
+
 @Slf4j
 @Configuration
 public class KafkaTopicConfig {
 
-    @Value("${spring.kafka.topics.metrics:monitor-metrics}")
-    private String metricsTopic;
 
-    @Value("${spring.kafka.topics.logs:monitor-logs}")
-    private String logsTopic;
+    private final String metricsTopic = "monitor-metrics"  ;
 
-    @Value("${spring.kafka.topics.heartbeat:monitor-heartbeat}")
-    private String heartbeatTopic;
+    private final String logsTopic = "monitor-logs";
 
-    @Value("${spring.kafka.topics.metrics-partitions:12}")
+    private final String heartbeatTopic = "monitor-heartbeat";
+
+    @Value("${spring.kafka.topics.metrics-partitions:3}")
     private int metricsPartitions;
 
-    @Value("${spring.kafka.topics.logs-partitions:6}")
+    @Value("${spring.kafka.topics.logs-partitions:3}")
     private int logsPartitions;
 
-    @Value("${spring.kafka.topics.heartbeat-partitions:3}")
+    @Value("${spring.kafka.topics.heartbeat-partitions:1}")
     private int heartbeatPartitions;
 
-    @Value("${spring.kafka.topics.dlq-partitions:3}")
+    @Value("${spring.kafka.topics.dlq-partitions:1}")
     private int dlqPartitions;
 
     @Value("${spring.kafka.topics.replication-factor:1}")
@@ -102,24 +88,7 @@ public class KafkaTopicConfig {
         return t;
     }
 
-    // ==================== 兜底路径:ApplicationReadyEvent 触发后建 topic ====================
 
-    /**
-     * 兜底创建 topic,处理 KafkaAdmin 启动时 broker 未就绪导致 createTopics 失败的情况。
-     *
-     * 时序保证:
-     *   T+0s  spring-boot 启动
-     *   T+0s  @Bean NewTopic 声明(给 KafkaAdmin 尝试)
-     *   T+0s  KafkaAdmin 启动调 createTopics —— 如果 broker 就绪则成功
-     *   T+0s  KafkaAdmin 启动调 createTopics —— 如果 broker 未就绪则失败,spring-kafka 不重试
-     *   T+?s  spring-boot 启动完成
-     *   T+?s  ApplicationReadyEvent 触发
-     *   T+?s  本方法 onApplicationReady() 跑:此时 broker 一定就绪
-     *   T+?s  describeTopics 检查每个 topic 实际 partition 数
-     *   T+?s  - 已存在 + partition 数对 → 跳过
-     *   T+?s  - 已存在 + partition 数不对 → 不处理(partition 数只能加不能减,改用 --alter)
-     *   T+?s  - 不存在 → createTopics
-     */
     @EventListener(ApplicationReadyEvent.class)
     public void onApplicationReady(ApplicationReadyEvent event) {
         List<NewTopic> expected = List.of(
@@ -138,45 +107,65 @@ public class KafkaTopicConfig {
         props.put(AdminClientConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, 10000);
 
         try (AdminClient admin = AdminClient.create(props)) {
-            // 1) 描述所有 topic
-            var existing = admin.describeTopics(expected.stream().map(NewTopic::name).toList())
-                    .allTopicNames().get(8, TimeUnit.SECONDS);
+            var listed = admin.listTopics().names().get(8, TimeUnit.SECONDS);
+            Map<String, Integer> existingPartitions = new HashMap<>();
+            List<String> toDescribe = listed.stream()
+                    .filter(n -> n.equals(metricsTopic) || n.equals(metricsTopic + ".DLQ")
+                            || n.equals(logsTopic) || n.equals(logsTopic + ".DLQ")
+                            || n.equals(heartbeatTopic) || n.equals(heartbeatTopic + ".DLQ"))
+                    .toList();
+            if (!toDescribe.isEmpty()) {
+                var descs = admin.describeTopics(toDescribe).allTopicNames().get(8, TimeUnit.SECONDS);
+                descs.forEach((name, desc) -> existingPartitions.put(name, desc.partitions().size()));
+            }
 
             // 2) 区分:不存在 vs 已存在但 partition 数对 vs 已存在但 partition 数不对
             List<NewTopic> toCreate = new ArrayList<>();
+            int mismatchedCount = 0;
             for (NewTopic nt : expected) {
-                if (!existing.containsKey(nt.name())) {
+                if (!existingPartitions.containsKey(nt.name())) {
                     toCreate.add(nt);
                     log.warn("[spring-watch: 兜底创建 topic - name={}, partitions={}, replicas={}]",
                             nt.name(), nt.numPartitions(), nt.replicationFactor());
                 } else {
-                    int actual = existing.get(nt.name()).partitions().size();
+                    int actual = existingPartitions.get(nt.name());
                     int expectedPartitions = nt.numPartitions();
                     if (actual == expectedPartitions) {
                         log.debug("[spring-watch: topic 已存在且 partition 数对 - name={}, partitions={}]",
                                 nt.name(), actual);
-                    } else if (actual < expectedPartitions) {
-                        // Kafka 协议:partition 数只能加不能减,且不能通过 AdminClient 改
-                        // 需要用户用 --alter 手动加,或者下次"删 .data 重启"时用新值
-                        log.warn("[spring-watch: topic 已存在但 partition 数偏少 - name={}, actual={}, expected={}]." +
-                                        " 需要手动 `kafka-topics.sh --alter --topic {} --partitions {}`",
-                                nt.name(), actual, expectedPartitions, nt.name(), expectedPartitions);
                     } else {
-                        log.warn("[spring-watch: topic 已存在但 partition 数偏多 - name={}, actual={}, expected={}]." +
-                                        " Kafka 协议禁止减 partition,如需对齐请用 mq 重置或重建",
-                                nt.name(), actual, expectedPartitions);
+                        mismatchedCount++;
+                        // Kafka 协议:partition 数只能加不能减,且不能通过 AdminClient 改
+                        // 必须用户手动 `kafka-topics.sh --delete` 后让本方法下次启动重建
+                        //   --delete 需在 broker 配 delete.topic.enable=true(默认 true)
+                        log.error("[spring-watch: topic 已存在但 partition 数不符 - name={}, actual={}, expected={}]." +
+                                        " Kafka 协议禁止缩 partition,需手动 `kafka-topics.sh --bootstrap-server localhost:9092 --delete --topic {}` 后重启 spring-watch",
+                                nt.name(), actual, expectedPartitions, nt.name());
                     }
                 }
             }
 
             // 3) 批量创建不存在的 topic
             if (!toCreate.isEmpty()) {
-                admin.createTopics(toCreate).all().get(8, TimeUnit.SECONDS);
-                log.info("[spring-watch: 兜底创建 topic 完成 - count={}, names={}]",
-                        toCreate.size(),
-                        toCreate.stream().map(NewTopic::name).toList());
+                try {
+                    admin.createTopics(toCreate).all().get(8, TimeUnit.SECONDS);
+                    log.info("[spring-watch: 兜底创建 topic 完成 - count={}, names={}]",
+                            toCreate.size(),
+                            toCreate.stream().map(NewTopic::name).toList());
+                } catch (ExecutionException ee) {
+                    // 部分 topic 可能因 broker auto-create 抢先创建(TOPIC_ALREADY_EXISTS)而不报错
+                    // 这里把 TOPIC_ALREADY_EXISTS 单独识别,其他错误才打 ERROR
+                    if (ee.getCause() instanceof org.apache.kafka.common.errors.TopicExistsException) {
+                        log.info("[spring-watch: 兜底创建 topic —— 已被 broker 抢先 auto-create,跳过 - count={}]", toCreate.size());
+                    } else {
+                        throw ee;
+                    }
+                }
             } else {
-                log.info("[spring-watch: 兜底检查完成 - 所有 topic 已存在,无需创建]");
+                log.info("[spring-watch: 兜底检查完成 - 所有 topic 已存在,无需创建 mismatched={}]", mismatchedCount);
+            }
+            if (mismatchedCount > 0) {
+                log.error("[spring-watch: ❌ {} 个 topic partition 数不符,Kafka 协议禁止缩,需手动 --delete + 重启", mismatchedCount);
             }
         } catch (Throwable t) {
             // 兜底失败不抛,spring-boot 不因此启动失败,后续 KafkaPartitionUtilizationGauge 也会报 unknown topic

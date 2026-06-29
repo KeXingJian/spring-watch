@@ -4,8 +4,8 @@ server:
 spring-watch:
   collector:
     pool-size: 32 # 采集线程池大小
-    per-host-concurrent: 10 # 同一目标主机的最大并发数
-    jitter-percent: 10 # 采集时间抖动百分比（避免雪崩）
+    per-host-concurrent: 32 # 同一目标主机的最大并发数
+    jitter-percent: 20 # 采集时间抖动百分比（避免雪崩）
     http:
       connect-timeout-ms: 3000 # HTTP 连接超时（毫秒）
       read-timeout-ms: 10000 # HTTP 读取超时（毫秒）
@@ -295,10 +295,10 @@ spring:
       metrics: monitor-metrics # 指标 topic
       logs: monitor-logs # 日志 topic
       heartbeat: monitor-heartbeat # 心跳 topic
-      metrics-partitions: 12 # 指标 topic 分区数
-      logs-partitions: 6 # 日志 topic 分区数
-      heartbeat-partitions: 3 # 心跳 topic 分区数
-      dlq-partitions: 3 # 死信队列分区数
+      metrics-partitions: 3 # 指标 topic 分区数(v1.5 收敛: 12→3,白皮书 §0.5 实测后保持收敛)
+      logs-partitions: 3 # 日志 topic 分区数(v1.5 收敛: 6→3)
+      heartbeat-partitions: 1 # 心跳 topic 分区数(v1.5 收敛: 3→1,心跳低频)
+      dlq-partitions: 1 # 死信队列分区数(v1.5 收敛: 3→1,死信极低频)
       replication-factor: 1 # 副本因子（单节点环境为 1）
     dlq:
       retry-max-attempts: 5 # 死信最大重试次数

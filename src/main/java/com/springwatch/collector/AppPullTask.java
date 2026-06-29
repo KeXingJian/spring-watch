@@ -46,7 +46,7 @@ public class AppPullTask {
                 appid, app.getAppName(), host, app.getEndpoint(), app.getMetricsPort(), app.getStatus());
 
         if (!isReachable(app)) {
-            markInactive(app, "agent端口不可达");
+            markInactive(app);
             log.debug("[spring-watch: AppPullTask.run结束 - appid={}, reason=unreachable, totalCostMs={}]",
                     appid, (System.nanoTime() - start) / 1_000_000L);
             return;
@@ -164,9 +164,9 @@ public class AppPullTask {
         kafkaProducerBridge.sendHeartbeat(heartbeat);
     }
 
-    private void markInactive(MonitorApp app, String reason) {
+    private void markInactive(MonitorApp app) {
         log.warn("[spring-watch: Agent失活 - appid={}, app={}, reason={}]",
-                app.getAppid(), app.getAppName(), reason);
+                app.getAppid(), app.getAppName(), "agent端口不可达");
         app.setStatus(MonitorStatus.INACTIVE);
         app.setUpdatedAt(Instant.now());
         monitorAppRepository.save(app);

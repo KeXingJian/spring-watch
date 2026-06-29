@@ -76,6 +76,11 @@ services:
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
       KAFKA_LOG_DIRS: /var/lib/kafka/data
+      # M-KafkaTopicInit-Race / v1.5: 关闭 broker 端 auto-create,避免 consumer 抢先订阅
+      # 未知 topic 时触发 1-partition auto-create,覆盖 spring-kafka KafkaAdmin 的 3-partition 创建
+      # 唯一允许创建 topic 的路径: spring-kafka KafkaAdmin (基于 @Bean NewTopic) +
+      #                          KafkaTopicConfig.onApplicationReady() 兜底
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
       # M-KafkaHealth: 启用 broker JMX,供 spring-watch 的 KafkaBrokerJmxMonitor 连入
       #  - rmi.port=9999  关键:JMX 默认还会再开一个随机端口做 RMI callback,那个端口没 publish,
       #    客户端拉 stub 后再连会卡死。把 callback 端口也锁在 9999,只需 expose 一个端口
