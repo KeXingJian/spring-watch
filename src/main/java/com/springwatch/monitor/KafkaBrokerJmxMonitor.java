@@ -29,6 +29,7 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import org.springframework.beans.factory.annotation.Qualifier;
 
 /**
  * 连到 Kafka broker 的 JMX 端口(默认 9999),拉 broker 进程级 + Kafka 服务级 MBean 写 InfluxDB。
@@ -83,7 +84,7 @@ public class KafkaBrokerJmxMonitor {
     private Counter connectOkCounter;
     private Counter connectFailCounter;
 
-    public KafkaBrokerJmxMonitor(WriteApi writeApi,
+    public KafkaBrokerJmxMonitor(@Qualifier("infraWriteApi") WriteApi writeApi,
                                  MeterRegistry meterRegistry,
                                  @Value("${influxdb.org}") String org,
                                  @Value("${influxdb.infra-bucket:infra_metrics}") String infraBucket) {

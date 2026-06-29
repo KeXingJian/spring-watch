@@ -10,6 +10,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -64,7 +65,7 @@ public class InfrastructureMetricsCollector {
     private final Map<String, String> metricToMeasurement = new HashMap<>();
     private final List<MetricMapping> mappings = new ArrayList<>();
 
-    public InfrastructureMetricsCollector(WriteApi writeApi,
+    public InfrastructureMetricsCollector(@Qualifier("infraWriteApi") WriteApi writeApi,
                                           MeterRegistry meterRegistry,
                                           @Value("${influxdb.org}") String org,
                                           @Value("${influxdb.infra-bucket:infra_metrics}") String infraBucket,

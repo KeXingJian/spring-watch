@@ -17,6 +17,7 @@ import io.micrometer.core.instrument.Timer;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
@@ -33,6 +34,7 @@ import java.util.List;
 public class BatchLogConsumer {
 
     private final ObjectMapper objectMapper;
+    @Qualifier("logsWriteApi")
     private final WriteApi writeApi;
     private final WriteParameters logWriteParameters;
     private final LogParser logParser;

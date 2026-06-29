@@ -36,6 +36,8 @@ public class InfluxDBConfig {
     @Value("${influxdb.self-metrics-bucket:self_metrics}")
     private String selfMetricsBucket;
 
+    // ===== 默认值(向后兼容,各 WriteApi 实际值见 @Bean 注释) =====
+
     @Value("${influxdb.write.batch-size:1000}")
     private int writeBatchSize;
 
@@ -82,21 +84,81 @@ public class InfluxDBConfig {
         return new WriteParameters(selfMetricsBucket, influxOrg, WritePrecision.NS);
     }
 
-    @Bean(destroyMethod = "close")
-    public WriteApi writeApi(InfluxDBClient client) {
+    // ============================================================
+    //  M-WriteApiSplit: 拆 4 个独立 WriteApi Bean,各桶独立 batch/flush/buffer
+    //  原因(白皮书 §0.5):原 1 个共享 WriteApi,3 个 topic 互相抢 buffer,
+    //  metrics flush 卡住时 logs 也跟着卡。拆分后互不干扰。
+    //
+    //  4 个桶独立调参:
+    //    metrics  (大流量,batch=5000, flush=1000ms, buffer=100000)
+    //    logs     (中等流量,batch=3000, flush=1000ms, buffer=50000)
+    //    self     (低频,默认值即可)
+    //    infra    (低频,默认值即可,5 个 monitor 共享)
+    //
+    //  注入方式:用 @Qualifier("metricsWriteApi") 等,见各 Consumer/Collector。
+    // ============================================================
+
+    @Bean(name = "metricsWriteApi", destroyMethod = "close")
+    public WriteApi metricsWriteApi(InfluxDBClient client) {
         WriteOptions options = WriteOptions.builder()
-                .batchSize(writeBatchSize)
-                .flushInterval(writeFlushIntervalMs)
-                .bufferLimit(writeBufferLimit)
+                .batchSize(5000)
+                .flushInterval(1000)
+                .bufferLimit(100000)
                 .retryInterval(writeRetryIntervalMs)
                 .maxRetries(writeMaxRetries)
                 .maxRetryDelay(writeMaxRetryDelayMs)
                 .maxRetryTime(writeMaxRetryTimeMs)
                 .jitterInterval(writeJitterIntervalMs)
                 .build();
-        log.info("[spring-watch: WriteApi 初始化 - batchSize={}, flushInterval={}ms, bufferLimit={}, maxRetries={}, maxRetryTime={}ms]",
-                writeBatchSize, writeFlushIntervalMs, writeBufferLimit,
-                writeMaxRetries, writeMaxRetryTimeMs);
+        log.info("[spring-watch: WriteApi(metrics) 初始化 - batch=5000, flush=1000ms, buffer=100000]");
+        return client.makeWriteApi(options);
+    }
+
+    @Bean(name = "logsWriteApi", destroyMethod = "close")
+    public WriteApi logsWriteApi(InfluxDBClient client) {
+        WriteOptions options = WriteOptions.builder()
+                .batchSize(3000)
+                .flushInterval(1000)
+                .bufferLimit(50000)
+                .retryInterval(writeRetryIntervalMs)
+                .maxRetries(writeMaxRetries)
+                .maxRetryDelay(writeMaxRetryDelayMs)
+                .maxRetryTime(writeMaxRetryTimeMs)
+                .jitterInterval(writeJitterIntervalMs)
+                .build();
+        log.info("[spring-watch: WriteApi(logs) 初始化 - batch=3000, flush=1000ms, buffer=50000]");
+        return client.makeWriteApi(options);
+    }
+
+    @Bean(name = "selfMetricsWriteApi", destroyMethod = "close")
+    public WriteApi selfMetricsWriteApi(InfluxDBClient client) {
+        WriteOptions options = WriteOptions.builder()
+                .batchSize(1000)
+                .flushInterval(2000)
+                .bufferLimit(20000)
+                .retryInterval(writeRetryIntervalMs)
+                .maxRetries(writeMaxRetries)
+                .maxRetryDelay(writeMaxRetryDelayMs)
+                .maxRetryTime(writeMaxRetryTimeMs)
+                .jitterInterval(writeJitterIntervalMs)
+                .build();
+        log.info("[spring-watch: WriteApi(selfMetrics) 初始化 - batch=1000, flush=2000ms, buffer=20000]");
+        return client.makeWriteApi(options);
+    }
+
+    @Bean(name = "infraWriteApi", destroyMethod = "close")
+    public WriteApi infraWriteApi(InfluxDBClient client) {
+        WriteOptions options = WriteOptions.builder()
+                .batchSize(1000)
+                .flushInterval(2000)
+                .bufferLimit(20000)
+                .retryInterval(writeRetryIntervalMs)
+                .maxRetries(writeMaxRetries)
+                .maxRetryDelay(writeMaxRetryDelayMs)
+                .maxRetryTime(writeMaxRetryTimeMs)
+                .jitterInterval(writeJitterIntervalMs)
+                .build();
+        log.info("[spring-watch: WriteApi(infra) 初始化 - batch=1000, flush=2000ms, buffer=20000]");
         return client.makeWriteApi(options);
     }
 

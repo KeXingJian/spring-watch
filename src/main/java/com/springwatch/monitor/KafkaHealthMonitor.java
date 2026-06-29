@@ -19,6 +19,7 @@ import org.apache.kafka.clients.admin.ReplicaInfo;
 import org.apache.kafka.clients.admin.TopicDescription;
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.TopicPartitionInfo;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -86,7 +87,7 @@ public class KafkaHealthMonitor {
     public static final String M_PRODUCER_SENT = "kafka.producer.sent";
     public static final String M_PRODUCER_FAILED = "kafka.producer.failed";
 
-    public KafkaHealthMonitor(WriteApi writeApi,
+    public KafkaHealthMonitor(@Qualifier("infraWriteApi") WriteApi writeApi,
                               MeterRegistry meterRegistry,
                               KafkaProducerBridge producerBridge,
                               @Value("${influxdb.org}") String org,

@@ -16,6 +16,9 @@ import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
 import java.io.File;
@@ -87,6 +90,7 @@ public class SelfMonitorCollector {
     private final MeterRegistry meterRegistry;
     private final KafkaFallbackQueue kafkaFallbackQueue;
     private final HostThrottler hostThrottler;
+    @Qualifier("selfMetricsWriteApi")
     private final WriteApi writeApi;
     private final WriteParameters selfMetricsWriteParameters;
 
@@ -103,8 +107,19 @@ public class SelfMonitorCollector {
     private Counter persistedCounter;
     private Counter persistFailCounter;
 
+    /**
+     * @PostConstruct 只做 meter 注册(无副作用,立即可执行);
+     * scheduler 启动延后到 {@link #onApplicationReady(ApplicationReadyEvent)},
+     * 避免 self-monitor-sampler 在 Flyway 迁移 + InfluxDB bucket 初始化完成前就开始采样。
+     *
+     * 修复前的问题(M-WriteApiSplit / M-SelfMonitorTiming):
+     * - scheduler.scheduleWithFixedDelay(this::sample, 0L, ...) 启动延迟 0 秒
+     * - sampler 立即调 AlertHistoryRepository.count() 查 alert_history → Flyway V1 还没跑,表不存在
+     * - sampler 立即调 selfMetricsWriteApi.writePoints() → InfluxDBBucketInitializer 还没触发 ApplicationReadyEvent,bucket 不存在
+     * - 报错后 Spring Context 卡住,"Started SpringWatchApplication" 不打印
+     */
     @PostConstruct
-    void start() {
+    void registerMeters() {
         this.filteredMeterCounter = Counter.builder("spring.watch.self.monitor.capture.filtered")
                 .description("被白名单过滤掉的 meter 数量")
                 .register(meterRegistry);
@@ -172,13 +187,26 @@ public class SelfMonitorCollector {
         Gauge.builder("spring.watch.influxdb.write.point.queued", writeApi, SelfMonitorCollector::readWriteApiPendingPoints)
                 .description("InfluxDB WriteApi 内部 pending points 估算")
                 .register(meterRegistry);
+        this.scheduler = null;
+    }
+
+    /**
+     * 延后到 ApplicationReadyEvent 触发后再启动 scheduler。
+     * 此时:
+     *   - Flyway 全部迁移已跑完,alert_history / alert_rule 等表已存在
+     *   - InfluxDBBucketInitializer / InfraMetricsBucketInitializer 已建好 self_metrics / infra_metrics bucket
+     *   - KafkaTopicConfig 已通过 NewTopic Bean 创建 monitor-* topic
+     *   - Kafka producer / consumer 已启动
+     */
+    @EventListener(ApplicationReadyEvent.class)
+    public void onApplicationReady(ApplicationReadyEvent event) {
         this.scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "self-monitor-sampler");
             t.setDaemon(true);
             return t;
         });
         scheduler.scheduleWithFixedDelay(this::sample, 0L, SAMPLE_INTERVAL_SEC, TimeUnit.SECONDS);
-        log.info("[spring-watch: SelfMonitorCollector 启动 - interval={}s, ring={}, whitelist={}]",
+        log.info("[spring-watch: SelfMonitorCollector 启动(延后到 ApplicationReadyEvent) - interval={}s, ring={}, whitelist={}]",
                 SAMPLE_INTERVAL_SEC, RING_SIZE, METER_WHITELIST_PREFIXES.size());
     }
 

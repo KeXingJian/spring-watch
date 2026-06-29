@@ -72,6 +72,11 @@ spring-watch:
       url: ${KAFKA_BROKER_JMX_URL:}
       username: ${KAFKA_BROKER_JMX_USER:}
       password: ${KAFKA_BROKER_JMX_PASSWORD:}
+    partition-utilization:
+      enabled: true # M-PartitionUtil: 按 topic × partition 维度采集 produced_rate / consumed_rate / lag,1~2 周调研后决定 partition 数是否需要收敛
+      poll-interval-sec: 30
+      topics: monitor-metrics,monitor-logs,monitor-heartbeat
+      group-id: spring-watch
     fallback-queue:
       capacity: 10000 # 兜底内存队列容量（P1-1: 50000 → 10000）
       max-payload-bytes: 16384 # 单条 payload 截断阈值（字节，P1-1）
@@ -271,7 +276,7 @@ spring:
     consumer:
       group-id: spring-watch # 消费者组
       auto-offset-reset: earliest # 偏移量重置策略
-      max-poll-records: 200 # 单次 poll 最大条数（P2-2: 500 → 200，单批峰值下降 60%）
+      max-poll-records: 500 # 单次 poll 最大条数（M-WriteApiSplit: 200 → 500，与 metricsWriteApi batch-size=5000 匹配）
       fetch-min-size: 1024 # 最小拉取字节数
       fetch-max-wait: 200 # 拉取最大等待（毫秒）
       max-poll-interval-ms: 300000 # 两次 poll 最大间隔（毫秒）
@@ -329,8 +334,14 @@ influxdb:
     window: 5m # 降采样窗口大小
     task-every: 1h # 任务调度频率
   write:
-    batch-size: 1000 # 每批写入条数
-    flush-interval-ms: 2000 # 刷新间隔（毫秒，P1-8: 1000 → 2000）
+    # M-WriteApiSplit: 阶段 ① 调大 batch/flush/buffer 三个核心参数,默认值保持兼容
+    # 各 WriteApi 实际值见 application.yml 注释 + InfluxDBConfig.java
+    #   metrics:  batch=5000  flush=1000ms  buffer=100000
+    #   logs:     batch=3000  flush=1000ms  buffer=50000
+    #   self:     batch=1000  flush=2000ms  buffer=20000 (默认)
+    #   infra:    batch=1000  flush=2000ms  buffer=20000 (默认)
+    batch-size: 1000 # 每批写入条数(默认,各 WriteApi 实际值见 InfluxDBConfig.java)
+    flush-interval-ms: 2000 # 刷新间隔（毫秒,P1-8: 1000 → 2000）
     buffer-limit: 20000 # 内存缓冲上限（P1-8: 100000 → 20000）
     retry-interval-ms: 1000 # 写入失败重试间隔（毫秒）
     max-retries: 3 # 最大重试次数

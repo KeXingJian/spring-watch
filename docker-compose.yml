@@ -44,10 +44,11 @@ services:
       DOCKER_INFLUXDB_INIT_ORG: spring-watch
       DOCKER_INFLUXDB_INIT_BUCKET: metrics
       DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: sw-token-2024
-      INFLUXD_CONFIG_PATH: /etc/influxdb2/config.toml
     volumes:
       - .data/influxdb_data:/var/lib/influxdb2
-      - ./influxdb.conf:/etc/influxdb2/config.toml:ro
+      # 不挂载 influxdb.conf:InfluxDB 2.7 entrypoint 收到 INFLUXD_CONFIG_PATH 时
+      # 会按 1.x 格式读 config,本配置文件的 key 跟 1.x 一样,被 2.x 判定为 1.x flag 而拒启动
+      # 改用 InfluxDB 2.x 默认配置,内存由容器 mem_limit: 1g 物理兜底(白皮书 §0.6)
     healthcheck:
       test: ["CMD", "influx", "ping"]
       interval: 10s

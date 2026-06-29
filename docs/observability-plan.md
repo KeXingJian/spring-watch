@@ -249,6 +249,49 @@ monitor-heartbeat.DLQ 3 partition
 - 消费 lag
 - 生产者错误数
 
+#### C.6 Partition 利用率(2026-06-29 新增,M-PartitionUtil 调研项)
+
+**目的**:白皮书 §0.5 提出"单机下 Kafka 多分区没收益"的判断,需 1~2 周实测数据支撑/反驳当前 `monitor-metrics=12 / logs=6 / heartbeat=3` 是否冗余。
+
+**数据源**:`KafkaPartitionUtilizationGauge.java`,纯 AdminClient 采样,**不依赖 JMX**。
+
+**采集方式**:
+- 每 30s 调一次 `AdminClient.listOffsets()` + `listConsumerGroupOffsets()`
+- 本轮 `end_offset - prev_end_offset` ÷ 30s = `produced_rate`(条/s)
+- 本轮 `committed_offset - prev_committed_offset` ÷ 30s = `consumed_rate`(条/s)
+- `lag = end_offset - committed_offset`
+
+**InfluxDB 写入**:
+- measurement: `infra_metrics`
+- tags: `component=kafka`, `metric=kafka.partition.utilization`, `topic`, `partition`
+- fields: `produced_rate`, `consumed_rate`, `lag`, `end_offset`, `committed_offset`, `replicas`, `isr`
+
+**Grafana 面板规范**("Kafka / Partition 利用率" 子卡,放在 InfraPane 顶部):
+
+| 图表 | 类型 | Flux 查询(伪 SQL) | 用途 |
+|---|---|---|---|
+| **Partition 利用率热力图** | Heatmap / table | `SELECT mean(consumed_rate) FROM infra_metrics WHERE component='kafka' AND metric='kafka.partition.utilization' AND time > now() - 1h GROUP BY topic, partition` | 横向 = partition 号,纵向 = topic,色块 = `consumed_rate`。`0` 灰、`1~10` 绿、`10~100` 黄、`>100` 红 |
+| **Top-5 hot partition**(本周) | BarGauge | `SELECT top(consumed_rate, 5) FROM ... GROUP BY topic, partition` | 看 hotkey 集中度 |
+| **produce vs consume 速率对比**(按 topic) | Stacked time series | `SELECT mean(produced_rate) AS produced, mean(consumed_rate) AS consumed FROM ... GROUP BY topic, time(1m)` | topic 整体健康度(produce ≈ consume = 健康;produce >> consume = 积压) |
+| **总 lag**(按 topic) | Time series | `SELECT sum(lag) FROM ... GROUP BY topic, time(1m)` | 已有 KafkaLagMonitor 复盘对比 |
+
+**判断规则**(白皮书 §0.5 决策表,跑 1~2 周后回看):
+
+| 观察到的现象 | 结论 | 建议动作 |
+|---|---|---|
+| 所有 partition `consumed_rate` 均匀且都 < 10 batch/s | **多分区完全冗余** | 降到 3/3/1/1(对齐 concurrency=3) |
+| 1~2 个 partition 持续 > 100 msg/s,其他 < 10 msg/s | **hotkey 集中** | 保留当前分区数,或调大 `linger.ms` + `batch.size` |
+| 所有 partition 都 > 50 msg/s | **真需要并行** | 保留 / **增加 consumer concurrency**(注意:consumer ≤ partition) |
+| 单 partition 写入打满单盘 IO | **单盘瓶颈** | 换 SSD / 加内存当 page cache,调 partition 没用 |
+| `produced_rate` 持续 < `consumed_rate`(生产追不上消费) | **采集层是瓶颈** | 加大 `pull-batch` / 加 `per-host-concurrent` / 减少拉取频率 |
+
+**配置开关**:`application.yml` `spring-watch.kafka.partition-utilization.enabled=true`(默认开),`false` 关闭,代码仍可编译但不做任何 AdminClient 调用。
+
+**反模式**:
+- ❌ **禁止**把 `produced_rate` / `consumed_rate` 接到告警上(它们是"调研用指标",波动正常,触发告警会产生噪音)
+- ❌ **禁止**把 `lag` 字段跟 `KafkaLagMonitor` 的 `consumer.lag` 同时告警(同一物理量,会重复告警;`lag` 字段只用于看历史)
+- ❌ **禁止**调短 poll-interval 到 < 10s(AdminClient 每次要 3 次 RPC,频率太高会拖慢 broker)
+
 ---
 
 ## 三、采集实现方案

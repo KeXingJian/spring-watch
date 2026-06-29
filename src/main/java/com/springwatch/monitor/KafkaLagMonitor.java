@@ -16,6 +16,7 @@ import org.apache.kafka.clients.admin.ListOffsetsResult;
 import org.apache.kafka.clients.admin.OffsetSpec;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.common.TopicPartition;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -62,7 +63,7 @@ public class KafkaLagMonitor {
     private final AtomicLong lastSuccessEpochMs = new AtomicLong(0L);
     private volatile String lastError = "";
 
-    public KafkaLagMonitor(WriteApi writeApi,
+    public KafkaLagMonitor(@Qualifier("infraWriteApi") WriteApi writeApi,
                            MeterRegistry meterRegistry,
                            @Value("${influxdb.org}") String org,
                            @Value("${influxdb.infra-bucket:infra_metrics}") String infraBucket) {

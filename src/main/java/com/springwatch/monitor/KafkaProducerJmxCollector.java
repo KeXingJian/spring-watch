@@ -13,6 +13,7 @@ import org.apache.kafka.clients.producer.Producer;
 import org.apache.kafka.common.Metric;
 import org.apache.kafka.common.MetricName;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.kafka.core.ProducerFactory;
 import org.springframework.stereotype.Component;
 
@@ -60,7 +61,7 @@ public class KafkaProducerJmxCollector {
     private final AtomicLong lastSuccessEpochMs = new AtomicLong(0L);
     private volatile String lastError = "";
 
-    public KafkaProducerJmxCollector(WriteApi writeApi,
+    public KafkaProducerJmxCollector(@Qualifier("infraWriteApi") WriteApi writeApi,
                                      MeterRegistry meterRegistry,
                                      ProducerFactory<String, String> producerFactory,
                                      @Value("${influxdb.org}") String org,
