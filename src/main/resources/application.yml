@@ -351,7 +351,7 @@ influxdb:
 
 logging:
   level:
-    com.springwatch: info # 自定义包日志级别（P2-3: debug → info，避免每次评估/采样都格式化 toString）
+    com.springwatch: warn # 自定义包日志级别（P2-3: debug → info，避免每次评估/采样都格式化 toString）
   file:
     path: ./.log # 日志输出目录
 
