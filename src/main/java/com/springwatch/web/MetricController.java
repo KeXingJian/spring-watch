@@ -2,10 +2,13 @@ package com.springwatch.web;
 
 import com.springwatch.model.dto.ApiResponse;
 import com.springwatch.service.MetricQueryService;
+import com.springwatch.service.MetricQueryService.AppViewSpec;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -172,6 +175,31 @@ public class MetricController {
         out.put("rows", matched);
         return ApiResponse.ok(out);
     }
+
+    /**
+     * 应用指标 batch 查询。前端按 view 维度构造 specs 数组,后端并发查 InfluxDB 合并响应。
+     * 替代前端多次 Promise.all 的 N 次 /series + /latest + /grouped + /histogram-quantile 调用。
+     *
+     * POST /api/metrics/batch?appid=1
+     * body: { from, to, every, specs: [{ key, type, metric, tagFilters, agg, every, groupBy, quantiles }] }
+     * 响应: { appid, from, to, results: { key: <该 type 的原生响应结构> }, errors, elapsedMs }
+     */
+    @PostMapping("/batch")
+    public ApiResponse<Map<String, Object>> batch(@RequestParam("appid") Long appid,
+                                                  @RequestBody BatchRequest body) {
+        Instant from = body.from() != null ? body.from() : Instant.now().minusSeconds(900);
+        Instant to = body.to() != null ? body.to() : Instant.now();
+        log.info("[spring-watch: 应用指标 batch - appid={}, specs={}]", appid, body.specs() == null ? 0 : body.specs().size());
+        return ApiResponse.ok(metricQueryService.queryBatch(appid, from, to, body.every(), body.specs()));
+    }
+
+    /** batch 请求体。every 是 series / quantile 的默认步长,spec 自己的 every 优先。 */
+    public record BatchRequest(
+            Instant from,
+            Instant to,
+            String every,
+            List<AppViewSpec> specs
+    ) {}
 
     /**
      * 从请求参数全集中剔除保留字段，提取出真正的标签过滤条件。

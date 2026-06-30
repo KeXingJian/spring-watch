@@ -18,6 +18,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -355,6 +356,147 @@ public class SelfMetricQueryService {
             if (e.getValue() == null) continue;
             out.put(e.getKey(), e.getValue());
         }
+    }
+
+    /**
+     * 自监控页各 view 的时序指标定义。前端进入某 tab 时一次性拉取,后端并发查 InfluxDB。
+     * key 是前端约定的字段名(用于响应里定位),其他字段对应一次 querySeries 调用。
+     */
+    public record ViewSpec(
+            String key,
+            String category,
+            String metric,
+            String agg,
+            String field,
+            String meterType,
+            String gcName
+    ) {
+        public static ViewSpec of(String key, String category, String metric, String agg) {
+            return new ViewSpec(key, category, metric, agg, "value", null, null);
+        }
+        public static ViewSpec of(String key, String category, String metric, String agg, String field) {
+            return new ViewSpec(key, category, metric, agg, field, null, null);
+        }
+        public static ViewSpec timer(String key, String category, String metric, String agg) {
+            return new ViewSpec(key, category, metric, agg, "count", "timer", null);
+        }
+    }
+
+    /** view 名 -> 该 view 一次刷新所需的全部 series spec。 */
+    public static final Map<String, List<ViewSpec>> VIEW_SPECS = Map.of(
+            "overview", List.of(
+                    ViewSpec.timer("metric_q_latest",   "meter", "spring.watch.metric.query.latest",    "rate"),
+                    ViewSpec.timer("metric_q_series",   "meter", "spring.watch.metric.query.series",    "rate"),
+                    ViewSpec.timer("metric_q_grouped",  "meter", "spring.watch.metric.query.grouped",   "rate"),
+                    ViewSpec.timer("metric_q_histogram","meter", "spring.watch.metric.query.histogram", "rate"),
+                    ViewSpec.of   ("metric_q_fail",     "meter", "spring.watch.metric.query.fail",      "rate"),
+                    ViewSpec.of   ("log_q_search",      "meter", "spring.watch.log.query.search",       "rate"),
+                    ViewSpec.of   ("log_q_patterns",    "meter", "spring.watch.log.query.patterns",     "rate"),
+                    ViewSpec.of   ("log_q_levels",      "meter", "spring.watch.log.query.levels",       "rate"),
+                    ViewSpec.of   ("log_q_trace",       "meter", "spring.watch.log.query.trace",        "rate"),
+                    ViewSpec.of   ("log_q_context",     "meter", "spring.watch.log.query.context",      "rate"),
+                    ViewSpec.of   ("log_q_dedup_top",   "meter", "spring.watch.log.query.dedup_top",    "rate"),
+                    ViewSpec.of   ("log_q_fail",        "meter", "spring.watch.log.query.fail",         "rate"),
+                    ViewSpec.of   ("http_ok",           "meter", "spring.watch.collector.http.success",     "rate"),
+                    ViewSpec.of   ("http_fail",         "meter", "spring.watch.collector.http.failure",     "rate"),
+                    ViewSpec.of   ("http_timeout",      "meter", "spring.watch.collector.http.timeout",     "rate"),
+                    ViewSpec.of   ("http_non2xx",       "meter", "spring.watch.collector.http.non2xx",      "rate"),
+                    ViewSpec.timer("http_calls",        "meter", "spring.watch.collector.http.request",     "rate"),
+                    ViewSpec.of   ("retry_enq",         "meter", "spring.watch.collector.retry.enqueued",   "rate"),
+                    ViewSpec.of   ("retry_drop",        "meter", "spring.watch.collector.retry.dropped",    "rate")
+            ),
+            "collect", List.of(
+                    ViewSpec.of   ("recv_metric",   "meter", "spring.watch.consumer.metric.received",        "rate"),
+                    ViewSpec.of   ("recv_log",      "meter", "spring.watch.consumer.log.received",           "rate"),
+                    ViewSpec.of   ("kept_log",      "meter", "spring.watch.consumer.log.kept",               "rate"),
+                    ViewSpec.of   ("persisted_dlq", "meter", "spring.watch.consumer.dlq.persisted",          "rate"),
+                    ViewSpec.of   ("deduped",       "meter", "spring.watch.consumer.log.deduped",            "rate"),
+                    ViewSpec.of   ("alert_cand",    "meter", "spring.watch.consumer.log.alert_candidate",   "rate"),
+                    ViewSpec.of   ("parse_fail_m",  "meter", "spring.watch.consumer.metric.parse_fail",     "rate"),
+                    ViewSpec.of   ("write_fail_m",  "meter", "spring.watch.consumer.metric.write_fail",     "rate"),
+                    ViewSpec.of   ("parse_fail_l",  "meter", "spring.watch.consumer.log.parse_fail",        "rate"),
+                    ViewSpec.of   ("write_fail_l",  "meter", "spring.watch.consumer.log.write_fail",        "rate"),
+                    ViewSpec.of   ("persist_fail_dlq","meter","spring.watch.consumer.dlq.persist_fail",     "rate"),
+                    ViewSpec.of   ("http_body_rej", "meter", "spring.watch.collector.http.body.rejected",   "rate"),
+                    ViewSpec.of   ("kafka_rej",     "meter", "spring.watch.kafka.fallback.rejected",        "rate"),
+                    ViewSpec.timer("write_calls_m", "meter", "spring.watch.consumer.metric.write",          "rate"),
+                    ViewSpec.timer("write_calls_l", "meter", "spring.watch.consumer.log.write",             "rate"),
+                    ViewSpec.of   ("keep",          "meter", "spring.watch.ingest.log.dedup.keep",          "rate"),
+                    ViewSpec.of   ("drop",          "meter", "spring.watch.ingest.log.dedup.drop",          "rate"),
+                    ViewSpec.of   ("flush",         "meter", "spring.watch.ingest.log.dedup.flush",         "rate"),
+                    ViewSpec.of   ("flush_fail",    "meter", "spring.watch.ingest.log.dedup.flush_fail",    "rate")
+            ),
+            "jvm", List.of(
+                    ViewSpec.of("jvm_heap",        "jvm", "heap.used",       "last"),
+                    ViewSpec.of("jvm_metaspace",   "jvm", "metaspace.used",  "last"),
+                    ViewSpec.of("jvm_nonheap",     "jvm", "nonHeap.used",    "last"),
+                    ViewSpec.of("jvm_pool",        "jvm", "pool.used",       "last"),
+                    ViewSpec.of("jvm_thr_cur",     "jvm", "threads.current", "last"),
+                    ViewSpec.of("jvm_thr_daemon",  "jvm", "threads.daemon",  "last"),
+                    ViewSpec.of("jvm_cls_loaded",  "jvm", "classes.loaded",  "last"),
+                    ViewSpec.of("jvm_gc_time",     "jvm", "gc.time_ms",      "rate")
+            ),
+            "process", List.of(
+                    ViewSpec.of("proc_cpu",        "process", "cpu_load",         "mean"),
+                    ViewSpec.of("proc_sys_cpu",    "process", "system_cpu_load",  "mean"),
+                    ViewSpec.of("proc_rss",        "process", "rss_bytes",        "last"),
+                    ViewSpec.of("proc_heap",       "process", "heap_used",        "last"),
+                    ViewSpec.of("proc_nonheap",    "process", "non_heap_used",    "last"),
+                    ViewSpec.of("proc_virt",       "process", "virtual_bytes",    "last")
+            )
+    );
+
+    /**
+     * 一次拉取一个 view 的全部时序。后端并发查 InfluxDB,合并为一个响应。
+     * 失败容错:单个 spec 异常不影响其它 spec,失败项 spec 留空 + errors 列表记录。
+     */
+    public Map<String, Object> queryView(String view, Instant from, Instant to, String every) {
+        List<ViewSpec> specs = VIEW_SPECS.get(view);
+        Map<String, Object> resp = new LinkedHashMap<>();
+        resp.put("view", view);
+        resp.put("from", from.toString());
+        resp.put("to", to.toString());
+        if (specs == null) {
+            resp.put("error", "unknown view: " + view);
+            resp.put("specs", Map.of());
+            resp.put("errors", List.of());
+            return resp;
+        }
+        String window = (every == null || every.isBlank()) ? defaultEvery(from, to) : every;
+        resp.put("every", window);
+
+        long startNs = System.nanoTime();
+        // 并发查 InfluxDB:InfluxDB QueryApi 内部已线程安全,parallelStream 走 ForkJoinPool。
+        // LinkedHashMap 保留 spec 声明顺序,前端读取稳定。
+        Map<String, Object> results = new LinkedHashMap<>();
+        List<String> errors = new ArrayList<>();
+        java.util.List<ViewSpec> orderedSpecs = specs;
+        Map<String, Map<String, Object>> parallel = orderedSpecs.parallelStream()
+                .collect(Collectors.toMap(
+                        ViewSpec::key,
+                        spec -> {
+                            Map<String, String> tagFilters = new LinkedHashMap<>();
+                            if (spec.meterType() != null) tagFilters.put("meter_type", spec.meterType());
+                            if (spec.gcName() != null) tagFilters.put("gc_name", spec.gcName());
+                            try {
+                                return querySeries(spec.category(), spec.metric(), from, to, spec.agg(), window, tagFilters, spec.field());
+                            } catch (Exception e) {
+                                log.warn("[spring-watch: view={} spec={} 失败 - {}]", view, spec.key(), e.getMessage());
+                                return new LinkedHashMap<>(Map.of("series", List.of(), "count", 0, "error", e.getMessage()));
+                            }
+                        },
+                        (a, b) -> a,
+                        LinkedHashMap::new
+                ));
+        for (ViewSpec s : orderedSpecs) {
+            Map<String, Object> r = parallel.get(s.key());
+            results.put(s.key(), r);
+            if (r != null && r.get("error") != null) errors.add(s.key() + ": " + r.get("error"));
+        }
+        resp.put("specs", results);
+        resp.put("errors", errors);
+        resp.put("elapsedMs", (System.nanoTime() - startNs) / 1_000_000);
+        return resp;
     }
 
     public static class SelfMetricDescriptor {

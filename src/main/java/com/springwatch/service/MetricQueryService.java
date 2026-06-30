@@ -483,4 +483,104 @@ public class MetricQueryService {
         public Instant getLastTime() { return lastTime; }
         public void setLastTime(Instant lastTime) { this.lastTime = lastTime; }
     }
+
+    /**
+     * 应用指标 batch 查询的 spec。前端按 view 维度构造,后端并发查 InfluxDB,合并为一个响应。
+     * type 决定走哪个 queryXxx: latest / series / grouped / histogram-quantile。
+     * 其余字段按 type 解释;tagFilters 对所有类型都生效。
+     */
+    public record AppViewSpec(
+            String key,
+            String type,
+            String metric,
+            Map<String, String> tagFilters,
+            String agg,
+            String every,
+            String groupBy,
+            String quantiles
+    ) {
+        public static AppViewSpec latest(String key, String metric) {
+            return new AppViewSpec(key, "latest", metric, Map.of(), null, null, null, null);
+        }
+        public static AppViewSpec latest(String key, String metric, Map<String, String> tags) {
+            return new AppViewSpec(key, "latest", metric, tags == null ? Map.of() : tags, null, null, null, null);
+        }
+        public static AppViewSpec series(String key, String metric, Map<String, String> tags, String agg, String every) {
+            return new AppViewSpec(key, "series", metric, tags == null ? Map.of() : tags, agg, every, null, null);
+        }
+        public static AppViewSpec grouped(String key, String metric, String groupBy, String agg) {
+            return new AppViewSpec(key, "grouped", metric, Map.of(), agg, null, groupBy, null);
+        }
+        public static AppViewSpec quantile(String key, String metric, Map<String, String> tags, String quantiles, String every) {
+            return new AppViewSpec(key, "histogram-quantile", metric, tags == null ? Map.of() : tags, null, every, null, quantiles);
+        }
+    }
+
+    /**
+     * 一次并发查询一组应用指标 spec,后端走 parallelStream 跑 InfluxDB,合并成一个响应。
+     * 单个 spec 异常不影响其它 spec(降级为空结果 + 错误信息)。
+     * defaultEvery 用于 spec.every 为空时兜底(series / quantile 都用得到)。
+     */
+    public Map<String, Object> queryBatch(Long appid, Instant from, Instant to, String defaultEvery, List<AppViewSpec> specs) {
+        long startNs = System.nanoTime();
+        Map<String, Object> resp = new LinkedHashMap<>();
+        resp.put("appid", appid);
+        resp.put("from", from.toString());
+        resp.put("to", to.toString());
+        if (specs == null || specs.isEmpty()) {
+            resp.put("results", Map.of());
+            resp.put("errors", List.of());
+            resp.put("elapsedMs", 0L);
+            return resp;
+        }
+        String every = (defaultEvery == null || defaultEvery.isBlank()) ? "30s" : defaultEvery;
+        Map<String, Map<String, Object>> parallel = specs.parallelStream()
+                .collect(Collectors.toMap(
+                        AppViewSpec::key,
+                        spec -> runSpec(appid, from, to, every, spec),
+                        (a, b) -> a,
+                        LinkedHashMap::new
+                ));
+        Map<String, Object> results = new LinkedHashMap<>();
+        List<String> errors = new ArrayList<>();
+        for (AppViewSpec s : specs) {
+            Map<String, Object> r = parallel.get(s.key());
+            results.put(s.key(), r);
+            if (r != null && r.get("error") != null) errors.add(s.key() + ": " + r.get("error"));
+        }
+        resp.put("results", results);
+        resp.put("errors", errors);
+        resp.put("elapsedMs", (System.nanoTime() - startNs) / 1_000_000);
+        return resp;
+    }
+
+    private Map<String, Object> runSpec(Long appid, Instant from, Instant to, String defaultEvery, AppViewSpec spec) {
+        try {
+            return switch (spec.type()) {
+                case "latest" -> queryLatest(appid, spec.metric(), spec.tagFilters());
+                case "series" -> querySeries(appid, spec.metric(), from, to,
+                        spec.agg() == null ? "mean" : spec.agg(),
+                        spec.every() == null ? defaultEvery : spec.every(),
+                        spec.tagFilters());
+                case "grouped" -> queryGrouped(appid, spec.metric(), spec.groupBy(),
+                        spec.agg() == null ? "last" : spec.agg());
+                case "histogram-quantile" -> {
+                    List<Double> qs = new ArrayList<>();
+                    if (spec.quantiles() != null) {
+                        for (String s : spec.quantiles().split(",")) {
+                            try { qs.add(Double.parseDouble(s.trim())); } catch (Exception ignore) {}
+                        }
+                    }
+                    if (qs.isEmpty()) qs.addAll(Arrays.asList(0.5, 0.95, 0.99));
+                    yield queryHistogramQuantile(appid, spec.metric(), qs, from, to,
+                            spec.every() == null ? defaultEvery : spec.every(), spec.tagFilters());
+                }
+                default -> Map.of("error", "unsupported spec type: " + spec.type());
+            };
+        } catch (Exception e) {
+            log.warn("[spring-watch: batch spec 失败 - key={}, type={}, metric={}, error={}]",
+                    spec.key(), spec.type(), spec.metric(), e.getMessage());
+            return new LinkedHashMap<>(Map.of("error", e.getMessage()));
+        }
+    }
 }

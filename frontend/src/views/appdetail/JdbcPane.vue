@@ -1,19 +1,11 @@
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, watch, computed } from 'vue'
-import { api } from '@/api/client'
-import { formatPercent, formatMs } from '@/utils/format'
-import {
-  fetchSeries,
-  flattenPoints,
-  extractTagValue,
-  pickRowValue,
-  type LatestResp,
-  type QuantileResp
-} from '@/composables/metrics'
+import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
+import { fetchAppViewBatch, jdbcViewSpecs, latestRows, seriesItems, quantilePoints, type AppViewBatchResponse } from '@/composables/useAppView'
+import { flattenPoints, extractTagValue, pickRowValue, type MetricRow, type QuantilePoint, type SeriesItem } from '@/composables/metrics'
 import Chart from '@/charts/Chart.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import MetricCard from '@/components/MetricCard.vue'
-import type { LineSeriesItem, BarSeriesItem, PieDatum } from '@/charts/types'
+import type { LineSeriesItem } from '@/charts/types'
 
 const props = defineProps<{ appid: string; rangeSec: number }>()
 
@@ -61,153 +53,107 @@ function avgOf(sum: number | null, count: number | null): number | null {
   return sum / count
 }
 
+function buildQuantileSeries(pts: QuantilePoint[], unit: 's' | 'ms'): LineSeriesItem[] {
+  if (pts.length === 0) return []
+  const factor = unit === 's' ? 1000 : 1
+  return [
+    { name: 'P50', points: pts.map((p) => [p.t, p.q50 == null ? null : p.q50 * factor] as [string, number | null]) },
+    { name: 'P95', points: pts.map((p) => [p.t, p.q95 == null ? null : p.q95 * factor] as [string, number | null]) },
+    { name: 'P99', points: pts.map((p) => [p.t, p.q99 == null ? null : p.q99 * factor] as [string, number | null]) }
+  ]
+}
+
+function buildCountSeries(series: SeriesItem[]): LineSeriesItem[] {
+  if (series.length === 0) return []
+  const allPts = series.flatMap((s) => (s.points || []).map((p) => [p.t, p.v] as [string, number | null]))
+  if (allPts.length === 0) return []
+  return [{ name: '调用次数(累计)', points: allPts, area: true }]
+}
+
 async function refresh() {
+  if (!props.appid) return
   const { from, to } = fromTo()
-  const appid = props.appid
-  if (!appid) return
+  const resp = await fetchAppViewBatch(props.appid, jdbcViewSpecs(), { from, to, every: '30s' })
+  apply(resp)
+}
 
-  try {
-    const [
-      maxR, minR, idleR, usedR, pendingR,
-      useSumR, useCntR, waitSumR, waitCntR, createSumR, createCntR
-    ] = await Promise.all([
-      api.get<LatestResp>('/api/metrics/latest', { appid, metric: 'db_client_connections_max' }),
-      api.get<LatestResp>('/api/metrics/latest', { appid, metric: 'db_client_connections_idle_min' }),
-      api.get<LatestResp>('/api/metrics/latest', { appid, metric: 'db_client_connections_usage', state: 'idle' }),
-      api.get<LatestResp>('/api/metrics/latest', { appid, metric: 'db_client_connections_usage', state: 'used' }),
-      api.get<LatestResp>('/api/metrics/latest', { appid, metric: 'db_client_connections_pending_requests' }),
-      api.get<LatestResp>('/api/metrics/latest', { appid, metric: 'db_client_connections_use_time_milliseconds_sum' }),
-      api.get<LatestResp>('/api/metrics/latest', { appid, metric: 'db_client_connections_use_time_milliseconds_count' }),
-      api.get<LatestResp>('/api/metrics/latest', { appid, metric: 'db_client_connections_wait_time_milliseconds_sum' }),
-      api.get<LatestResp>('/api/metrics/latest', { appid, metric: 'db_client_connections_wait_time_milliseconds_count' }),
-      api.get<LatestResp>('/api/metrics/latest', { appid, metric: 'db_client_connections_create_time_milliseconds_sum' }),
-      api.get<LatestResp>('/api/metrics/latest', { appid, metric: 'db_client_connections_create_time_milliseconds_count' })
-    ])
-
-    const v = (r: LatestResp) => pickRowValue(r?.rows)
-    max.value = v(maxR); min.value = v(minR); idle.value = v(idleR); used.value = v(usedR)
-    pending.value = v(pendingR)
-    usagePct.value = (max.value && used.value != null) ? used.value / max.value : null
-    avgUseMs.value = avgOf(v(useSumR), v(useCntR))
-    avgWaitMs.value = avgOf(v(waitSumR), v(waitCntR))
-    avgCreateMs.value = avgOf(v(createSumR), v(createCntR))
-    pendingClass.value = pending.value != null ? (pending.value > 0 ? 'danger' : 'success') : ''
-  } catch (e: any) {
-    console.warn('jdbc cards failed', e)
-  }
+function apply(resp: AppViewBatchResponse) {
+  // 卡片:11 latest
+  const rowVal = (key: string) => pickRowValue(latestRows<MetricRow>(resp, key))
+  max.value = rowVal('card_max')
+  min.value = rowVal('card_min')
+  idle.value = rowVal('card_idle')
+  used.value = rowVal('card_used')
+  pending.value = rowVal('card_pend')
+  usagePct.value = (max.value && used.value != null) ? used.value / max.value : null
+  avgUseMs.value = avgOf(rowVal('card_use_sum'), rowVal('card_use_cnt'))
+  avgWaitMs.value = avgOf(rowVal('card_wait_sum'), rowVal('card_wait_cnt'))
+  avgCreateMs.value = avgOf(rowVal('card_create_sum'), rowVal('card_create_cnt'))
+  pendingClass.value = pending.value != null ? (pending.value > 0 ? 'danger' : 'success') : ''
 
   // 连接池状态
-  try {
-    const idleSeries = flattenPoints(await fetchSeries(appid, 'db_client_connections_usage', { state: 'idle' }, from, to))
-    const usedSeries = flattenPoints(await fetchSeries(appid, 'db_client_connections_usage', { state: 'used' }, from, to))
-    connChart.value = [
-      { name: '空闲', points: idleSeries, stack: true, area: true },
-      { name: '使用', points: usedSeries, stack: true, area: true }
-    ]
-    if (max.value && max.value > 0) {
-      const maxVal = max.value
-      const pts = usedSeries.map(([t, u]) => [t, u == null ? null : (u / maxVal) * 100] as [string, number | null])
-      usageChart.value = [{ name: '使用率', points: pts, area: true }]
-      clearEmpty('jdbc-usage-chart')
-    } else {
-      usageChart.value = []
-      setEmpty('jdbc-usage-chart', '暂无 max 数据')
-    }
-  } catch {
-    /* ignore */
+  const idlePts = flattenPoints(seriesItems(resp, 'conn_idle'))
+  const usedPts = flattenPoints(seriesItems(resp, 'conn_used'))
+  connChart.value = [
+    { name: '空闲', points: idlePts, stack: true, area: true },
+    { name: '使用', points: usedPts, stack: true, area: true }
+  ]
+  if (max.value && max.value > 0) {
+    const maxVal = max.value
+    usageChart.value = [{ name: '使用率', points: usedPts.map(([t, u]) => [t, u == null ? null : (u / maxVal) * 100] as [string, number | null]), area: true }]
+    clearEmpty('jdbc-usage-chart')
+  } else {
+    usageChart.value = []
+    setEmpty('jdbc-usage-chart', '暂无 max 数据')
   }
 
   // 等待请求
-  try {
-    const ps = flattenPoints(await fetchSeries(appid, 'db_client_connections_pending_requests', {}, from, to))
-    pendingChart.value = ps.length > 0 ? [{ name: '等待请求', points: ps }] : []
-    if (ps.length === 0) setEmpty('jdbc-pending-chart', '暂无等待请求数据')
-    else clearEmpty('jdbc-pending-chart')
-  } catch {
-    pendingChart.value = []
-    setEmpty('jdbc-pending-chart', '加载失败')
-  }
+  const ps = flattenPoints(seriesItems(resp, 'pending'))
+  pendingChart.value = ps.length > 0 ? [{ name: '等待请求', points: ps }] : []
+  if (ps.length === 0) setEmpty('jdbc-pending-chart', '暂无等待请求数据')
+  else clearEmpty('jdbc-pending-chart')
 
   // QPS
-  try {
-    const qpsSeries = await fetchSeries(appid, 'db_client_connections_use_time_milliseconds_count', { agg: 'rate' }, from, to)
-    const arr = qpsSeries.map((s) => ({
-      name: extractTagValue(s.name, 'pool_name') || 'QPS',
-      points: (s.points || []).map((p) => [p.t, p.v] as [string, number | null])
-    }))
-    if (arr.some((s) => s.points.length > 0)) {
-      qpsChart.value = arr
-      clearEmpty('jdbc-qps-chart')
-    } else {
-      qpsChart.value = []
-      setEmpty('jdbc-qps-chart', '暂无 QPS 数据')
-    }
-  } catch {
+  const qpsSeries = seriesItems(resp, 'qps')
+  const arr = qpsSeries.map((s) => ({
+    name: extractTagValue(s.name, 'pool_name') || 'QPS',
+    points: (s.points || []).map((p) => [p.t, p.v] as [string, number | null])
+  }))
+  if (arr.some((s) => s.points.length > 0)) {
+    qpsChart.value = arr
+    clearEmpty('jdbc-qps-chart')
+  } else {
     qpsChart.value = []
-    setEmpty('jdbc-qps-chart', '加载失败')
+    setEmpty('jdbc-qps-chart', '暂无 QPS 数据')
   }
 
   // 分位
-  await renderHistogramQuantile(appid, 'db_client_connections_use_time_milliseconds', 'useQuantile', 'ms')
-  await renderHistogramQuantile(appid, 'db_client_connections_wait_time_milliseconds', 'waitQuantile', 'ms')
-  await renderHistogramQuantile(appid, 'db_client_connections_create_time_milliseconds', 'createQuantile', 'ms')
-  await renderHistogram(appid, 'db_client_connections_use_time_milliseconds', 'useDist', 'ms')
-  await renderHistogram(appid, 'db_client_connections_wait_time_milliseconds', 'waitDist', 'ms')
-  await renderHistogram(appid, 'db_client_connections_create_time_milliseconds', 'createDist', 'ms')
-}
+  const useQ = quantilePoints<QuantilePoint>(resp, 'q_use')
+  const waitQ = quantilePoints<QuantilePoint>(resp, 'q_wait')
+  const createQ = quantilePoints<QuantilePoint>(resp, 'q_create')
+  useQuantile.value = buildQuantileSeries(useQ, 'ms')
+  waitQuantile.value = buildQuantileSeries(waitQ, 'ms')
+  createQuantile.value = buildQuantileSeries(createQ, 'ms')
+  if (useQ.length === 0) setEmpty('jdbc-use-quantile', '暂无分位数据')
+  else clearEmpty('jdbc-use-quantile')
+  if (waitQ.length === 0) setEmpty('jdbc-wait-quantile', '暂无分位数据')
+  else clearEmpty('jdbc-wait-quantile')
+  if (createQ.length === 0) setEmpty('jdbc-create-quantile', '暂无分位数据')
+  else clearEmpty('jdbc-create-quantile')
 
-async function renderHistogramQuantile(appid: string, metric: string, target: 'useQuantile' | 'waitQuantile' | 'createQuantile', unit: string) {
-  const { from, to } = fromTo()
-  try {
-    const r = await api.get<QuantileResp>('/api/metrics/histogram-quantile', {
-      appid, metric, quantiles: '0.5,0.95,0.99', from, to, every: '30s'
-    })
-    const points = r?.points || []
-    const elId = 'jdbc-' + target.replace('Quantile', '-quantile')
-    if (points.length === 0) {
-      setEmpty(elId, '暂无分位数据')
-      if (target === 'useQuantile') useQuantile.value = []
-      if (target === 'waitQuantile') waitQuantile.value = []
-      if (target === 'createQuantile') createQuantile.value = []
-      return
-    }
-    const series: LineSeriesItem[] = [
-      { name: 'P50', points: points.map((p) => [p.t, p.q50 == null ? null : p.q50] as [string, number | null]) },
-      { name: 'P95', points: points.map((p) => [p.t, p.q95 == null ? null : p.q95] as [string, number | null]) },
-      { name: 'P99', points: points.map((p) => [p.t, p.q99 == null ? null : p.q99] as [string, number | null]) }
-    ]
-    if (target === 'useQuantile') useQuantile.value = series
-    if (target === 'waitQuantile') waitQuantile.value = series
-    if (target === 'createQuantile') createQuantile.value = series
-    clearEmpty(elId)
-  } catch {
-    setEmpty('jdbc-' + target.replace('Quantile', '-quantile'), '分位计算失败')
-  }
-}
-
-async function renderHistogram(appid: string, metric: string, target: 'useDist' | 'waitDist' | 'createDist', _unit: string) {
-  const { from, to } = fromTo()
-  const countMetric = metric + '_count'
-  try {
-    const r = await api.get<any>('/api/metrics/series', { appid, metric: countMetric, from, to, every: '30s' })
-    const seriesArr = r?.series || []
-    const allPoints = seriesArr.flatMap((s: any) => (s.points || []).map((p: any) => [p.t, p.v] as [string, number | null]))
-    const elId = 'jdbc-' + target.replace('Dist', '-dist')
-    if (allPoints.length === 0) {
-      setEmpty(elId, '暂无数据(可能未触发采集)')
-      if (target === 'useDist') useDist.value = []
-      if (target === 'waitDist') waitDist.value = []
-      if (target === 'createDist') createDist.value = []
-      return
-    }
-    const series: LineSeriesItem[] = [{ name: '调用次数(累计)', points: allPoints, area: true }]
-    if (target === 'useDist') useDist.value = series
-    if (target === 'waitDist') waitDist.value = series
-    if (target === 'createDist') createDist.value = series
-    clearEmpty(elId)
-  } catch {
-    setEmpty('jdbc-' + target.replace('Dist', '-dist'), '加载失败')
-  }
+  // count 时序(累计)
+  const useDistSeries = buildCountSeries(seriesItems(resp, 'd_use'))
+  const waitDistSeries = buildCountSeries(seriesItems(resp, 'd_wait'))
+  const createDistSeries = buildCountSeries(seriesItems(resp, 'd_create'))
+  useDist.value = useDistSeries
+  waitDist.value = waitDistSeries
+  createDist.value = createDistSeries
+  if (useDistSeries.length === 0) setEmpty('jdbc-use-dist', '暂无数据(可能未触发采集)')
+  else clearEmpty('jdbc-use-dist')
+  if (waitDistSeries.length === 0) setEmpty('jdbc-wait-dist', '暂无数据(可能未触发采集)')
+  else clearEmpty('jdbc-wait-dist')
+  if (createDistSeries.length === 0) setEmpty('jdbc-create-dist', '暂无数据(可能未触发采集)')
+  else clearEmpty('jdbc-create-dist')
 }
 
 function onRefresh(e: any) {

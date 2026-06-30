@@ -1,17 +1,8 @@
 <script setup lang="ts">
-import { ref, type Ref, onMounted, onBeforeUnmount, watch, computed } from 'vue'
-import { api } from '@/api/client'
+import { ref, type Ref, onMounted, onBeforeUnmount, watch } from 'vue'
+import { fetchAppViewBatch, jvmViewSpecs, latestRows, seriesItems, groupedItems, quantilePoints, type AppViewBatchResponse } from '@/composables/useAppView'
 import { formatPercent, formatMs } from '@/utils/format'
-import {
-  fetchSeries,
-  flattenPoints,
-  extractTagValue,
-  translatePoolName,
-  pickRowValue,
-  type LatestResp,
-  type GroupedResp,
-  type QuantileResp
-} from '@/composables/metrics'
+import { extractTagValue, translatePoolName, pickRowValue, type MetricRow, type GroupItem, type QuantilePoint, type SeriesItem } from '@/composables/metrics'
 import Chart from '@/charts/Chart.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import MetricCard from '@/components/MetricCard.vue'
@@ -54,87 +45,84 @@ function fromTo() {
   return { from: from.toISOString(), to: to.toISOString() }
 }
 
+function toMbPoints(series: SeriesItem[]): LineSeriesItem[] {
+  return series.map((s) => ({
+    name: translatePoolName(extractTagValue(s.name, 'jvm_memory_pool_name')) || s.name,
+    points: (s.points || []).map((p) => [p.t, p.v == null ? null : p.v / 1048576] as [string, number | null]),
+    area: true
+  }))
+}
+
+function renderMultiDimBar(groups: GroupItem[], dim1: string, dim2: string): { categories: string[]; series: BarSeriesItem[] } {
+  if (groups.length === 0) return { categories: [], series: [] }
+  const dim1Vals: string[] = []
+  const dim2Set = new Set<string>()
+  const map = new Map<string, number>()
+  for (const g of groups) {
+    const t = g.tags || {}
+    const v1 = t[dim1] || 'default'
+    const v2 = t[dim2] || 'default'
+    if (!dim1Vals.includes(v1)) dim1Vals.push(v1)
+    dim2Set.add(v2)
+    map.set(v1 + '|' + v2, g.value || 0)
+  }
+  const dim2Vals = Array.from(dim2Set).sort()
+  const series: BarSeriesItem[] = dim2Vals.map((d2) => ({
+    name: d2 === 'true' ? 'daemon' : d2 === 'false' ? 'user' : d2,
+    data: dim1Vals.map((d1) => map.get(d1 + '|' + d2) ?? 0)
+  }))
+  return { categories: dim1Vals, series }
+}
+
 async function refresh() {
+  if (!props.appid) return
   const { from, to } = fromTo()
-  const appid = props.appid
-  if (!appid) return
-
-  // 概览卡片
-  try {
-    const [cpu, clsCurr, clsLoaded, clsUnloaded, thrGrp, cpuTimeR] = await Promise.all([
-      api.get<LatestResp>('/api/metrics/latest', { appid, metric: 'jvm_cpu_recent_utilization' }),
-      api.get<LatestResp>('/api/metrics/latest', { appid, metric: 'jvm_class_count' }),
-      api.get<LatestResp>('/api/metrics/latest', { appid, metric: 'jvm_class_loaded_total' }),
-      api.get<LatestResp>('/api/metrics/latest', { appid, metric: 'jvm_class_unloaded_total' }),
-      api.get<LatestResp>('/api/metrics/latest', { appid, metric: 'jvm_thread_count' }),
-      api.get<LatestResp>('/api/metrics/latest', { appid, metric: 'jvm_cpu_time_seconds_total' })
-    ])
-    cpuUtil.value = pickRowValue(cpu?.rows)
-    cpuClass.value = cpuUtil.value == null ? '' : (cpuUtil.value >= 0.85 ? 'danger' : cpuUtil.value >= 0.6 ? 'warn' : 'success')
-    classCurrent.value = pickRowValue(clsCurr?.rows)
-    classLoaded.value = pickRowValue(clsLoaded?.rows)
-    classUnloaded.value = pickRowValue(clsUnloaded?.rows)
-    const totalThreads = (thrGrp?.rows || []).reduce((s, r) => s + (r.value || 0), 0)
-    threads.value = totalThreads > 0 ? totalThreads : null
-    cpuTime.value = pickRowValue(cpuTimeR?.rows)
-  } catch (e) {
-    console.warn('jvm cards failed', e)
-  }
-
-  await renderPool(appid, 'heap', 'heapChart')
-  await renderPool(appid, 'non_heap', 'nonHeapChart')
-  await renderMemUtil(appid)
-  await renderHeapCommitted(appid, from, to)
-  await renderGcCount(appid)
-  await renderGcMean(appid)
-  await renderGcQuantile(appid, from, to)
-  await renderAfterGc(appid)
-  await renderThreadState(appid)
-  await renderClassRate(appid, from, to)
+  const resp = await fetchAppViewBatch(props.appid, jvmViewSpecs(), { from, to, every: '30s' })
+  apply(resp)
 }
 
-async function renderPool(appid: string, memType: string, target: 'heapChart' | 'nonHeapChart') {
-  const { from, to } = fromTo()
-  try {
-    const r = await api.get<any>('/api/metrics/series', { appid, metric: 'jvm_memory_used_bytes', jvm_memory_type: memType, from, to, every: '30s' })
-    const series = r?.series || []
-    if (series.length === 0) {
-      setEmpty(target === 'heapChart' ? 'jvm-heap' : 'jvm-nonheap', '暂无内存数据')
-      if (target === 'heapChart') heapChart.value = []
-      else nonHeapChart.value = []
-      return
-    }
-    const norm = series.map((s: any) => ({
-      name: translatePoolName(extractTagValue(s.name, 'jvm_memory_pool_name')) || s.name,
-      points: (s.points || []).map((p: any) => [p.t, p.v == null ? null : p.v / 1048576] as [string, number | null]),
-      area: true
-    }))
-    if (target === 'heapChart') heapChart.value = norm
-    else nonHeapChart.value = norm
-    clearEmpty(target === 'heapChart' ? 'jvm-heap' : 'jvm-nonheap')
-  } catch {
-    setEmpty(target === 'heapChart' ? 'jvm-heap' : 'jvm-nonheap', '加载失败')
-  }
-}
+function apply(resp: AppViewBatchResponse) {
+  const rowVal = (key: string) => pickRowValue(latestRows<MetricRow>(resp, key))
 
-async function renderMemUtil(appid: string) {
-  try {
-    const [used, limit] = await Promise.all([
-      api.get<LatestResp>('/api/metrics/latest', { appid, metric: 'jvm_memory_used_bytes' }),
-      api.get<LatestResp>('/api/metrics/latest', { appid, metric: 'jvm_memory_limit_bytes' })
-    ])
-    const rows = used?.rows || []
-    if (rows.length === 0) {
-      setEmpty('jvm-mem-util', '暂无内存数据')
-      memUtilBar.value = { categories: [], series: [] }
-      return
-    }
+  cpuUtil.value = rowVal('card_cpu')
+  cpuClass.value = cpuUtil.value == null ? '' : (cpuUtil.value >= 0.85 ? 'danger' : cpuUtil.value >= 0.6 ? 'warn' : 'success')
+  classCurrent.value = rowVal('card_cls_cur')
+  classLoaded.value = rowVal('card_cls_load')
+  classUnloaded.value = rowVal('card_cls_unld')
+  const thrRows = latestRows<MetricRow>(resp, 'card_threads')
+  const totalThreads = thrRows.reduce((s, r) => s + (r.value || 0), 0)
+  threads.value = totalThreads > 0 ? totalThreads : null
+  cpuTime.value = rowVal('card_cpu_time')
+
+  // 堆 / 非堆内存
+  const heap = seriesItems(resp, 'heap')
+  const nonheap = seriesItems(resp, 'nonheap')
+  heapChart.value = toMbPoints(heap)
+  nonHeapChart.value = toMbPoints(nonheap)
+  if (heap.length === 0) setEmpty('jvm-heap', '暂无内存数据')
+  else clearEmpty('jvm-heap')
+  if (nonheap.length === 0) setEmpty('jvm-nonheap', '暂无内存数据')
+  else clearEmpty('jvm-nonheap')
+
+  // heap committed
+  const heapCommittedSeries = seriesItems(resp, 'heap_committed')
+  heapCommitted.value = toMbPoints(heapCommittedSeries)
+  if (heapCommittedSeries.length === 0) setEmpty('jvm-heap-committed', '暂无 committed 数据')
+  else clearEmpty('jvm-heap-committed')
+
+  // 各 pool used% (用 latest 算)
+  const usedRows = latestRows<MetricRow>(resp, 'mem_used')
+  if (usedRows.length === 0) {
+    setEmpty('jvm-mem-util', '暂无内存数据')
+    memUtilBar.value = { categories: [], series: [] }
+  } else {
+    const limitRows = latestRows<MetricRow>(resp, 'mem_limit')
     const limitMap = new Map<string, number>()
-    for (const r of limit?.rows || []) {
+    for (const r of limitRows) {
       const t = r.tags || {}
       if (t.jvm_memory_pool_name) limitMap.set(t.jvm_memory_pool_name, r.value || 0)
     }
-    const data = rows.map((r) => {
+    const data = usedRows.map((r) => {
       const t = r.tags || {}
       const pool = t.jvm_memory_pool_name || 'unknown'
       const usedVal = r.value || 0
@@ -162,83 +150,46 @@ async function renderMemUtil(appid: string) {
     }
     memUtilBar.value = { categories, series: [pctSeries] }
     clearEmpty('jvm-mem-util')
-  } catch {
-    setEmpty('jvm-mem-util', '加载失败')
   }
-}
 
-async function renderHeapCommitted(appid: string, from: string, to: string) {
-  try {
-    const r = await api.get<any>('/api/metrics/series', { appid, metric: 'jvm_memory_committed_bytes', jvm_memory_type: 'heap', from, to, every: '30s' })
-    const series = r?.series || []
-    if (series.length === 0) {
-      setEmpty('jvm-heap-committed', '暂无 committed 数据')
-      heapCommitted.value = []
-      return
-    }
-    const norm = series.map((s: any) => ({
-      name: translatePoolName(extractTagValue(s.name, 'jvm_memory_pool_name')) || s.name,
-      points: (s.points || []).map((p: any) => [p.t, p.v == null ? null : p.v / 1048576] as [string, number | null]),
-      area: true
-    }))
-    heapCommitted.value = norm
-    clearEmpty('jvm-heap-committed')
-  } catch {
-    setEmpty('jvm-heap-committed', '加载失败')
-  }
-}
+  // GC count
+  const gcCountGroups = groupedItems<GroupItem>(resp, 'gc_count')
+  const gcCount = renderMultiDimBar(gcCountGroups, 'jvm_gc_name', 'jvm_gc_action')
+  gcCountBar.value = gcCount
+  if (gcCount.categories.length === 0) setEmpty('jvm-gc-count', 'GC 数据缺失')
+  else clearEmpty('jvm-gc-count')
 
-async function renderGcCount(appid: string) {
-  try {
-    const grp = await api.get<GroupedResp>('/api/metrics/grouped', { appid, metric: 'jvm_gc_duration_seconds_count', groupBy: 'jvm_gc_name,jvm_gc_action' })
-    renderMultiDimBar(grp, gcCountBar, 'jvm_gc_name', 'jvm_gc_action')
-    clearEmpty('jvm-gc-count')
-  } catch {
-    setEmpty('jvm-gc-count', 'GC 数据缺失')
-  }
-}
-
-async function renderGcMean(appid: string) {
-  try {
-    const [sumGrp, countGrp] = await Promise.all([
-      api.get<GroupedResp>('/api/metrics/grouped', { appid, metric: 'jvm_gc_duration_seconds_sum', groupBy: 'jvm_gc_name' }),
-      api.get<GroupedResp>('/api/metrics/grouped', { appid, metric: 'jvm_gc_duration_seconds_count', groupBy: 'jvm_gc_name' })
-    ])
-    const sumMap = new Map<string, number>()
-    for (const g of sumGrp?.groups || []) sumMap.set(g.tags?.jvm_gc_name || g.group || '', g.value || 0)
-    const rows = (countGrp?.groups || []).map((g) => {
-      const name = g.tags?.jvm_gc_name || g.group || ''
-      const sum = sumMap.get(name) || 0
-      const count = g.value || 0
-      return { name, meanMs: count > 0 ? (sum / count) * 1000 : 0 }
-    }).filter((r) => r.name)
-    if (rows.length === 0) {
-      setEmpty('jvm-gc-mean', 'GC 数据缺失')
-      gcMeanBar.value = { categories: [], series: [] }
-      return
-    }
-    rows.sort((a, b) => a.name.localeCompare(b.name))
+  // GC mean
+  const gcSumGroups = groupedItems<GroupItem>(resp, 'gc_sum')
+  const gcCntGroups = groupedItems<GroupItem>(resp, 'gc_cnt')
+  const sumMap = new Map<string, number>()
+  for (const g of gcSumGroups) sumMap.set(g.tags?.jvm_gc_name || g.group || '', g.value || 0)
+  const meanRows = gcCntGroups.map((g) => {
+    const name = g.tags?.jvm_gc_name || g.group || ''
+    const sum = sumMap.get(name) || 0
+    const count = g.value || 0
+    return { name, meanMs: count > 0 ? (sum / count) * 1000 : 0 }
+  }).filter((r) => r.name)
+  if (meanRows.length === 0) {
+    setEmpty('jvm-gc-mean', 'GC 数据缺失')
+    gcMeanBar.value = { categories: [], series: [] }
+  } else {
+    meanRows.sort((a, b) => a.name.localeCompare(b.name))
     gcMeanBar.value = {
-      categories: rows.map((r) => r.name),
-      series: [{ name: '平均耗时', data: rows.map((r) => r.meanMs) }]
+      categories: meanRows.map((r) => r.name),
+      series: [{ name: '平均耗时', data: meanRows.map((r) => r.meanMs) }]
     }
     clearEmpty('jvm-gc-mean')
-  } catch {
-    setEmpty('jvm-gc-mean', 'GC 数据缺失')
   }
-}
 
-async function renderGcQuantile(appid: string, from: string, to: string) {
-  try {
-    const r = await api.get<QuantileResp>('/api/metrics/histogram-quantile', { appid, metric: 'jvm_gc_duration_seconds', from, to, every: '30s' })
-    const points = r?.points || []
-    if (points.length === 0) {
-      setEmpty('jvm-gc-quantile', 'GC 分位数据缺失')
-      gcQuantile.value = []
-      return
-    }
+  // GC quantile
+  const gcQPoints = quantilePoints<QuantilePoint>(resp, 'gc_quantile')
+  if (gcQPoints.length === 0) {
+    setEmpty('jvm-gc-quantile', 'GC 分位数据缺失')
+    gcQuantile.value = []
+  } else {
     const byName = new Map<string, { q50: [string, number | null][]; q95: [string, number | null][]; q99: [string, number | null][] }>()
-    for (const p of points) {
+    for (const p of gcQPoints) {
       const t = p.tags || {}
       const name = t.jvm_gc_name || 'unknown'
       const action = t.jvm_gc_action || 'unknown'
@@ -256,97 +207,47 @@ async function renderGcQuantile(appid: string, from: string, to: string) {
         if (q[k].length > 0) final.push({ name: seriesName + ' ' + k.toUpperCase(), points: q[k] })
       }
     }
-    if (final.length === 0) {
-      setEmpty('jvm-gc-quantile', 'GC 分位数据缺失')
-      gcQuantile.value = []
-      return
-    }
     gcQuantile.value = final
-    clearEmpty('jvm-gc-quantile')
-  } catch (e) {
-    console.warn(e)
-    setEmpty('jvm-gc-quantile', 'GC 分位数据缺失')
+    if (final.length === 0) setEmpty('jvm-gc-quantile', 'GC 分位数据缺失')
+    else clearEmpty('jvm-gc-quantile')
   }
-}
 
-async function renderAfterGc(appid: string) {
-  try {
-    const r = await api.get<LatestResp>('/api/metrics/latest', { appid, metric: 'jvm_memory_used_after_last_gc_bytes' })
-    const rows = r?.rows || []
-    if (rows.length === 0) {
-      setEmpty('jvm-after-gc', '暂无 GC 后数据')
-      afterGcBar.value = { categories: [], series: [] }
-      return
-    }
-    const data = rows.map((r) => ({
+  // after GC
+  const afterRows = latestRows<MetricRow>(resp, 'after_gc')
+  if (afterRows.length === 0) {
+    setEmpty('jvm-after-gc', '暂无 GC 后数据')
+    afterGcBar.value = { categories: [], series: [] }
+  } else {
+    const data = afterRows.map((r) => ({
       name: translatePoolName(r.tags?.jvm_memory_pool_name || 'unknown'),
       value: r.value == null ? 0 : r.value / 1048576
     })).sort((a, b) => b.value - a.value)
     afterGcBar.value = { categories: data.map((d) => d.name), series: [{ name: 'MB', data: data.map((d) => d.value) }] }
     clearEmpty('jvm-after-gc')
-  } catch {
-    setEmpty('jvm-after-gc', '加载失败')
   }
-}
 
-async function renderThreadState(appid: string) {
-  try {
-    const grp = await api.get<GroupedResp>('/api/metrics/grouped', { appid, metric: 'jvm_thread_count', groupBy: 'jvm_thread_state,jvm_thread_daemon' })
-    renderMultiDimBar(grp, threadStateBar, 'jvm_thread_state', 'jvm_thread_daemon')
-    clearEmpty('jvm-thread-state')
-  } catch {
-    setEmpty('jvm-thread-state', '线程数据缺失')
-  }
-}
+  // thread state
+  const tsGroups = groupedItems<GroupItem>(resp, 'thread_state')
+  const tsBar = renderMultiDimBar(tsGroups, 'jvm_thread_state', 'jvm_thread_daemon')
+  threadStateBar.value = tsBar
+  if (tsBar.categories.length === 0) setEmpty('jvm-thread-state', '线程数据缺失')
+  else clearEmpty('jvm-thread-state')
 
-function renderMultiDimBar(grp: GroupedResp | null | undefined, target: Ref<{ categories: string[]; series: BarSeriesItem[] }>, dim1: string, dim2: string) {
-  const groups = grp?.groups || []
-  if (groups.length === 0) {
-    target.value = { categories: [], series: [] }
-    return
+  // class rate
+  const loadSeries = seriesItems(resp, 'cls_load_rate')
+  const unloadSeries = seriesItems(resp, 'cls_unload_rate')
+  const classRateSeries: LineSeriesItem[] = []
+  for (const r of [...loadSeries, ...unloadSeries]) {
+    const m = r.name.match(/jvm_class_(loaded|unloaded)_total/)
+    const label = m ? (m[1] === 'loaded' ? '加载速率' : '卸载速率') : r.name
+    classRateSeries.push({ name: label, points: (r.points || []).map((p) => [p.t, p.v] as [string, number | null]) })
   }
-  const dim1Vals: string[] = []
-  const dim2Set = new Set<string>()
-  const map = new Map<string, number>()
-  for (const g of groups) {
-    const t = g.tags || {}
-    const v1 = t[dim1] || 'default'
-    const v2 = t[dim2] || 'default'
-    if (!dim1Vals.includes(v1)) dim1Vals.push(v1)
-    dim2Set.add(v2)
-    map.set(v1 + '|' + v2, g.value || 0)
-  }
-  const dim2Vals = Array.from(dim2Set).sort()
-  const series: BarSeriesItem[] = dim2Vals.map((d2) => ({
-    name: d2 === 'true' ? 'daemon' : d2 === 'false' ? 'user' : d2,
-    data: dim1Vals.map((d1) => map.get(d1 + '|' + d2) ?? 0)
-  }))
-  target.value = { categories: dim1Vals, series }
-}
-
-async function renderClassRate(appid: string, from: string, to: string) {
-  try {
-    const [loadR, unloadR] = await Promise.all([
-      api.get<any>('/api/metrics/series', { appid, metric: 'jvm_class_loaded_total', from, to, agg: 'rate', every: '30s' }),
-      api.get<any>('/api/metrics/series', { appid, metric: 'jvm_class_unloaded_total', from, to, agg: 'rate', every: '30s' })
-    ])
-    const series: LineSeriesItem[] = []
-    for (const r of [loadR, unloadR]) {
-      for (const s of r?.series || []) {
-        const m = s.name.match(/jvm_class_(loaded|unloaded)_total/)
-        const label = m ? (m[1] === 'loaded' ? '加载速率' : '卸载速率') : s.name
-        series.push({ name: label, points: (s.points || []).map((p: any) => [p.t, p.v] as [string, number | null]) })
-      }
-    }
-    if (series.length === 0) {
-      setEmpty('jvm-class-rate', '暂无类加载数据')
-      classRate.value = []
-    } else {
-      classRate.value = series
-      clearEmpty('jvm-class-rate')
-    }
-  } catch {
-    setEmpty('jvm-class-rate', '加载失败')
+  if (classRateSeries.length === 0) {
+    setEmpty('jvm-class-rate', '暂无类加载数据')
+    classRate.value = []
+  } else {
+    classRate.value = classRateSeries
+    clearEmpty('jvm-class-rate')
   }
 }
 

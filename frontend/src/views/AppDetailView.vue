@@ -158,18 +158,11 @@ function manualRefresh() {
         </div>
       </div>
 
-      <div v-show="activeTab === 'jdbc'">
-        <JdbcPane :appid="appid" :range-sec="rangeSec" />
-      </div>
-      <div v-show="activeTab === 'http'">
-        <HttpPane :appid="appid" :range-sec="rangeSec" />
-      </div>
-      <div v-show="activeTab === 'jvm'">
-        <JvmPane :appid="appid" :range-sec="rangeSec" />
-      </div>
-      <div v-show="activeTab === 'os'">
-        <OsPane :appid="appid" :range-sec="rangeSec" />
-      </div>
+      <!-- v-if 而非 v-show:切换 tab 时才挂载/卸载 pane,挂载即按需拉取;30s 心跳只在父组件发全局事件,各 pane 自行判断是否自己 tab -->
+      <JdbcPane v-if="activeTab === 'jdbc'" :appid="appid" :range-sec="rangeSec" />
+      <HttpPane v-else-if="activeTab === 'http'" :appid="appid" :range-sec="rangeSec" />
+      <JvmPane v-else-if="activeTab === 'jvm'" :appid="appid" :range-sec="rangeSec" />
+      <OsPane v-else-if="activeTab === 'os'" :appid="appid" :range-sec="rangeSec" />
     </template>
   </div>
 </template>

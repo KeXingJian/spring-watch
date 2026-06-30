@@ -1,14 +1,8 @@
 <script setup lang="ts">
 import { ref, type Ref, onMounted, onBeforeUnmount, watch } from 'vue'
-import { api } from '@/api/client'
+import { fetchAppViewBatch, osViewSpecs, latestRows, seriesItems, groupedItems, type AppViewBatchResponse } from '@/composables/useAppView'
 import { formatPercent, formatMB } from '@/utils/format'
-import {
-  fetchSeries,
-  flattenPoints,
-  pickRowValue,
-  type LatestResp,
-  type GroupedResp
-} from '@/composables/metrics'
+import { flattenPoints, pickRowValue, type MetricRow, type GroupItem } from '@/composables/metrics'
 import Chart from '@/charts/Chart.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import MetricCard from '@/components/MetricCard.vue'
@@ -48,129 +42,96 @@ function fromTo() {
 }
 
 async function refresh() {
+  if (!props.appid) return
   const { from, to } = fromTo()
-  const appid = props.appid
-  if (!appid) return
-
-  try {
-    const [cpuCountR, memUtilR, rssR, vmsR] = await Promise.all([
-      api.get<LatestResp>('/api/metrics/latest', { appid, metric: 'jvm_cpu_count' }),
-      api.get<LatestResp>('/api/metrics/latest', { appid, metric: 'system_memory_utilization', state: 'used' }),
-      api.get<LatestResp>('/api/metrics/latest', { appid, metric: 'runtime_java_memory_bytes', type: 'rss' }),
-      api.get<LatestResp>('/api/metrics/latest', { appid, metric: 'runtime_java_memory_bytes', type: 'vms' })
-    ])
-    cpuCount.value = pickRowValue(cpuCountR?.rows)
-    memUtil.value = pickRowValue(memUtilR?.rows)
-    rss.value = pickRowValue(rssR?.rows)
-    vms.value = pickRowValue(vmsR?.rows)
-  } catch (e) {
-    console.warn('os cards failed', e)
-  }
-
-  // 内存 used/free 堆叠面积
-  try {
-    const usedPts = flattenPoints(await fetchSeries(appid, 'system_memory_usage_bytes', { state: 'used' }, from, to))
-    const freePts = flattenPoints(await fetchSeries(appid, 'system_memory_usage_bytes', { state: 'free' }, from, to))
-    memChart.value = [
-      { name: 'used', points: usedPts.map(([t, v]) => [t, v == null ? null : v / 1048576] as [string, number | null]), stack: true, area: true },
-      { name: 'free', points: freePts.map(([t, v]) => [t, v == null ? null : v / 1048576] as [string, number | null]), stack: true, area: true }
-    ]
-  } catch (e) {
-    console.warn(e)
-  }
-
-  // CPU 时间 user/system
-  try {
-    const userPts = flattenPoints(await fetchSeries(appid, 'runtime_java_cpu_time_milliseconds', { type: 'user' }, from, to))
-    const sysPts = flattenPoints(await fetchSeries(appid, 'runtime_java_cpu_time_milliseconds', { type: 'system' }, from, to))
-    cpuChart.value = [
-      { name: 'user', points: userPts },
-      { name: 'system', points: sysPts }
-    ]
-  } catch (e) {
-    console.warn(e)
-  }
-
-  await renderMemPie(appid)
-  await renderGroupedBar(appid, 'system_disk_io_bytes_total', diskIoBar, 'os-disk-io-by-dir', { agg: 'rate', valueTransform: (v: number) => v / 1048576, yAxisName: 'MB/s', emptyMsg: '暂无磁盘 IO 数据' })
-  await renderGroupedBar(appid, 'system_disk_operations_total', diskIopsBar, 'os-disk-iops-by-dir', { agg: 'rate', yAxisName: 'ops/s', emptyMsg: '暂无磁盘 IOPS 数据' })
-  await renderGroupedBar(appid, 'system_network_io_bytes_total', netIoBar, 'os-net-io-by-dir', { agg: 'rate', valueTransform: (v: number) => v / 1048576, yAxisName: 'MB/s', emptyMsg: '暂无网络 IO 数据' })
-  await renderGroupedBar(appid, 'system_network_packets_total', netPktsBar, 'os-net-pkts-by-dir', { agg: 'rate', yAxisName: 'pkts/s', emptyMsg: '暂无网络包数据' })
-  await renderGroupedBar(appid, 'system_network_errors_total', netErrsBar, 'os-net-errors-by-dir', { agg: 'rate', yAxisName: 'errs/s', emptyMsg: '暂无网络错误数据', dangerAboveZero: true })
+  const resp = await fetchAppViewBatch(props.appid, osViewSpecs(), { from, to, every: '30s' })
+  apply(resp)
 }
 
-async function renderMemPie(appid: string) {
-  try {
-    const r = await api.get<LatestResp>('/api/metrics/latest', { appid, metric: 'system_memory_usage_bytes' })
-    const rows = r?.rows || []
-    const used = rows.find((x) => x.tags && x.tags.state === 'used')
-    const free = rows.find((x) => x.tags && x.tags.state === 'free')
-    const data: PieDatum[] = []
-    if (used && used.value != null) data.push({ name: 'used', value: used.value })
-    if (free && free.value != null) data.push({ name: 'free', value: free.value })
-    if (data.length === 0) {
-      setEmpty('os-mem-pie', '暂无内存数据')
-      memPie.value = []
-      return
-    }
-    memPie.value = data
-    clearEmpty('os-mem-pie')
-  } catch {
-    setEmpty('os-mem-pie', '内存数据缺失')
+function renderGroupedBar(groups: GroupItem[], target: Ref<{ categories: string[]; series: BarSeriesItem[] }>, elId: string, opts: { yAxisName: string; valueTransform?: (v: number) => number | null; emptyMsg: string; dangerAboveZero?: boolean }) {
+  if (groups.length === 0) {
+    setEmpty(elId, opts.emptyMsg)
+    target.value = { categories: [], series: [] }
+    return
   }
-}
-
-async function renderGroupedBar(
-  appid: string,
-  metric: string,
-  target: Ref<{ categories: string[]; series: BarSeriesItem[] }>,
-  elId: string,
-  opts: { agg?: string; yAxisName?: string; valueTransform?: (v: number) => number | null; emptyMsg?: string; dangerAboveZero?: boolean }
-) {
-  try {
-    const r = await api.get<GroupedResp>('/api/metrics/grouped', { appid, metric, groupBy: 'device,direction', agg: opts.agg || 'last' })
-    const groups = r?.groups || []
-    if (groups.length === 0) {
-      setEmpty(elId, opts.emptyMsg || '暂无数据')
-      target.value = { categories: [], series: [] }
-      return
-    }
-    const devices: string[] = []
-    const directionsSet = new Set<string>()
-    const map = new Map<string, number>()
-    for (const g of groups) {
-      const tags = g.tags || {}
-      const d1 = tags.device || 'default'
-      const d2 = tags.direction || 'default'
-      if (!devices.includes(d1)) devices.push(d1)
-      directionsSet.add(d2)
-      map.set(d1 + '|' + d2, g.value || 0)
-    }
-    const directions = Array.from(directionsSet).sort()
-    const transform = opts.valueTransform || ((x: number) => x)
-    const series: BarSeriesItem[] = directions.map((dir) => ({
-      name: dir,
-      data: devices.map((dev) => {
-        const v = map.get(dev + '|' + dir)
-        const t = v == null ? 0 : transform(v)
-        return t == null ? 0 : t
-      })
-    }))
-    if (opts.dangerAboveZero) {
-      for (const s of series) {
-        if (s.data.some((d: any) => (typeof d === 'number' ? d : d.value) > 0)) {
-          ;(s as any).itemStyle = { color: '#dc2626' }
-        } else {
-          ;(s as any).itemStyle = { color: '#16a34a' }
-        }
+  const devices: string[] = []
+  const directionsSet = new Set<string>()
+  const map = new Map<string, number>()
+  for (const g of groups) {
+    const tags = g.tags || {}
+    const d1 = tags.device || 'default'
+    const d2 = tags.direction || 'default'
+    if (!devices.includes(d1)) devices.push(d1)
+    directionsSet.add(d2)
+    map.set(d1 + '|' + d2, g.value || 0)
+  }
+  const directions = Array.from(directionsSet).sort()
+  const transform = opts.valueTransform || ((x: number) => x)
+  const series: BarSeriesItem[] = directions.map((dir) => ({
+    name: dir,
+    data: devices.map((dev) => {
+      const v = map.get(dev + '|' + dir)
+      const t = v == null ? 0 : transform(v)
+      return t == null ? 0 : t
+    })
+  }))
+  if (opts.dangerAboveZero) {
+    for (const s of series) {
+      if (s.data.some((d: any) => (typeof d === 'number' ? d : d.value) > 0)) {
+        ;(s as any).itemStyle = { color: '#dc2626' }
+      } else {
+        ;(s as any).itemStyle = { color: '#16a34a' }
       }
     }
-    target.value = { categories: devices, series }
-    clearEmpty(elId)
-  } catch (e) {
-    console.warn('grouped bar failed', metric, e)
-    setEmpty(elId, opts.emptyMsg || '加载失败')
   }
+  target.value = { categories: devices, series }
+  clearEmpty(elId)
+}
+
+function apply(resp: AppViewBatchResponse) {
+  const rowVal = (key: string) => pickRowValue(latestRows<MetricRow>(resp, key))
+  cpuCount.value = rowVal('card_cpu')
+  memUtil.value = rowVal('card_mem')
+  rss.value = rowVal('card_rss')
+  vms.value = rowVal('card_vms')
+
+  // 内存 used/free 堆叠面积
+  const usedPts = flattenPoints(seriesItems(resp, 'mem_used'))
+  const freePts = flattenPoints(seriesItems(resp, 'mem_free'))
+  memChart.value = [
+    { name: 'used', points: usedPts.map(([t, v]) => [t, v == null ? null : v / 1048576] as [string, number | null]), stack: true, area: true },
+    { name: 'free', points: freePts.map(([t, v]) => [t, v == null ? null : v / 1048576] as [string, number | null]), stack: true, area: true }
+  ]
+
+  // CPU 时间 user/system
+  const userPts = flattenPoints(seriesItems(resp, 'cpu_user'))
+  const sysPts = flattenPoints(seriesItems(resp, 'cpu_sys'))
+  cpuChart.value = [
+    { name: 'user', points: userPts },
+    { name: 'system', points: sysPts }
+  ]
+
+  // 内存饼
+  const pieRows = latestRows<MetricRow>(resp, 'mem_pie')
+  const used = pieRows.find((x) => x.tags && x.tags.state === 'used')
+  const free = pieRows.find((x) => x.tags && x.tags.state === 'free')
+  const pieData: PieDatum[] = []
+  if (used && used.value != null) pieData.push({ name: 'used', value: used.value })
+  if (free && free.value != null) pieData.push({ name: 'free', value: free.value })
+  if (pieData.length === 0) {
+    setEmpty('os-mem-pie', '暂无内存数据')
+    memPie.value = []
+  } else {
+    memPie.value = pieData
+    clearEmpty('os-mem-pie')
+  }
+
+  // 5 个 grouped 柱
+  renderGroupedBar(groupedItems<GroupItem>(resp, 'disk_io'),   diskIoBar,   'os-disk-io-by-dir',     { yAxisName: 'MB/s', valueTransform: (v) => v / 1048576, emptyMsg: '暂无磁盘 IO 数据' })
+  renderGroupedBar(groupedItems<GroupItem>(resp, 'disk_iops'), diskIopsBar, 'os-disk-iops-by-dir',   { yAxisName: 'ops/s',                                       emptyMsg: '暂无磁盘 IOPS 数据' })
+  renderGroupedBar(groupedItems<GroupItem>(resp, 'net_io'),    netIoBar,    'os-net-io-by-dir',      { yAxisName: 'MB/s', valueTransform: (v) => v / 1048576, emptyMsg: '暂无网络 IO 数据' })
+  renderGroupedBar(groupedItems<GroupItem>(resp, 'net_pkts'),  netPktsBar,  'os-net-pkts-by-dir',    { yAxisName: 'pkts/s',                                      emptyMsg: '暂无网络包数据' })
+  renderGroupedBar(groupedItems<GroupItem>(resp, 'net_errs'),  netErrsBar,  'os-net-errors-by-dir',  { yAxisName: 'errs/s',                                      emptyMsg: '暂无网络错误数据', dangerAboveZero: true })
 }
 
 function onRefresh(e: any) {

@@ -5,6 +5,7 @@ import com.springwatch.service.SelfMetricQueryService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -110,5 +111,20 @@ public class SelfMonitorController {
         if (meterType != null && !meterType.isBlank()) tagFilters.put("meter_type", meterType);
         if (gcName != null && !gcName.isBlank()) tagFilters.put("gc_name", gcName);
         return selfMetricQueryService.queryLatest(category, metric, tagFilters);
+    }
+
+    /**
+     * 一次拉取一个自监控 view 的全部时序(后端并发查 InfluxDB),替代 N 次 /series 调用。
+     * view: overview / collect / jvm / process。
+     * 响应: { view, from, to, every, specs: { key: { series: [...], count, error? } }, errors: [...], elapsedMs }
+     */
+    @GetMapping("/view/{view}")
+    public Map<String, Object> view(@PathVariable String view,
+                                    @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant from,
+                                    @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant to,
+                                    @RequestParam(required = false) String every) {
+        Instant fromInstant = (from == null) ? Instant.now().minusSeconds(3600) : from;
+        Instant toInstant = (to == null) ? Instant.now() : to;
+        return selfMetricQueryService.queryView(view, fromInstant, toInstant, every);
     }
 }
