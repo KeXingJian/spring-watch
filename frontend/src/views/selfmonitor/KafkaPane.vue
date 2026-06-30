@@ -92,7 +92,7 @@ onBeforeUnmount(() => { stopPolling() })
 
     <div v-else>
       <div v-if="Object.keys(partitionsByTopic).filter((t) => t !== 'monitor-heartbeat').length > 0" class="mb-4">
-        <div class="section-title">Consumer Lag(按 topic 分组,每个 partition 一条线)</div>
+        <div class="section-title">Consumer Lag</div>
         <div v-for="(items, topic) in partitionsByTopic" :key="topic" v-show="topic !== 'monitor-heartbeat'" class="mb-3">
           <div class="text-xs text-muted mb-1">topic = {{ topic }}  ·  {{ items.length }} 个 partition</div>
           <Chart
