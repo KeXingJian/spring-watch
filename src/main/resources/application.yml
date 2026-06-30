@@ -203,14 +203,6 @@ spring-watch:
         threshold: 6442450944 # 6 GB,按生产 broker 堆 8 GB 算 75% 警戒线
         level: warning
         cooldown-seconds: 300
-      # M-KafkaHealth: broker 处理 CPU 负载(0-1)> 0.85 持续超载
-      - name: kafka_broker_cpu_high
-        component: kafka
-        metric: broker.jvm.process_cpu_load
-        op: ">"
-        threshold: 0.85
-        level: warning
-        cooldown-seconds: 300
       # M-KafkaHealth: 生产失败率(消息/秒)> 1
       - name: kafka_broker_produce_failed_rate
         component: kafka

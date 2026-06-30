@@ -160,13 +160,6 @@ public class KafkaBrokerJmxMonitor {
             addAttrIfPresent(conn, points, tsNs, null,
                     "kafka.server:type=ReplicaManager,name=OfflinePartitionsCount",
                     "Value", "broker.offline_partitions");
-            addAttrIfPresent(conn, points, tsNs, null,
-                    "kafka.server:type=ReplicaManager,name=PartitionCount",
-                    "Value", "broker.partitions");
-            addAttrIfPresent(conn, points, tsNs, null,
-                    "kafka.server:type=ReplicaManager,name=LeaderCount",
-                    "Value", "broker.leaders");
-
             // 3) Controller
             addAttrIfPresent(conn, points, tsNs, null,
                     "kafka.controller:type=ControllerStats,name=ActiveControllerCount",
@@ -201,18 +194,6 @@ public class KafkaBrokerJmxMonitor {
             addAttrIfPresent(conn, points, tsNs, null,
                     "java.lang:type=Memory",
                     "NonHeapMemoryUsage.used", "broker.jvm.nonheap_used");
-            addAttrIfPresent(conn, points, tsNs, null,
-                    "java.lang:type=OperatingSystem",
-                    "ProcessCpuLoad", "broker.jvm.process_cpu_load");
-            addAttrIfPresent(conn, points, tsNs, null,
-                    "java.lang:type=OperatingSystem",
-                    "SystemCpuLoad", "broker.jvm.system_cpu_load");
-            addAttrIfPresent(conn, points, tsNs, null,
-                    "java.lang:type=OperatingSystem",
-                    "SystemLoadAverage", "broker.jvm.load_average");
-            addAttrIfPresent(conn, points, tsNs, null,
-                    "java.lang:type=Threading",
-                    "ThreadCount", "broker.jvm.thread_count");
 
             // GC 累加(每个 collector 一条,带 name tag)
             for (ObjectName gc : conn.queryNames(new ObjectName("java.lang:type=GarbageCollector,name=*"), null)) {
@@ -271,7 +252,6 @@ public class KafkaBrokerJmxMonitor {
             Map.entry("BytesOutPerSec", "broker.bytes_out_rate"),
             Map.entry("FailedProduceRequestsPerSec", "broker.produce_failed_rate"),
             Map.entry("FailedFetchRequestsPerSec", "broker.fetch_failed_rate"),
-            Map.entry("ProduceMessageConversionsPerSec", "broker.produce_conversions_rate"),
             Map.entry("InvalidMessageCumulativeCount", "broker.invalid_message_total")
     );
 

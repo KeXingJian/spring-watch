@@ -5,7 +5,6 @@ import { formatBytes, formatPercent, formatNumber } from '@/utils/format'
 import { labelOf } from '@/utils/metricLabels'
 import Chart from '@/charts/Chart.vue'
 import EmptyState from '@/components/EmptyState.vue'
-import MetricCard from '@/components/MetricCard.vue'
 import InfluxDbPane from '@/views/selfmonitor/InfluxDbPane.vue'
 import KafkaPane from '@/views/selfmonitor/KafkaPane.vue'
 import type { LineSeriesItem, BarSeriesItem } from '@/charts/types'
@@ -17,8 +16,8 @@ const tabs: { key: Tab; label: string }[] = [
   { key: 'jvm',      label: 'JVM' },
   { key: 'process',  label: '进程' },
   { key: 'meters',   label: '指标库' },
-  { key: 'influxdb', label: 'InfluxDB 自身' },
-  { key: 'kafka',    label: 'Kafka 集群' }
+  { key: 'influxdb', label: 'InfluxDB' },
+  { key: 'kafka',    label: 'Kafka' }
 ]
 const activeTab = ref<Tab>('overview')
 
@@ -700,18 +699,18 @@ watch(pollSec, () => {
     </div>
 
     <div v-show="activeTab === 'collect'">
-      <div class="section-title">1 · 采集流量(事件/秒) <span v-if="rangeLoading" class="tag">加载中…</span><span v-if="rangeError" class="tag" style="color: oklch(var(--er))">异常: {{ rangeError }}</span></div>
+      <div class="section-title">采集流量(事件/秒) <span v-if="rangeLoading" class="tag">加载中…</span><span v-if="rangeError" class="tag" style="color: oklch(var(--er))">异常: {{ rangeError }}</span></div>
       <div class="chart-row">
         <div class="chart-panel"><div class="panel-head">指标 / 日志 / DLQ 接收速率<span class="tag">InfluxDB series · {{ range }}</span></div><div class="panel-body has-chart"><Chart v-if="trafficChart.length" type="line" :series="trafficChart" :area="true" y-axis-name="evt/s" /><EmptyState v-else inline>{{ rangeError ? '查询异常' : '暂无数据' }}</EmptyState></div></div>
         <div class="chart-panel"><div class="panel-head">日志去重 & 告警候选<span class="tag">drop/s vs alert/s</span></div><div class="panel-body has-chart"><Chart v-if="dedupChart.length" type="line" :series="dedupChart" :area="true" y-axis-name="evt/s" /><EmptyState v-else inline>暂无数据</EmptyState></div></div>
       </div>
 
-      <div class="section-title">2 · 采集失败(事件/秒)</div>
+      <div class="section-title">采集失败(事件/秒)</div>
       <div class="chart-row full">
         <div class="chart-panel"><div class="panel-head">入库失败分类<span class="tag">堆积说明写入侧健康度</span></div><div class="panel-body has-chart"><Chart v-if="failChart.length" type="line" :series="failChart" :area="true" y-axis-name="fail/s" /><EmptyState v-else inline>暂无数据</EmptyState></div></div>
       </div>
 
-      <div class="section-title">3 · 写入与去重耗时</div>
+      <div class="section-title">写入与去重耗时</div>
       <div class="chart-row">
         <div class="chart-panel"><div class="panel-head">指标 / 日志 写入调用速率<span class="tag">calls/s</span></div><div class="panel-body has-chart"><Chart v-if="writeChart.length" type="line" :series="writeChart" y-axis-name="calls/s" /><EmptyState v-else inline>暂无数据</EmptyState></div></div>
         <div class="chart-panel"><div class="panel-head">日志去重 keep/drop/flush 速率<span class="tag">op/s</span></div><div class="panel-body has-chart"><Chart v-if="dedupOpChart.length" type="line" :series="dedupOpChart" :area="true" y-axis-name="op/s" /><EmptyState v-else inline>暂无数据</EmptyState></div></div>
@@ -719,7 +718,7 @@ watch(pollSec, () => {
     </div>
 
     <div v-show="activeTab === 'jvm'">
-      <div class="section-title">6 · JVM 运行时</div>
+      <div class="section-title">JVM 运行时</div>
       <div class="chart-row">
         <div class="chart-panel"><div class="panel-head">内存分布<span class="tag">MB</span></div><div class="panel-body has-chart"><Chart v-if="jvmMemChart.length" type="line" :series="jvmMemChart" :area="true" y-axis-name="MB" /><EmptyState v-else inline>暂无数据</EmptyState></div></div>
         <div class="chart-panel"><div class="panel-head">堆各区已用<span class="tag">按 pool_name 分线,MB</span></div><div class="panel-body has-chart"><Chart v-if="jvmPoolChart.length" type="line" :series="jvmPoolChart" y-axis-name="MB" /><EmptyState v-else inline>暂无数据</EmptyState></div></div>
@@ -731,7 +730,7 @@ watch(pollSec, () => {
     </div>
 
     <div v-show="activeTab === 'process'">
-      <div class="section-title">7 · 进程与主机</div>
+      <div class="section-title">进程与主机</div>
       <div class="chart-row cols-3">
         <div class="chart-panel"><div class="panel-head">CPU 占用<span class="tag">0~100%</span></div><div class="panel-body has-chart"><Chart v-if="procCpuChart.length" type="line" :series="procCpuChart" y-axis-name="%" /><EmptyState v-else inline>暂无数据</EmptyState></div></div>
         <div class="chart-panel"><div class="panel-head">进程内存明细<span class="tag">RSS / JVM 堆 / JVM 非堆 / 虚拟内存,MB</span></div><div class="panel-body has-chart"><Chart v-if="procRssChart.length" type="line" :series="procRssChart" y-axis-name="MB" /><EmptyState v-else inline>暂无数据</EmptyState></div></div>
@@ -747,14 +746,14 @@ watch(pollSec, () => {
     </div>
 
     <div v-show="activeTab === 'meters'">
-      <div class="section-title">8 · 原始 Micrometer 指标(只读)</div>
+      <div class="section-title">原始 Micrometer 指标(只读)</div>
       <div class="card bg-base-100 border border-base-300 shadow-sm">
         <div class="card-body p-0">
           <div class="px-4 py-2.5 border-b border-base-300 flex items-center font-medium text-sm">
             <span>所有 spring.watch.* 指标</span>
             <span class="ml-auto text-xs text-muted font-normal">{{ meterCount }} 条</span>
           </div>
-          <div class="overflow-auto" style="max-height: 420px;">
+          <div class="overflow-auto">
             <table class="table table-pin-rows table-sm table-zebra">
               <thead>
                 <tr class="text-secondary">
