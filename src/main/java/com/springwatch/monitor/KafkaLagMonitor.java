@@ -37,6 +37,14 @@ import java.util.concurrent.atomic.AtomicLong;
 @Component
 public class KafkaLagMonitor {
 
+    private static final String[] TOPICS = {"monitor-metrics", "monitor-logs", "monitor-heartbeat"};
+    private static final String DEFAULT_GROUP_ID = "spring-watch";
+    private static final Map<String, String> TOPIC_GROUPS = Map.of(
+            "monitor-metrics", "spring-watch-metric-writer",
+            "monitor-logs", "spring-watch-log-writer",
+            "monitor-heartbeat", "spring-watch-heartbeat-writer"
+    );
+
     private final WriteApi writeApi;
     private final MeterRegistry meterRegistry;
     private final WriteParameters writeParameters;
@@ -77,13 +85,12 @@ public class KafkaLagMonitor {
                 .register(meterRegistry);
 
         // 配置体检:每个 topic 必须显式指定 group(否则 lag 会显示"累计消息数"而不是真实堆积)
-        Map<String, String> groups = props.getGroups() != null ? props.getGroups() : Map.of();
-        for (String topic : props.getTopics()) {
-            if (!groups.containsKey(topic)) {
-                log.warn("[spring-watch: KafkaLagMonitor] topic '{}' 没在 lag-monitor.groups 里指定 consumer group,"
+        for (String topic : TOPICS) {
+            if (!TOPIC_GROUPS.containsKey(topic)) {
+                log.warn("[spring-watch: KafkaLagMonitor] topic '{}' 没在 TOPIC_GROUPS 里指定 consumer group,"
                                 + " 默认会用 '{}' 查 committed offset。"
                                 + " 如果该 topic 的实际消费者不在这个 group,lag 数字会等于 log end offset(累计消息数),不是真实堆积",
-                        topic, props.getGroupId());
+                        topic, DEFAULT_GROUP_ID);
             }
         }
 
@@ -102,8 +109,8 @@ public class KafkaLagMonitor {
         this.scheduler = Executors.newSingleThreadScheduledExecutor(tf);
         scheduler.scheduleWithFixedDelay(this::poll, 10L, props.getPollIntervalSec(), TimeUnit.SECONDS);
         log.info("[spring-watch: KafkaLagMonitor 启动 - interval={}s, topics={}, groupId={}, topicGroups={}",
-                props.getPollIntervalSec(), String.join(",", props.getTopics()),
-                props.getGroupId(), props.getGroups());
+                props.getPollIntervalSec(), String.join(",", TOPICS),
+                DEFAULT_GROUP_ID, TOPIC_GROUPS);
     }
 
     @PreDestroy
@@ -115,9 +122,9 @@ public class KafkaLagMonitor {
 
     private void poll() {
         try {
-            String groupId = props.getGroupId();
-            String[] topics = props.getTopics();
-            Map<String, String> topicGroups = props.getGroups() != null ? props.getGroups() : Map.of();
+            String groupId = DEFAULT_GROUP_ID;
+            String[] topics = TOPICS;
+            Map<String, String> topicGroups = TOPIC_GROUPS;
 
             Map<TopicPartition, String> tpToGroup = new HashMap<>();
             Set<TopicPartition> allPartitions = new HashSet<>();

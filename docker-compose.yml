@@ -59,6 +59,7 @@ services:
       CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
       KAFKA_LOG_DIRS: /var/lib/kafka/data
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_HEAP_OPTS: "-Xms512m -Xmx512m"
       KAFKA_JMX_OPTS: >-
         -Dcom.sun.management.jmxremote
         -Dcom.sun.management.jmxremote.port=9999

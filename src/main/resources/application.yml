@@ -20,7 +20,6 @@ spring-watch:
     enabled: true # 是否开启告警
     mail:
       from: 2787901285@qq.com # 发件人邮箱
-      from-name: spring-watch # 发件人显示名称
     state-store:
       ttl-hours: 24 # 告警状态存储 TTL（小时），Caffeine per-entry Expiry
       max-entries: 50000 # 严格有界：硬上限 entry 数，LRU(W-TinyLFU) 淘汰；超 0 evict_size 需扩
@@ -58,14 +57,6 @@ spring-watch:
   kafka:
     lag-monitor:
       enabled: true
-      group-id: spring-watch # 默认 group,与 spring.kafka.consumer.group-id 一致
-      topics: monitor-metrics,monitor-logs,monitor-heartbeat
-      # 三个 topic 的实际消费者 group 都不是默认的 spring-watch(都是各自的 -writer 群组),
-      # 这里给每个 topic 单独指定对应的 consumer group,lag 才算得准。没列的 topic 用上面的 group-id。
-      groups:
-        monitor-metrics: spring-watch-metric-writer
-        monitor-logs: spring-watch-log-writer
-        monitor-heartbeat: spring-watch-heartbeat-writer
       poll-interval-sec: 30
     health-monitor:
       enabled: true # M-KafkaHealth: 集群健康 + producer 计数采集
@@ -76,9 +67,6 @@ spring-watch:
     broker-jmx:
       enabled: true # M-KafkaHealth: 连 broker JMX 拉 BrokerTopicMetrics / ReplicaManager / ControllerStats / JVM
       poll-interval-sec: 30
-      connect-timeout-sec: 5
-      # url 不配 = 跳过;配上形如 service:jmx:rmi:///jndi/rmi://broker-host:9999/jmxrmi
-      # broker 启动需加 -Dcom.sun.management.jmxremote.port=9999 等参数
       url: ${KAFKA_BROKER_JMX_URL:}
       username: ${KAFKA_BROKER_JMX_USER:}
       password: ${KAFKA_BROKER_JMX_PASSWORD:}
@@ -319,9 +307,6 @@ influxdb:
     window: 5m # 降采样窗口大小
     task-every: 1h # 任务调度频率
   write:
-    batch-size: 1000 # 每批写入条数(默认,各 WriteApi 实际值见 InfluxDBConfig.java)
-    flush-interval-ms: 2000 # 刷新间隔（毫秒,P1-8: 1000 → 2000）
-    buffer-limit: 20000 # 内存缓冲上限（P1-8: 100000 → 20000）
     retry-interval-ms: 1000 # 写入失败重试间隔（毫秒）
     max-retries: 3 # 最大重试次数
     max-retry-delay-ms: 5000 # 单次重试最大延迟（毫秒）
