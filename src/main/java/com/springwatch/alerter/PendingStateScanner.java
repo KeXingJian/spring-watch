@@ -58,7 +58,7 @@ public class PendingStateScanner {
 
     /**
      * kxj: 周期扫PENDING状态-真实连续判断 [借鉴 HertzBeat PeriodicAlertRuleScheduler]
-     * 频率默认5秒,够细不至于漏判,又不会给Redis太大压力
+     * 频率默认5秒,够细不至于漏判,又不会给本地缓存太大压力
      */
     @Scheduled(fixedDelayString = "${spring-watch.alert.scan.interval-ms:5000}")
     public void scan() {

@@ -22,7 +22,9 @@ spring-watch:
       from: 2787901285@qq.com # 发件人邮箱
       from-name: spring-watch # 发件人显示名称
     state-store:
-      ttl-hours: 24 # 告警状态存储 TTL（小时）
+      ttl-hours: 24 # 告警状态存储 TTL（小时），Caffeine per-entry Expiry
+      max-entries: 50000 # 严格有界：硬上限 entry 数，LRU(W-TinyLFU) 淘汰；超 0 evict_size 需扩
+      scan-max-entries: 200 # scanPending 单次返回上限
     rule-cache:
       refresh-interval-ms: 30000 # 告警规则缓存刷新间隔（毫秒）
     executor:
@@ -35,13 +37,15 @@ spring-watch:
   log:
     env: dev # 当前环境标识（影响链路关联等行为）
     dedup:
-      window-seconds: 60 # 去重窗口（秒）
-      count-ttl-seconds: 3600 # 计数缓存 TTL（秒）
+      window-seconds: 60 # 去重窗口（秒），Caffeine expireAfterWrite 主约束
+      max-entries: 200000 # 严格有界：硬上限 entry 数，LRU(W-TinyLFU) 淘汰；超 0 evict_size 需扩
       flush-interval-ms: 30000 # 计数刷新间隔（毫秒）
     anomaly:
-      rate-ttl-seconds: 600 # 异常率窗口 TTL（秒）
-      pattern-ttl-hours: 168 # 异常模式 TTL（小时）
+      rate-ttl-seconds: 600 # 异常率窗口 TTL（秒），Caffeine expireAfterWrite
+      pattern-ttl-hours: 168 # 异常模式 TTL（小时），Caffeine expireAfterWrite
       min-base-rate: 0.01 # 触发异常的最小基准率
+      max-appids: 200 # 严格有界：lastRate/knownPatterns 外层缓存硬上限 entry 数（按 appid 维度）
+      max-patterns-per-appid: 5000 # 严格有界：单 appid 已知模式 LRU 上限
     alert:
       error-rate-window-seconds: 60 # 错误率计算窗口（秒）
       error-rate-interval-ms: 60000 # 错误率计算间隔（毫秒）
@@ -282,9 +286,6 @@ spring:
       concurrency: 3 # 消费者并发数
       poll-timeout: 200 # poll 超时（毫秒）
     topics:
-      metrics: monitor-metrics # 指标 topic
-      logs: monitor-logs # 日志 topic
-      heartbeat: monitor-heartbeat # 心跳 topic
       metrics-partitions: 3 # 指标 topic 分区数(v1.5 收敛: 12→3,白皮书 §0.5 实测后保持收敛)
       logs-partitions: 3 # 日志 topic 分区数(v1.5 收敛: 6→3)
       heartbeat-partitions: 1 # 心跳 topic 分区数(v1.5 收敛: 3→1,心跳低频)
@@ -295,12 +296,6 @@ spring:
       retry-initial-interval: 200 # 初始重试间隔（毫秒）
       retry-multiplier: 2.0 # 重试间隔倍数
       retry-max-interval: 5000 # 最大重试间隔（毫秒）
-
-  data:
-    redis:
-      host: localhost # Redis 地址
-      port: 6379 # Redis 端口
-
 
 influxdb:
   url: http://localhost:8086 # InfluxDB 地址

@@ -1,22 +1,27 @@
 package com.springwatch.analysis;
 
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
+import com.github.benmanes.caffeine.cache.RemovalCause;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.Gauge;
+import io.micrometer.core.instrument.MeterRegistry;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
+import java.util.Iterator;
+import java.util.LinkedHashSet;
 
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class LogAnomalyDetector {
 
-    private static final String KEY_LAST_RATE = "log:errorRate:";
-    private static final String KEY_KNOWN_PATTERNS = "log:knownPatterns:";
-
-    private final StringRedisTemplate redis;
+    private final MeterRegistry meterRegistry;
 
     @Value("${spring-watch.log.anomaly.rate-ttl-seconds:600}")
     private long rateTtlSeconds;
@@ -27,15 +32,64 @@ public class LogAnomalyDetector {
     @Value("${spring-watch.log.anomaly.min-base-rate:0.01}")
     private double minBaseRate;
 
-    /**
-     * kxj: 错误率突增检测-当前窗口rate与上一窗口对比,倍数>=multiplier视为突增
-     * 返回 SpikingResult 包含是否突增 + 上一窗口的基线 rate(供前端展示)
-     */
+    @Value("${spring-watch.log.anomaly.max-appids:200}")
+    private long maxAppids;
+
+    @Value("${spring-watch.log.anomaly.max-patterns-per-appid:5000}")
+    private int maxPatternsPerAppid;
+
+    private Cache<Long, Double> errorRateCache;
+    private Cache<Long, PatternSet> knownPatternsCache;
+    private Counter rateEvictSizeCounter;
+    private Counter patternEvictSizeCounter;
+    private Counter newPatternCounter;
+
+    @PostConstruct
+    void init() {
+        this.errorRateCache = Caffeine.newBuilder()
+                .expireAfterWrite(Duration.ofSeconds(rateTtlSeconds))
+                .maximumSize(maxAppids)
+                .recordStats()
+                .removalListener((key, value, cause) -> {
+                    if (cause == RemovalCause.SIZE) {
+                        rateEvictSizeCounter.increment();
+                    }
+                })
+                .build();
+
+        this.knownPatternsCache = Caffeine.newBuilder()
+                .expireAfterWrite(Duration.ofHours(patternTtlHours))
+                .maximumSize(maxAppids)
+                .recordStats()
+                .removalListener((key, value, cause) -> {
+                    if (cause == RemovalCause.SIZE) {
+                        patternEvictSizeCounter.increment();
+                    }
+                })
+                .build();
+
+        this.rateEvictSizeCounter = Counter.builder("spring.watch.ingest.log.anomaly.rate_evict_size")
+                .description("异常检测 lastRate 因容量上限被 LRU 淘汰次数")
+                .register(meterRegistry);
+        this.patternEvictSizeCounter = Counter.builder("spring.watch.ingest.log.anomaly.pattern_evict_size")
+                .description("异常检测 knownPatterns 因容量上限被 LRU 淘汰次数")
+                .register(meterRegistry);
+        this.newPatternCounter = Counter.builder("spring.watch.ingest.log.anomaly.new_pattern")
+                .description("新模式命中次数")
+                .register(meterRegistry);
+
+        Gauge.builder("spring.watch.ingest.log.anomaly.rate_cache_size", errorRateCache, c -> (double) c.estimatedSize())
+                .description("异常检测 lastRate 缓存当前 entry 数")
+                .register(meterRegistry);
+        Gauge.builder("spring.watch.ingest.log.anomaly.patterns_cache_size", knownPatternsCache, c -> (double) c.estimatedSize())
+                .description("异常检测 knownPatterns 缓存当前 entry 数")
+                .register(meterRegistry);
+    }
+
     public SpikingResult isErrorRateSpiking(long appid, double currentRate, double multiplier) {
         log.debug("[spring-watch: LogAnomalyDetector isErrorRateSpiking - appid={}, current={}, multiplier={}]", appid, currentRate, multiplier);
-        String key = KEY_LAST_RATE + appid;
-        Double lastRate = parseDouble(redis.opsForValue().get(key));
-        redis.opsForValue().set(key, String.valueOf(currentRate), Duration.ofSeconds(rateTtlSeconds));
+        Double lastRate = errorRateCache.get(appid, k -> null);
+        errorRateCache.put(appid, currentRate);
         if (lastRate == null || lastRate < minBaseRate) {
             log.debug("[spring-watch: LogAnomalyDetector 跳过突增判断 - appid={}, lastRate={}, minBaseRate={}", appid, lastRate, minBaseRate);
             return new SpikingResult(false, lastRate);
@@ -51,21 +105,18 @@ public class LogAnomalyDetector {
         return new SpikingResult(spiking, lastRate);
     }
 
-    public record SpikingResult(boolean spiking, Double lastRate) {}
+    public record SpikingResult(boolean spiking, Double lastRate) {
+    }
 
-    /**
-     * kxj: 新模式发现-fingerprint首次出现返回true(Redis Set记录已知模式)
-     */
     public boolean isNewPattern(long appid, String fingerprint) {
         if (fingerprint == null || fingerprint.isEmpty()) {
             log.debug("[spring-watch: LogAnomalyDetector isNewPattern fingerprint为空, 跳过 - appid={}", appid);
             return false;
         }
-        String key = KEY_KNOWN_PATTERNS + appid;
-        Long added = redis.opsForSet().add(key, fingerprint);
-        redis.expire(key, Duration.ofHours(patternTtlHours));
-        boolean isNew = added != null && added > 0;
+        PatternSet set = knownPatternsCache.get(appid, k -> new PatternSet(maxPatternsPerAppid));
+        boolean isNew = set.add(fingerprint);
         if (isNew) {
+            newPatternCounter.increment();
             log.info("[spring-watch: LogAnomalyDetector 新模式 - appid={}, fingerprint={}]", appid, fingerprint);
         } else {
             log.debug("[spring-watch: LogAnomalyDetector 模式已存在 - appid={}, fingerprint={}", appid, fingerprint);
@@ -73,14 +124,35 @@ public class LogAnomalyDetector {
         return isNew;
     }
 
-    private Double parseDouble(String s) {
-        if (s == null || s.isEmpty()) {
-            return null;
+    public int patternSetSize(long appid) {
+        PatternSet set = knownPatternsCache.getIfPresent(appid);
+        return set == null ? 0 : set.size();
+    }
+
+    static final class PatternSet {
+        private final int maxSize;
+        private final LinkedHashSet<String> set = new LinkedHashSet<>();
+
+        PatternSet(int maxSize) {
+            this.maxSize = maxSize;
         }
-        try {
-            return Double.parseDouble(s);
-        } catch (NumberFormatException e) {
-            return null;
+
+        synchronized boolean add(String s) {
+            if (set.contains(s)) {
+                return false;
+            }
+            if (set.size() >= maxSize) {
+                Iterator<String> it = set.iterator();
+                if (it.hasNext()) {
+                    it.next();
+                    it.remove();
+                }
+            }
+            return set.add(s);
+        }
+
+        synchronized int size() {
+            return set.size();
         }
     }
 }

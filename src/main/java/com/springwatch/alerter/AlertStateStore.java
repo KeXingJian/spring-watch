@@ -1,296 +1,338 @@
 package com.springwatch.alerter;
 
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
+import com.github.benmanes.caffeine.cache.Expiry;
+import com.github.benmanes.caffeine.cache.RemovalCause;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.Gauge;
+import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.jspecify.annotations.NonNull;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.data.redis.core.Cursor;
-import org.springframework.data.redis.core.ScanOptions;
-import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.data.redis.core.SessionCallback;
-import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class AlertStateStore {
 
-    private static final String KEY_PREFIX = "alert:state:";
-    private static final String FIELD_STATE = "state";
-    private static final String FIELD_FIRST_BREACH_AT = "firstBreachAt";
-    private static final String FIELD_LAST_FIRED_AT = "lastFiredAt";
-    private static final String FIELD_TRIGGER_COUNT = "triggerCount";
-    private static final String FIELD_LAST_VALUE = "lastValue";
-    private static final String FIELD_LAST_METRIC = "lastMetric";
-    private static final String FIELD_LAST_TAGS = "lastTags";
+    public record RuleAppKey(Long ruleId, Long appid) {
+    }
 
-    /**
-     * kxj: PENDING→FIRING 原子CAS脚本,只把当前状态=PENDING的key原子切到FIRING并写时间戳,避免多线程并发fire
-     * KEYS[1]=state key;ARGV[1]=firstBreachAt(空串保留);ARGV[2]=lastFiredAt(空串保留);ARGV[3]=TTL秒
-     * 返回 1=抢到FIRING权 0=状态非PENDING被拒
-     */
-    private static final String LUA_TRY_FIRE = """
-            local state = redis.call('HGET', KEYS[1], 'state')
-            if state ~= 'PENDING' then
-                return 0
-            end
-            redis.call('HSET', KEYS[1], 'state', 'FIRING')
-            if ARGV[1] ~= '' then
-                redis.call('HSET', KEYS[1], 'firstBreachAt', ARGV[1])
-            end
-            if ARGV[2] ~= '' then
-                redis.call('HSET', KEYS[1], 'lastFiredAt', ARGV[2])
-            end
-            redis.call('EXPIRE', KEYS[1], tonumber(ARGV[3]))
-            return 1
-            """;
+    @lombok.Value
+    @lombok.Builder(toBuilder = true)
+    private static class AlertStateData {
+        AlertState state;
+        Instant firstBreachAt;
+        Instant lastFiredAt;
+        long triggerCount;
+        String lastValue;
+        String lastMetric;
+        String lastTagsJson;
+        Instant expireAt;
+    }
 
-    /**
-     * kxj: FIRING→RESOLVED 原子CAS脚本,只把当前状态=FIRING的key原子切到RESOLVED并清时间戳,避免多线程并发resolve
-     * KEYS[1]=state key;ARGV[1]=TTL秒
-     * 返回 1=抢到RESOLVED权 0=状态非FIRING被拒
-     */
-    private static final String LUA_TRY_RESOLVE = """
-            local state = redis.call('HGET', KEYS[1], 'state')
-            if state ~= 'FIRING' then
-                return 0
-            end
-            redis.call('HSET', KEYS[1], 'state', 'RESOLVED')
-            redis.call('HDEL', KEYS[1], 'firstBreachAt', 'lastFiredAt')
-            redis.call('EXPIRE', KEYS[1], tonumber(ARGV[1]))
-            return 1
-            """;
+    private static final AlertStateData IDLE_DATA = AlertStateData.builder()
+            .state(AlertState.IDLE)
+            .expireAt(Instant.EPOCH)
+            .build();
 
-    private final StringRedisTemplate redis;
+    private final MeterRegistry meterRegistry;
 
     @Value("${spring-watch.alert.state-store.ttl-hours:24}")
     private long ttlHours;
 
-    private DefaultRedisScript<Long> tryFireScript;
-    private DefaultRedisScript<Long> tryResolveScript;
+    @Value("${spring-watch.alert.state-store.max-entries:50000}")
+    private long maxEntries;
+
+    @Value("${spring-watch.alert.state-store.scan-max-entries:200}")
+    private long scanMaxEntries;
+
+    private Cache<RuleAppKey, AlertStateData> stateCache;
+    private Counter evictSizeCounter;
+    private Counter evictExpiredCounter;
+    private Counter casFireHitCounter;
+    private Counter casFireMissCounter;
+    private Counter casResolveHitCounter;
+    private Counter casResolveMissCounter;
 
     @PostConstruct
-    void initScript() {
-        this.tryFireScript = new DefaultRedisScript<>(LUA_TRY_FIRE, Long.class);
-        this.tryResolveScript = new DefaultRedisScript<>(LUA_TRY_RESOLVE, Long.class);
+    void init() {
+        this.stateCache = Caffeine.newBuilder()
+                .maximumSize(maxEntries)
+                .expireAfter(new Expiry<RuleAppKey, AlertStateData>() {
+                    @Override
+                    public long expireAfterCreate(RuleAppKey key, AlertStateData value, long currentTime) {
+                        return nanosUntil(value.getExpireAt(), currentTime);
+                    }
+
+                    @Override
+                    public long expireAfterUpdate(RuleAppKey key, AlertStateData value, long currentTime, long currentDuration) {
+                        return nanosUntil(value.getExpireAt(), currentTime);
+                    }
+
+                    @Override
+                    public long expireAfterRead(RuleAppKey key, AlertStateData value, long currentTime, long currentDuration) {
+                        return nanosUntil(value.getExpireAt(), currentTime);
+                    }
+
+                    private long nanosUntil(Instant target, long currentTimeNanos) {
+                        if (target == null) {
+                            return Long.MAX_VALUE;
+                        }
+                        long targetNanos = TimeUnit.SECONDS.toNanos(target.getEpochSecond()) + target.getNano();
+                        return targetNanos - currentTimeNanos;
+                    }
+                })
+                .recordStats()
+                .removalListener((key, value, cause) -> {
+                    if (cause == RemovalCause.SIZE) {
+                        evictSizeCounter.increment();
+                    } else if (cause == RemovalCause.EXPIRED) {
+                        evictExpiredCounter.increment();
+                    }
+                })
+                .build();
+
+        this.evictSizeCounter = Counter.builder("spring.watch.alerter.state.evict_size")
+                .description("告警状态因容量上限被 LRU 淘汰次数(趋近 0,超 0 需扩 max-entries)")
+                .register(meterRegistry);
+        this.evictExpiredCounter = Counter.builder("spring.watch.alerter.state.evict_expired")
+                .description("告警状态因 TTL 到期被淘汰次数")
+                .register(meterRegistry);
+        this.casFireHitCounter = Counter.builder("spring.watch.alerter.state.cas_fire_hit")
+                .description("PENDING→FIRING CAS 成功次数")
+                .register(meterRegistry);
+        this.casFireMissCounter = Counter.builder("spring.watch.alerter.state.cas_fire_miss")
+                .description("PENDING→FIRING CAS 失败次数(状态非 PENDING)")
+                .register(meterRegistry);
+        this.casResolveHitCounter = Counter.builder("spring.watch.alerter.state.cas_resolve_hit")
+                .description("FIRING→RESOLVED CAS 成功次数")
+                .register(meterRegistry);
+        this.casResolveMissCounter = Counter.builder("spring.watch.alerter.state.cas_resolve_miss")
+                .description("FIRING→RESOLVED CAS 失败次数(状态非 FIRING)")
+                .register(meterRegistry);
+
+        Gauge.builder("spring.watch.alerter.state.cache_size", stateCache, c -> (double) c.estimatedSize())
+                .description("告警状态当前缓存 entry 数")
+                .register(meterRegistry);
+        Gauge.builder("spring.watch.alerter.state.cache_max", this, s -> (double) s.maxEntries)
+                .description("告警状态硬上限 entry 数")
+                .register(meterRegistry);
     }
 
     public AlertState getState(Long ruleId, Long appid) {
-        Object v = redis.opsForHash().get(key(ruleId, appid), FIELD_STATE);
-        if (v == null) {
+        AlertStateData data = stateCache.getIfPresent(new RuleAppKey(ruleId, appid));
+        if (data == null) {
             return AlertState.IDLE;
         }
-        try {
-            return AlertState.valueOf(v.toString());
-        } catch (Exception e) {
-            log.warn("[Alerter] 状态值非法, 重置为IDLE - ruleId={}, appid={}, value={}", ruleId, appid, v);
+        if (Instant.now().isAfter(data.getExpireAt())) {
             return AlertState.IDLE;
         }
+        return data.getState();
     }
 
     public Instant getFirstBreachAt(Long ruleId, Long appid) {
-        Object v = redis.opsForHash().get(key(ruleId, appid), FIELD_FIRST_BREACH_AT);
-        return v == null ? null : Instant.ofEpochMilli(Long.parseLong(v.toString()));
+        AlertStateData data = stateCache.getIfPresent(new RuleAppKey(ruleId, appid));
+        if (data == null || Instant.now().isAfter(data.getExpireAt())) {
+            return null;
+        }
+        return data.getFirstBreachAt();
     }
 
     public Instant getLastFiredAt(Long ruleId, Long appid) {
-        Object v = redis.opsForHash().get(key(ruleId, appid), FIELD_LAST_FIRED_AT);
-        return v == null ? null : Instant.ofEpochMilli(Long.parseLong(v.toString()));
+        AlertStateData data = stateCache.getIfPresent(new RuleAppKey(ruleId, appid));
+        if (data == null || Instant.now().isAfter(data.getExpireAt())) {
+            return null;
+        }
+        return data.getLastFiredAt();
     }
 
     public long incrementTriggerCount(Long ruleId, Long appid) {
-        String key = key(ruleId, appid);
-        Long count = redis.opsForHash().increment(key, FIELD_TRIGGER_COUNT, 1L);
-        redis.expire(key, Duration.ofHours(ttlHours));
-        long result = count == null ? 0L : count;
+        RuleAppKey key = new RuleAppKey(ruleId, appid);
+        AtomicLong out = new AtomicLong();
+        stateCache.asMap().compute(key, (k, existing) -> {
+            AlertStateData current = existing != null ? existing : IDLE_DATA;
+            long newCount = current.getTriggerCount() + 1;
+            AlertStateData next = current.toBuilder()
+                    .triggerCount(newCount)
+                    .expireAt(Instant.now().plus(Duration.ofHours(ttlHours)))
+                    .build();
+            out.set(newCount);
+            return next;
+        });
+        long result = out.get();
         log.debug("[Alerter] 触发次数自增 - ruleId={}, appid={}, count={}", ruleId, appid, result);
         return result;
     }
 
     public void clearTriggerCount(Long ruleId, Long appid) {
-        redis.opsForHash().delete(key(ruleId, appid), FIELD_TRIGGER_COUNT);
+        update(ruleId, appid, current -> current.toBuilder()
+                .triggerCount(0L)
+                .expireAt(Instant.now().plus(Duration.ofHours(ttlHours)))
+                .build());
     }
 
-    /**
-     * kxj: 记录最近一次事件快照-扫描器兜底触发时复用
-     */
     public void recordLastEvent(Long ruleId, Long appid, Double value, String metricName, String tagsJson) {
-        String k = key(ruleId, appid);
-        Map<String, String> map = new HashMap<>();
-        if (value != null) {
-            map.put(FIELD_LAST_VALUE, String.valueOf(value));
-        }
-        if (metricName != null) {
-            map.put(FIELD_LAST_METRIC, metricName);
-        }
-        if (tagsJson != null) {
-            map.put(FIELD_LAST_TAGS, tagsJson);
-        }
-        if (!map.isEmpty()) {
-            redis.opsForHash().putAll(k, map);
-        }
+        update(ruleId, appid, current -> {
+            var b = current.toBuilder()
+                    .expireAt(Instant.now().plus(Duration.ofHours(ttlHours)));
+            if (value != null) {
+                b.lastValue(String.valueOf(value));
+            }
+            if (metricName != null) {
+                b.lastMetric(metricName);
+            }
+            if (tagsJson != null) {
+                b.lastTagsJson(tagsJson);
+            }
+            return b.build();
+        });
     }
 
     public String getLastValue(Long ruleId, Long appid) {
-        Object v = redis.opsForHash().get(key(ruleId, appid), FIELD_LAST_VALUE);
-        return v == null ? null : v.toString();
+        return readField(ruleId, appid, AlertStateData::getLastValue);
     }
 
     public String getLastMetric(Long ruleId, Long appid) {
-        Object v = redis.opsForHash().get(key(ruleId, appid), FIELD_LAST_METRIC);
-        return v == null ? null : v.toString();
+        return readField(ruleId, appid, AlertStateData::getLastMetric);
     }
 
     public String getLastTagsJson(Long ruleId, Long appid) {
-        Object v = redis.opsForHash().get(key(ruleId, appid), FIELD_LAST_TAGS);
-        return v == null ? null : v.toString();
+        return readField(ruleId, appid, AlertStateData::getLastTagsJson);
     }
 
     public void setState(Long ruleId, Long appid, AlertState state, Instant firstBreachAt, Instant lastFiredAt) {
-        String key = key(ruleId, appid);
-        Map<String, String> map = new HashMap<>();
-        map.put(FIELD_STATE, state.name());
-        if (firstBreachAt != null) {
-            map.put(FIELD_FIRST_BREACH_AT, String.valueOf(firstBreachAt.toEpochMilli()));
-        }
-        if (lastFiredAt != null) {
-            map.put(FIELD_LAST_FIRED_AT, String.valueOf(lastFiredAt.toEpochMilli()));
-        }
-        final boolean clearFirstBreach = firstBreachAt == null;
-        final boolean clearLastFired = lastFiredAt == null;
-        final String finalKey = key;
-        redis.execute(new SessionCallback<Object>() {
-            @Override
-            @SuppressWarnings({"unchecked"})
-            public Object execute(org.springframework.data.redis.core.@NonNull RedisOperations operations) {
-                operations.multi();
-                if (clearFirstBreach) {
-                    operations.opsForHash().delete(finalKey, FIELD_FIRST_BREACH_AT);
-                }
-                if (clearLastFired) {
-                    operations.opsForHash().delete(finalKey, FIELD_LAST_FIRED_AT);
-                }
-                if (!map.isEmpty()) {
-                    operations.opsForHash().putAll(finalKey, map);
-                }
-                operations.expire(finalKey, Duration.ofHours(ttlHours));
-                return operations.exec();
-            }
-        });
+        update(ruleId, appid, current -> current.toBuilder()
+                .state(state)
+                .firstBreachAt(firstBreachAt)
+                .lastFiredAt(lastFiredAt)
+                .expireAt(Instant.now().plus(Duration.ofHours(ttlHours)))
+                .build());
         log.debug("[Alerter] 状态变更 - ruleId={}, appid={}, state={}, firstBreachAt={}, lastFiredAt={}",
                 ruleId, appid, state, firstBreachAt, lastFiredAt);
     }
 
     public void clear(Long ruleId, Long appid) {
-        redis.delete(key(ruleId, appid));
+        stateCache.invalidate(new RuleAppKey(ruleId, appid));
         log.debug("[Alerter] 状态清除 - ruleId={}, appid={}", ruleId, appid);
     }
 
-    /**
-     * kxj: 原子抢占FIRING-只有当前状态=PENDING才切到FIRING并写时间戳,多线程只有第一个拿到true
-     */
     public boolean tryFire(Long ruleId, Long appid, Instant firstBreachAt, Instant lastFiredAt) {
-        String key = key(ruleId, appid);
-        String firstBreach = firstBreachAt == null ? "" : String.valueOf(firstBreachAt.toEpochMilli());
-        String lastFired = lastFiredAt == null ? "" : String.valueOf(lastFiredAt.toEpochMilli());
-        long ttlSeconds = ttlHours * 3600L;
-        Long result = redis.execute(tryFireScript,
-                Collections.singletonList(key),
-                firstBreach, lastFired, String.valueOf(ttlSeconds));
-        boolean fired = result != null && result == 1L;
-        if (fired) {
+        RuleAppKey key = new RuleAppKey(ruleId, appid);
+        AtomicBoolean fired = new AtomicBoolean(false);
+        stateCache.asMap().compute(key, (k, existing) -> {
+            AlertStateData current = existing != null ? existing : IDLE_DATA;
+            if (current.getState() != AlertState.PENDING) {
+                return existing;
+            }
+            var b = current.toBuilder()
+                    .state(AlertState.FIRING)
+                    .expireAt(Instant.now().plus(Duration.ofHours(ttlHours)));
+            if (firstBreachAt != null) {
+                b.firstBreachAt(firstBreachAt);
+            }
+            if (lastFiredAt != null) {
+                b.lastFiredAt(lastFiredAt);
+            }
+            fired.set(true);
+            return b.build();
+        });
+        boolean result = fired.get();
+        if (result) {
+            casFireHitCounter.increment();
             log.info("[Alerter] CAS抢占FIRING成功 - ruleId={}, appid={}", ruleId, appid);
         } else {
+            casFireMissCounter.increment();
             log.debug("[Alerter] CAS抢占FIRING失败, 状态非PENDING - ruleId={}, appid={}", ruleId, appid);
         }
-        return fired;
+        return result;
     }
 
-    /**
-     * kxj: 原子抢占RESOLVED-只有当前状态=FIRING才切到RESOLVED并清时间戳,多线程只有第一个拿到true
-     */
     public boolean tryResolve(Long ruleId, Long appid) {
-        String key = key(ruleId, appid);
-        long ttlSeconds = ttlHours * 3600L;
-        Long result = redis.execute(tryResolveScript,
-                Collections.singletonList(key),
-                String.valueOf(ttlSeconds));
-        boolean resolved = result != null && result == 1L;
-        if (resolved) {
+        RuleAppKey key = new RuleAppKey(ruleId, appid);
+        AtomicBoolean resolved = new AtomicBoolean(false);
+        stateCache.asMap().compute(key, (k, existing) -> {
+            AlertStateData current = existing != null ? existing : IDLE_DATA;
+            if (current.getState() != AlertState.FIRING) {
+                return existing;
+            }
+            resolved.set(true);
+            return current.toBuilder()
+                    .state(AlertState.RESOLVED)
+                    .firstBreachAt(null)
+                    .lastFiredAt(null)
+                    .expireAt(Instant.now().plus(Duration.ofHours(ttlHours)))
+                    .build();
+        });
+        boolean result = resolved.get();
+        if (result) {
+            casResolveHitCounter.increment();
             log.info("[Alerter] CAS抢占RESOLVED成功 - ruleId={}, appid={}", ruleId, appid);
         } else {
+            casResolveMissCounter.increment();
             log.debug("[Alerter] CAS抢占RESOLVED失败, 状态非FIRING - ruleId={}, appid={}", ruleId, appid);
         }
-        return resolved;
+        return result;
     }
 
-    /**
-     * kxj: PENDING扫描器-游标扫所有状态键,过滤PENDING返回 [借鉴 HertzBeat PeriodicAlertRuleScheduler]
-     */
     public List<PendingEntry> scanPending(long scanCount) {
+        long limit = Math.min(scanCount, scanMaxEntries);
         List<PendingEntry> result = new ArrayList<>();
-        ScanOptions options = ScanOptions.scanOptions().match(KEY_PREFIX + "*").count(scanCount).build();
-        try (Cursor<String> cursor = redis.scan(options)) {
-            while (cursor.hasNext()) {
-                String key = cursor.next();
-                int firstColon = KEY_PREFIX.length();
-                int secondColon = key.indexOf(':', firstColon);
-                if (secondColon < 0) {
-                    continue;
-                }
-                Long ruleId;
-                Long appid;
-                try {
-                    ruleId = Long.parseLong(key.substring(firstColon, secondColon));
-                    appid = Long.parseLong(key.substring(secondColon + 1));
-                } catch (NumberFormatException e) {
-                    continue;
-                }
-                Map<Object, Object> entries = redis.opsForHash().entries(key);
-                Object stateVal = entries.get(FIELD_STATE);
-                if (stateVal == null || !AlertState.PENDING.name().equals(stateVal.toString())) {
-                    continue;
-                }
-                Object firstBreachVal = entries.get(FIELD_FIRST_BREACH_AT);
-                if (firstBreachVal == null) {
-                    continue;
-                }
-                Instant firstBreachAt;
-                try {
-                    firstBreachAt = Instant.ofEpochMilli(Long.parseLong(firstBreachVal.toString()));
-                } catch (NumberFormatException e) {
-                    continue;
-                }
-                long triggerCount = 0L;
-                Object countVal = entries.get(FIELD_TRIGGER_COUNT);
-                if (countVal != null) {
-                    try {
-                        triggerCount = Long.parseLong(countVal.toString());
-                    } catch (NumberFormatException ignored) {
-                    }
-                }
-                result.add(new PendingEntry(ruleId, appid, firstBreachAt, triggerCount));
+        for (Map.Entry<RuleAppKey, AlertStateData> entry : stateCache.asMap().entrySet()) {
+            if (result.size() >= limit) {
+                break;
             }
-        } catch (Exception e) {
-            log.warn("[Alerter] 扫PENDING状态失败 - error={}", e.getMessage());
+            AlertStateData data = entry.getValue();
+            if (data == null) {
+                continue;
+            }
+            if (Instant.now().isAfter(data.getExpireAt())) {
+                continue;
+            }
+            if (data.getState() != AlertState.PENDING) {
+                continue;
+            }
+            if (data.getFirstBreachAt() == null) {
+                continue;
+            }
+            result.add(new PendingEntry(
+                    entry.getKey().ruleId(),
+                    entry.getKey().appid(),
+                    data.getFirstBreachAt(),
+                    data.getTriggerCount()));
         }
         log.trace("[Alerter] scanPending 完成 - size={}", result.size());
         return result;
     }
 
-    public record PendingEntry(Long ruleId, Long appid, Instant firstBreachAt, long triggerCount) {}
+    public record PendingEntry(Long ruleId, Long appid, Instant firstBreachAt, long triggerCount) {
+    }
 
-    private String key(Long ruleId, Long appid) {
-        return KEY_PREFIX + ruleId + ":" + appid;
+    private void update(Long ruleId, Long appid, java.util.function.Function<AlertStateData, AlertStateData> mutator) {
+        RuleAppKey key = new RuleAppKey(ruleId, appid);
+        stateCache.asMap().compute(key, (k, existing) -> {
+            AlertStateData current = existing != null ? existing : IDLE_DATA;
+            return mutator.apply(current);
+        });
+    }
+
+    private <T> T readField(Long ruleId, Long appid, java.util.function.Function<AlertStateData, T> extractor) {
+        AlertStateData data = stateCache.getIfPresent(new RuleAppKey(ruleId, appid));
+        if (data == null || Instant.now().isAfter(data.getExpireAt())) {
+            return null;
+        }
+        return extractor.apply(data);
     }
 }

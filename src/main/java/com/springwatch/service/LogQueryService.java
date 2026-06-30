@@ -248,7 +248,7 @@ public class LogQueryService {
                 }
             }
             // 合并 PG log_dedup_count 的去重计数,得到"真实总次数"
-            // 注意:PG dedup_count 是近 1h 窗口的累加(Redis TTL 限制),
+            // 注意:PG dedup_count 是近 1h 窗口的累加(Caffeine window + flush 周期),
             // 与 InfluxDB 查的 [from, to] 时间窗并不完全对齐,这里采用"任一指纹命中就补"
             if (!out.isEmpty()) {
                 List<String> fps = out.stream().map(p -> p.fingerprint()).toList();
