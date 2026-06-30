@@ -86,9 +86,9 @@ public class InfluxDBBucketInitializer {
             ensureBucket(selfMetricsBucket, org, selfMetricsRetentionSeconds);
             if (downsampleEnabled) {
                 ensureBucket(metricsDownsampleBucket, org, downsampleRetentionSeconds);
-                ensureDownsampleTask("spring-watch-downsample-metrics",
+                ensureDownsampleTask(
                         metricsBucket, metricsDownsampleBucket,
-                        "springboot_metrics", downsampleEvery, downsampleWindow, downsampleTaskEvery, org);
+                        downsampleWindow, downsampleTaskEvery, org);
             }
         } catch (Exception e) {
             log.error("[spring-watch: InfluxDB bucket 初始化失败 - error={}]", e.getMessage(), e);
@@ -107,7 +107,7 @@ public class InfluxDBBucketInitializer {
         } else {
             Integer existEvery = null;
             if (existing.getRetentionRules() != null && !existing.getRetentionRules().isEmpty()) {
-                existEvery = existing.getRetentionRules().get(0).getEverySeconds();
+                existEvery = existing.getRetentionRules().getFirst().getEverySeconds();
             }
             if (existEvery == null || existEvery != retentionSeconds) {
                 existing.getRetentionRules().clear();
@@ -122,19 +122,16 @@ public class InfluxDBBucketInitializer {
         }
     }
 
-    private void ensureDownsampleTask(String taskName,
-                                       String sourceBucket,
-                                       String destBucket,
-                                       String measurement,
-                                       String windowEvery,
-                                       String aggWindow,
-                                       String taskEvery,
-                                       Organization org) {
+    private void ensureDownsampleTask(String sourceBucket,
+                                      String destBucket,
+                                      String aggWindow,
+                                      String taskEvery,
+                                      Organization org) {
         List<Task> existing = influxDBClient.getTasksApi().findTasksByOrganization(org);
         boolean alreadyExists = existing.stream()
-                .anyMatch(t -> taskName.equals(t.getName()));
+                .anyMatch(t -> "spring-watch-downsample-metrics".equals(t.getName()));
         if (alreadyExists) {
-            log.info("[spring-watch: InfluxDB downsample task 已存在 - name={}]", taskName);
+            log.info("[spring-watch: InfluxDB downsample task 已存在 - name={}]", "spring-watch-downsample-metrics");
             return;
         }
         String flux = String.format("""
@@ -151,15 +148,15 @@ public class InfluxDBBucketInitializer {
                   |> map(fn: (r) => ({r with _value: float(v: r._value)}))
                   |> aggregateWindow(every: %s, fn: mean, createEmpty: false)
                   |> to(bucket: "%s", org: "%s")
-                """, taskName, taskEvery, sourceBucket, measurement, aggWindow, destBucket, influxOrg);
+                """, "spring-watch-downsample-metrics", taskEvery, sourceBucket, "springboot_metrics", aggWindow, destBucket, influxOrg);
         TaskCreateRequest req = new TaskCreateRequest()
                 .orgID(org.getId())
                 .org(org.getName())
                 .status(TaskStatusType.ACTIVE)
                 .flux(flux)
-                .description("spring-watch auto-managed downsample for " + measurement);
+                .description("spring-watch auto-managed downsample for " + "springboot_metrics");
         Task created = influxDBClient.getTasksApi().createTask(req);
         log.info("[spring-watch: InfluxDB downsample task 创建成功 - name={}, id={}, src={}, dest={}, every={}, agg={}]",
-                taskName, created.getId(), sourceBucket, destBucket, taskEvery, aggWindow);
+                "spring-watch-downsample-metrics", created.getId(), sourceBucket, destBucket, taskEvery, aggWindow);
     }
 }

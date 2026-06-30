@@ -16,7 +16,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.net.URI;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -36,10 +35,6 @@ public class MonitorAppService {
 
     public Page<MonitorApp> listActive(Pageable pageable) {
         return monitorAppRepository.findByStatusIgnoreCase("active", pageable);
-    }
-
-    public List<MonitorApp> listAllActive() {
-        return monitorAppRepository.findByStatusIgnoreCase("active");
     }
 
     public Optional<MonitorApp> findById(Long id) {

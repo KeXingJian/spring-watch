@@ -9,6 +9,7 @@ import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
+import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
@@ -21,7 +22,6 @@ import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -38,7 +38,7 @@ public class InfrastructureMetricsCollector {
 
     private final WriteApi writeApi;
     private final MeterRegistry meterRegistry;
-    private final String influxOrg;
+    @Getter
     private final String infraBucket;
     private final WriteParameters infraWriteParameters;
     private final String influxUrl;
@@ -60,9 +60,9 @@ public class InfrastructureMetricsCollector {
     private Counter pollFailCounter;
     private final AtomicLong lastSuccessEpochMs = new AtomicLong(0L);
     private final AtomicLong lastPollEpochMs = new AtomicLong(0L);
+    @Getter
     private volatile String lastError = "";
 
-    private final Map<String, String> metricToMeasurement = new HashMap<>();
     private final List<MetricMapping> mappings = new ArrayList<>();
 
     public InfrastructureMetricsCollector(@Qualifier("infraWriteApi") WriteApi writeApi,
@@ -72,7 +72,6 @@ public class InfrastructureMetricsCollector {
                                           @Value("${influxdb.url}") String url) {
         this.writeApi = writeApi;
         this.meterRegistry = meterRegistry;
-        this.influxOrg = org;
         this.infraBucket = infraBucket;
         this.influxUrl = url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
         this.infraWriteParameters = new WriteParameters(infraBucket, org, WritePrecision.NS);
@@ -111,10 +110,6 @@ public class InfrastructureMetricsCollector {
         if (scheduler != null) scheduler.shutdownNow();
     }
 
-    public String getInfraBucket() {
-        return infraBucket;
-    }
-
     public long getLastSuccessEpochMs() {
         return lastSuccessEpochMs.get();
     }
@@ -123,13 +118,8 @@ public class InfrastructureMetricsCollector {
         return lastPollEpochMs.get();
     }
 
-    public String getLastError() {
-        return lastError;
-    }
-
     private void initMappings() {
         mappings.clear();
-        metricToMeasurement.clear();
         addMapping("go_runtime", "go_runtime_", "go_runtime.");
         addMapping("go_goroutines", "go_goroutines", "go_goroutines");
         addMapping("go_info", "go_info_", "go_info.");
@@ -158,7 +148,7 @@ public class InfrastructureMetricsCollector {
         lastPollEpochMs.set(System.currentTimeMillis());
         try {
             String text = fetchPrometheus();
-            if (text == null || text.isBlank()) {
+            if (text.isBlank()) {
                 lastError = "empty response";
                 pollFailCounter.increment();
                 return;
@@ -201,9 +191,6 @@ public class InfrastructureMetricsCollector {
         conn.setRequestProperty("Accept", "text/plain");
         int code = conn.getResponseCode();
         if (code != 200) {
-            try (InputStream es = conn.getErrorStream()) {
-                String err = es == null ? "" : new String(es.readAllBytes(), StandardCharsets.UTF_8);
-            }
             throw new IOException("HTTP " + code + " from " + influxUrl + "/metrics");
         }
         try (InputStream is = conn.getInputStream();

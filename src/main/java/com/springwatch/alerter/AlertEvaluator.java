@@ -27,10 +27,6 @@ public class AlertEvaluator {
 
     private final JexlExprEvaluator jexlEvaluator;
 
-    public boolean isBreached(AlertRule rule, MetricEvent event) {
-        return evaluate(rule, event) == BreachResult.BREACHED;
-    }
-
     public BreachResult evaluate(AlertRule rule, MetricEvent event) {
         if (rule == null || event == null) {
             log.debug("[Alerter] evaluate 跳过 - rule={}, event={}", rule, event);

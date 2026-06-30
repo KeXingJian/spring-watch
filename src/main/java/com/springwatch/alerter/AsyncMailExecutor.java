@@ -1,7 +1,5 @@
 package com.springwatch.alerter;
 
-import com.springwatch.model.entity.AlertRule;
-import com.springwatch.model.event.MetricEvent;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;

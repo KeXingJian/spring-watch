@@ -33,7 +33,6 @@ import java.time.Duration;
  * producer-metrics / producer-topic-metrics MBean)按白名单抽取,写进 InfluxDB,前端在 InfraPane
  * 上能看到 record-send-rate / batch-size-avg / compression-rate / buffer-available-bytes 这类
  * 内部状态,跟外部 broker 视角互补。
- *
  * 为什么需要自己抓:Spring Kafka 的 KafkaTemplate 不会把 Kafka client 内部 Metric 对象挂到
  * Micrometer 上,默认只能看到我们自己埋的 Counter;Kafka 内部那 100+ 指标(stream-thread /
  * request-latency / io-wait-time 等)只通过 Producer.metrics() 这个 Map 暴露,必须主动拉。
@@ -59,7 +58,7 @@ public class KafkaProducerJmxCollector {
     private Counter pollOkCounter;
     private Counter pollFailCounter;
     private final AtomicLong lastSuccessEpochMs = new AtomicLong(0L);
-    private volatile String lastError = "";
+
 
     public KafkaProducerJmxCollector(@Qualifier("infraWriteApi") WriteApi writeApi,
                                      MeterRegistry meterRegistry,
@@ -181,12 +180,10 @@ public class KafkaProducerJmxCollector {
                 writeApi.writePoints(points, writeParameters);
             }
             lastSuccessEpochMs.set(System.currentTimeMillis());
-            lastError = "";
             pollOkCounter.increment();
             log.trace("[spring-watch: Kafka producer JMX 采集 - total={}, matched={}]", metrics.size(), matched);
         } catch (Throwable t) {
             pollFailCounter.increment();
-            lastError = t.getClass().getSimpleName() + ":" + t.getMessage();
             log.warn("[spring-watch: Kafka producer JMX 采集失败 - error={}]", t.getMessage());
         }
     }

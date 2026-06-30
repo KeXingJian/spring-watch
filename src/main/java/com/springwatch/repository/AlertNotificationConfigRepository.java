@@ -1,6 +1,7 @@
 package com.springwatch.repository;
 
 import com.springwatch.model.entity.AlertNotificationConfig;
+import org.jspecify.annotations.NonNull;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -13,5 +14,5 @@ public interface AlertNotificationConfigRepository extends JpaRepository<AlertNo
 
     Page<AlertNotificationConfig> findByAppid(Long appid, Pageable pageable);
 
-    Page<AlertNotificationConfig> findAll(Pageable pageable);
+    @NonNull Page<AlertNotificationConfig> findAll(Pageable pageable);
 }

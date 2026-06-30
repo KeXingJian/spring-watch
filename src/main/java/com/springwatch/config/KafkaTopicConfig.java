@@ -10,7 +10,6 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.event.EventListener;
 import org.springframework.kafka.config.TopicBuilder;
-import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -90,7 +89,7 @@ public class KafkaTopicConfig {
 
 
     @EventListener(ApplicationReadyEvent.class)
-    public void onApplicationReady(ApplicationReadyEvent event) {
+    public void onApplicationReady() {
         List<NewTopic> expected = List.of(
                 build(metricsTopic, metricsPartitions),
                 build(logsTopic, logsPartitions),

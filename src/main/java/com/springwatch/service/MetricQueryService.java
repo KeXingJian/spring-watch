@@ -7,7 +7,9 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import jakarta.annotation.PostConstruct;
+import lombok.Getter;
 import lombok.RequiredArgsConstructor;
+import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -64,12 +66,13 @@ public class MetricQueryService {
         long startNs = System.nanoTime();
         try {
             String flux = String.format(
-                    "from(bucket: \"%s\")\n" +
-                            "  |> range(start: -24h)\n" +
-                            "  |> filter(fn: (r) => r._measurement == \"%s\" and r.appid == \"%s\")\n" +
-                            "  |> group(columns: [\"metric\"])\n" +
-                            "  |> last()\n" +
-                            "  |> keep(columns: [\"_value\", \"_time\", \"metric\"])",
+                    """
+                            from(bucket: "%s")
+                              |> range(start: -24h)
+                              |> filter(fn: (r) => r._measurement == "%s" and r.appid == "%s")
+                              |> group(columns: ["metric"])
+                              |> last()
+                              |> keep(columns: ["_value", "_time", "metric"])""",
                     bucket, MEASUREMENT, appid);
             List<FluxTable> tables = queryApi.query(flux, influxOrg);
             List<MetricDescriptor> result = new ArrayList<>();
@@ -102,14 +105,15 @@ public class MetricQueryService {
         try {
             String tagFilterClause = buildTagFilter(tagFilters);
             String flux = String.format(
-                    "from(bucket: \"%s\")\n" +
-                            "  |> range(start: -1h)\n" +
-                            "  |> filter(fn: (r) => r._measurement == \"%s\"\n" +
-                            "                    and r.appid == \"%s\"\n" +
-                            "                    and r._field == \"value\"\n" +
-                            "                    and r.metric == \"%s\"%s)\n" +
-                            "  |> sort(columns: [\"_time\"], desc: true)\n" +
-                            "  |> limit(n: 500)",
+                    """
+                            from(bucket: "%s")
+                              |> range(start: -1h)
+                              |> filter(fn: (r) => r._measurement == "%s"
+                                                and r.appid == "%s"
+                                                and r._field == "value"
+                                                and r.metric == "%s"%s)
+                              |> sort(columns: ["_time"], desc: true)
+                              |> limit(n: 500)""",
                     bucket, MEASUREMENT, appid, metric, tagFilterClause);
             List<FluxTable> tables = queryApi.query(flux, influxOrg);
             log.trace("[kxj: queryLatest - 推tagFilter到Flux,appid={},metric={},tagFilterClause={},tables={}]",
@@ -125,7 +129,7 @@ public class MetricQueryService {
                     Object t = record.getValueByKey("_time");
                     row.put("time", t == null ? null : t.toString());
                     Map<String, Object> tags = new LinkedHashMap<>();
-                    collectTags(record, tags, "metric", "appid", "_field", "_measurement", "_start", "_stop", "_value", "_time", "result", "table", "host");
+                    collectTags(record, tags);
                     row.put("tags", tags);
                     latestByTags.put(key, row);
                 }
@@ -161,15 +165,16 @@ public class MetricQueryService {
             String window = (every == null || every.isBlank()) ? "30s" : every;
             String filter = buildTagFilter(tagFilters);
             String flux = String.format(
-                    "from(bucket: \"%s\")\n" +
-                            "  |> range(start: %s, stop: %s)\n" +
-                            "  |> filter(fn: (r) => r._measurement == \"%s\"\n" +
-                            "                    and r.appid == \"%s\"\n" +
-                            "                    and r._field == \"value\"\n" +
-                            "                    and r.metric == \"%s\"%s)\n" +
-                            "%s" +
-                            "  |> aggregateWindow(every: %s, fn: %s, createEmpty: false)\n" +
-                            "  |> yield(name: \"series\")",
+                    """
+                            from(bucket: "%s")
+                              |> range(start: %s, stop: %s)
+                              |> filter(fn: (r) => r._measurement == "%s"
+                                                and r.appid == "%s"
+                                                and r._field == "value"
+                                                and r.metric == "%s"%s)
+                            %s\
+                              |> aggregateWindow(every: %s, fn: %s, createEmpty: false)
+                              |> yield(name: "series")""",
                     bucket, formatInstant(from), formatInstant(to), MEASUREMENT, appid, metric, filter, rateStep, window, aggFn);
             List<FluxTable> tables = queryApi.query(flux, influxOrg);
             List<Map<String, Object>> resultSeries = new ArrayList<>();
@@ -227,15 +232,16 @@ public class MetricQueryService {
                     .map(c -> "\"" + c.replace("\"", "\\\"") + "\"")
                     .collect(Collectors.joining(", "));
             String flux = String.format(
-                    "from(bucket: \"%s\")\n" +
-                            "  |> range(start: -5m)\n" +
-                            "  |> filter(fn: (r) => r._measurement == \"%s\"\n" +
-                            "                    and r.appid == \"%s\"\n" +
-                            "                    and r._field == \"value\"\n" +
-                            "                    and r.metric == \"%s\")\n" +
-                            "%s" +
-                            "  |> group(columns: [%s])\n" +
-                            "  |> last()",
+                    """
+                            from(bucket: "%s")
+                              |> range(start: -5m)
+                              |> filter(fn: (r) => r._measurement == "%s"
+                                                and r.appid == "%s"
+                                                and r._field == "value"
+                                                and r.metric == "%s")
+                            %s\
+                              |> group(columns: [%s])
+                              |> last()""",
                     bucket, MEASUREMENT, appid, metric, rateStep, groupColumnsLiteral);
             List<FluxTable> tables = queryApi.query(flux, influxOrg);
             List<Map<String, Object>> groups = new ArrayList<>();
@@ -250,7 +256,7 @@ public class MetricQueryService {
                     Object v = record.getValue();
                     if (v instanceof Number n) value = n.doubleValue();
                 }
-                String compositeKey = tagVals.values().stream().collect(Collectors.joining("|"));
+                String compositeKey = String.join("|", tagVals.values());
                 Map<String, Object> row = new LinkedHashMap<>();
                 row.put("group", compositeKey.isEmpty() ? "default" : compositeKey);
                 row.put("tags", tagVals);
@@ -288,13 +294,14 @@ public class MetricQueryService {
             String countMetric = metric + "_count";
             String tagClause = buildTagFilter(tagFilters);
             String flux = String.format(
-                    "from(bucket: \"%s\")\n" +
-                            "  |> range(start: %s, stop: %s)\n" +
-                            "  |> filter(fn: (r) => r._measurement == \"%s\"\n" +
-                            "                    and r.appid == \"%s\"\n" +
-                            "                    and r._field == \"value\"\n" +
-                            "                    and (r.metric == \"%s\" or r.metric == \"%s\")%s)\n" +
-                            "  |> aggregateWindow(every: %s, fn: last, createEmpty: false)",
+                    """
+                            from(bucket: "%s")
+                              |> range(start: %s, stop: %s)
+                              |> filter(fn: (r) => r._measurement == "%s"
+                                                and r.appid == "%s"
+                                                and r._field == "value"
+                                                and (r.metric == "%s" or r.metric == "%s")%s)
+                              |> aggregateWindow(every: %s, fn: last, createEmpty: false)""",
                     bucket, formatInstant(from), formatInstant(to), MEASUREMENT, appid, bucketMetric, countMetric, tagClause, window);
             List<FluxTable> tables = queryApi.query(flux, influxOrg);
             java.util.Set<String> excludeKeys = java.util.Set.of(
@@ -318,7 +325,7 @@ public class MetricQueryService {
                         tagMap.put(k, e.getValue());
                     }
                     String slotKey = tagKey + "@" + t;
-                    Map<String, Object> slot = slots.computeIfAbsent(slotKey, k -> {
+                    Map<String, Object> slot = slots.computeIfAbsent(slotKey, _ -> {
                         Map<String, Object> s = new LinkedHashMap<>();
                         s.put("t", t);
                         s.put("tags", tagMap);
@@ -389,7 +396,7 @@ public class MetricQueryService {
                 return le + frac * (nextLe - le);
             }
         }
-        return sorted.get(sorted.size() - 1).getKey();
+        return sorted.getLast().getKey();
     }
 
     private static Double parseLe(String le) {
@@ -419,30 +426,6 @@ public class MetricQueryService {
         return sb.toString();
     }
 
-    private static boolean matchTagFilters(FluxRecord record, Map<String, String> tagFilters) {
-        if (tagFilters == null || tagFilters.isEmpty()) return true;
-        for (Map.Entry<String, String> e : tagFilters.entrySet()) {
-            if (e.getValue() == null) continue;
-            Object v = record.getValueByKey(e.getKey());
-            if (v == null) return false;
-            if (!String.valueOf(v).equals(e.getValue())) return false;
-        }
-        return true;
-    }
-
-    private static String buildTagKey(FluxRecord record, Map<String, String> filterKeys) {
-        java.util.Set<String> filterSet = filterKeys == null ? java.util.Set.of() : filterKeys.keySet();
-        java.util.Set<String> exclude = java.util.Set.of("metric", "appid", "_field", "_measurement", "_start", "_stop", "_value", "_time", "result", "table");
-        StringBuilder sb = new StringBuilder();
-        for (Map.Entry<String, Object> e : record.getValues().entrySet()) {
-            if (exclude.contains(e.getKey())) continue;
-            if (e.getKey().startsWith("_")) continue;
-            if (!filterSet.contains(e.getKey())) continue;
-            sb.append(e.getKey()).append("=").append(e.getValue()).append("|");
-        }
-        return sb.toString();
-    }
-
     private static String buildAllTagsKey(FluxRecord record) {
         java.util.Set<String> exclude = java.util.Set.of("metric", "appid", "_field", "_measurement", "_start", "_stop", "_value", "_time", "result", "table", "host");
         StringBuilder sb = new StringBuilder();
@@ -455,14 +438,10 @@ public class MetricQueryService {
         return sb.toString();
     }
 
-    private static int sumRecords(List<FluxTable> tables) {
-        int n = 0;
-        for (FluxTable t : tables) n += t.getRecords().size();
-        return n;
-    }
 
-    private static void collectTags(FluxRecord record, Map<String, Object> out, String... exclude) {
-        java.util.Set<String> ex = java.util.Set.of(exclude);
+
+    private static void collectTags(FluxRecord record, Map<String, Object> out) {
+        java.util.Set<String> ex = java.util.Set.of("metric", "appid", "_field", "_measurement", "_start", "_stop", "_value", "_time", "result", "table", "host");
         for (java.util.Map.Entry<String, Object> e : record.getValues().entrySet()) {
             if (ex.contains(e.getKey())) continue;
             if (e.getKey().startsWith("_")) continue;
@@ -471,17 +450,13 @@ public class MetricQueryService {
         }
     }
 
+    @Setter
+    @Getter
     public static class MetricDescriptor {
         private String metric;
         private Double lastValue;
         private Instant lastTime;
 
-        public String getMetric() { return metric; }
-        public void setMetric(String metric) { this.metric = metric; }
-        public Double getLastValue() { return lastValue; }
-        public void setLastValue(Double lastValue) { this.lastValue = lastValue; }
-        public Instant getLastTime() { return lastTime; }
-        public void setLastTime(Instant lastTime) { this.lastTime = lastTime; }
     }
 
     /**
@@ -508,12 +483,7 @@ public class MetricQueryService {
         public static AppViewSpec series(String key, String metric, Map<String, String> tags, String agg, String every) {
             return new AppViewSpec(key, "series", metric, tags == null ? Map.of() : tags, agg, every, null, null);
         }
-        public static AppViewSpec grouped(String key, String metric, String groupBy, String agg) {
-            return new AppViewSpec(key, "grouped", metric, Map.of(), agg, null, groupBy, null);
-        }
-        public static AppViewSpec quantile(String key, String metric, Map<String, String> tags, String quantiles, String every) {
-            return new AppViewSpec(key, "histogram-quantile", metric, tags == null ? Map.of() : tags, null, every, null, quantiles);
-        }
+
     }
 
     /**
@@ -538,7 +508,7 @@ public class MetricQueryService {
                 .collect(Collectors.toMap(
                         AppViewSpec::key,
                         spec -> runSpec(appid, from, to, every, spec),
-                        (a, b) -> a,
+                        (a, _) -> a,
                         LinkedHashMap::new
                 ));
         Map<String, Object> results = new LinkedHashMap<>();

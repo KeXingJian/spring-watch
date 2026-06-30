@@ -37,8 +37,6 @@ public class LogDedupService {
     @Value("${spring-watch.log.dedup.max-entries:200000}")
     private long maxEntries;
 
-    @Value("${spring-watch.log.dedup.flush-interval-ms:30000}")
-    private long flushIntervalMs;
 
     private Cache<DedupKey, LongAdder> dedupCache;
     private Counter keepCounter;
@@ -54,7 +52,7 @@ public class LogDedupService {
                 .expireAfterWrite(Duration.ofSeconds(windowSeconds))
                 .maximumSize(maxEntries)
                 .recordStats()
-                .removalListener((key, value, cause) -> {
+                .removalListener((_, _, cause) -> {
                     if (cause == RemovalCause.SIZE) {
                         sizeEvictionCounter.increment();
                     } else if (cause == RemovalCause.EXPIRED) {

@@ -78,7 +78,7 @@ public class DlqMonitorConsumer {
                 rec.timestamp() > 0 ? rec.timestamp() : null);
         return DlqMessage.builder()
                 .sourceTopic(headerString(rec, KafkaHeaders.DLT_ORIGINAL_TOPIC, rec.topic()))
-                .originalPartition(headerInt(rec, KafkaHeaders.DLT_ORIGINAL_PARTITION, rec.partition()))
+                .originalPartition(headerInt(rec, rec.partition()))
                 .originalOffset(headerLong(rec, KafkaHeaders.DLT_ORIGINAL_OFFSET, rec.offset()))
                 .originalTimestamp(origTsMillis != null ? Instant.ofEpochMilli(origTsMillis) : null)
                 .payload(truncate(rec.value(), 64 * 1024)) // 消息体最大 64KB
@@ -101,8 +101,8 @@ public class DlqMonitorConsumer {
         return new String(h.value(), StandardCharsets.UTF_8);
     }
 
-    private static Integer headerInt(ConsumerRecord<?, ?> rec, String name, int defaultValue) {
-        Header h = rec.headers().lastHeader(name);
+    private static Integer headerInt(ConsumerRecord<?, ?> rec, int defaultValue) {
+        Header h = rec.headers().lastHeader(KafkaHeaders.DLT_ORIGINAL_PARTITION);
         if (h == null || h.value() == null) {
             // 负数视为未提供，避免污染库
             return defaultValue >= 0 ? defaultValue : null;

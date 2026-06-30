@@ -9,6 +9,7 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
+import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.AdminClientConfig;
@@ -39,11 +40,9 @@ import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Kafka 集群健康 + spring-watch 生产端统计采集。
- *
  * 与 {@link KafkaLagMonitor} 互补:KafkaLagMonitor 只看消费滞后(差多少),
  * 本类关注 broker 自身健康(URP、offline partition、log dir size)以及 spring-watch
  * 作为 producer 的累计发送/失败计数(供前端算 rate)。
- *
  * 写入 InfluxDB infra_metrics 桶,tag 固定 component=kafka,metric 取以下常量;
  * 这样 InfraPane 自动按 (component, metric) 维度展示,不需要改前端。
  */
@@ -72,6 +71,7 @@ public class KafkaHealthMonitor {
     private Counter pollOkCounter;
     private Counter pollFailCounter;
     private final AtomicLong lastSuccessEpochMs = new AtomicLong(0L);
+    @Getter
     private volatile String lastError = "";
 
     /** 写入 InfluxDB 时用的 metric 名常量,前端 metricLabels.ts 里要同步翻译。 */
@@ -134,13 +134,6 @@ public class KafkaHealthMonitor {
         if (adminClient != null) adminClient.close();
     }
 
-    public long getLastSuccessEpochMs() {
-        return lastSuccessEpochMs.get();
-    }
-
-    public String getLastError() {
-        return lastError;
-    }
 
     private void poll() {
         try {

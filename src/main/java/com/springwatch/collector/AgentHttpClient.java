@@ -14,7 +14,6 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicLong;
@@ -22,7 +21,6 @@ import java.util.concurrent.atomic.AtomicLong;
 /**
  * kxj: 共享 HttpClient 池 - 替代 3 处 new HttpURLConnection
  * JDK 自带 HttpClient 内部维护连接池,支持 HTTP/2,避免每次握手
- *
  * P0-2: 响应体改为 byte[] 接收，超过 maxBodyBytes 直接丢弃，避免单个异常 Agent 撑爆堆。
  */
 @Slf4j
@@ -30,7 +28,6 @@ import java.util.concurrent.atomic.AtomicLong;
 public class AgentHttpClient {
 
     private final HttpClient httpClient;
-    private final int defaultConnectTimeoutMs;
     private final int defaultReadTimeoutMs;
     private final int maxBodyBytes;
     private final ExecutorService executor;
@@ -47,7 +44,6 @@ public class AgentHttpClient {
                            @Value("${spring-watch.collector.http.connect-timeout-ms:3000}") int connectTimeoutMs,
                            @Value("${spring-watch.collector.http.read-timeout-ms:10000}") int readTimeoutMs,
                            @Value("${spring-watch.collector.http.max-body-bytes:4194304}") int maxBodyBytes) {
-        this.defaultConnectTimeoutMs = connectTimeoutMs;
         this.defaultReadTimeoutMs = readTimeoutMs;
         this.maxBodyBytes = maxBodyBytes;
         this.executor = Executors.newVirtualThreadPerTaskExecutor();
@@ -161,9 +157,6 @@ public class AgentHttpClient {
         }
         public boolean isOk() {
             return error == null;
-        }
-        public Optional<String> bodyOpt() {
-            return Optional.ofNullable(body);
         }
     }
 }

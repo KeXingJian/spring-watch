@@ -7,7 +7,9 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import jakarta.annotation.PostConstruct;
+import lombok.Getter;
 import lombok.RequiredArgsConstructor;
+import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -72,12 +74,13 @@ public class SelfMetricQueryService {
         long startNs = System.nanoTime();
         try {
             String flux = String.format(
-                    "from(bucket: \"%s\")\n" +
-                            "  |> range(start: -24h)\n" +
-                            "  |> filter(fn: (r) => r._measurement == \"%s\" and r.appid == \"%s\")\n" +
-                            "  |> group(columns: [\"category\"])\n" +
-                            "  |> distinct(column: \"category\")\n" +
-                            "  |> keep(columns: [\"category\"])",
+                    """
+                            from(bucket: "%s")
+                              |> range(start: -24h)
+                              |> filter(fn: (r) => r._measurement == "%s" and r.appid == "%s")
+                              |> group(columns: ["category"])
+                              |> distinct(column: "category")
+                              |> keep(columns: ["category"])""",
                     bucket, MEASUREMENT, APPID_SELF);
             List<FluxTable> tables = queryApi.query(flux, influxOrg);
             List<String> out = new ArrayList<>();
@@ -107,11 +110,12 @@ public class SelfMetricQueryService {
         long startNs = System.nanoTime();
         try {
             StringBuilder flux = new StringBuilder(String.format(
-                    "from(bucket: \"%s\")\n" +
-                            "  |> range(start: -24h)\n" +
-                            "  |> filter(fn: (r) => r._measurement == \"%s\"\n" +
-                            "                    and r.appid == \"%s\"\n" +
-                            "                    and r._field == \"value\"",
+                    """
+                            from(bucket: "%s")
+                              |> range(start: -24h)
+                              |> filter(fn: (r) => r._measurement == "%s"
+                                                and r.appid == "%s"
+                                                and r._field == "value\"""",
                     bucket, MEASUREMENT, APPID_SELF));
             if (category != null && !category.isBlank()) {
                 flux.append("\n                    and r.category == \"").append(escape(category)).append("\"");
@@ -184,18 +188,19 @@ public class SelfMetricQueryService {
             String rateStep = "rate".equals(aggLower) ? "|> derivative(unit: 1s, nonNegative: true)\n" : "";
             String targetField = (field == null || field.isBlank()) ? "value" : field;
             String flux = String.format(
-                    "from(bucket: \"%s\")\n" +
-                            "  |> range(start: %s, stop: %s)\n" +
-                            "  |> filter(fn: (r) => r._measurement == \"%s\"\n" +
-                            "                    and r.appid == \"%s\"\n" +
-                            "                    and r._field == \"%s\"%s)\n" +
-                            "%s" +
-                            "  |> aggregateWindow(every: %s, fn: %s, createEmpty: false)\n" +
-                            "  |> yield(name: \"series\")",
+                    """
+                            from(bucket: "%s")
+                              |> range(start: %s, stop: %s)
+                              |> filter(fn: (r) => r._measurement == "%s"
+                                                and r.appid == "%s"
+                                                and r._field == "%s"%s)
+                            %s\
+                              |> aggregateWindow(every: %s, fn: %s, createEmpty: false)
+                              |> yield(name: "series")""",
                     bucket, formatInstant(from), formatInstant(to), MEASUREMENT, APPID_SELF,
                     escape(targetField), filter, rateStep, window, aggFn);
             List<FluxTable> tables = queryApi.query(flux, influxOrg);
-            return parseSeries(tables, metric, tagFilters);
+            return parseSeries(tables, metric);
         } catch (Exception e) {
             seriesFailCounter.increment();
             log.warn("[spring-watch: 自监控 series 查询失败 - metric={}, error={}]", metric, e.getMessage());
@@ -213,13 +218,14 @@ public class SelfMetricQueryService {
         try {
             String filter = buildTagFilter(category, metric, tagFilters);
             String flux = String.format(
-                    "from(bucket: \"%s\")\n" +
-                            "  |> range(start: -1h)\n" +
-                            "  |> filter(fn: (r) => r._measurement == \"%s\"\n" +
-                            "                    and r.appid == \"%s\"\n" +
-                            "                    and r._field == \"value\"%s)\n" +
-                            "  |> sort(columns: [\"_time\"], desc: true)\n" +
-                            "  |> limit(n: 50)",
+                    """
+                            from(bucket: "%s")
+                              |> range(start: -1h)
+                              |> filter(fn: (r) => r._measurement == "%s"
+                                                and r.appid == "%s"
+                                                and r._field == "value"%s)
+                              |> sort(columns: ["_time"], desc: true)
+                              |> limit(n: 50)""",
                     bucket, MEASUREMENT, APPID_SELF, filter);
             List<FluxTable> tables = queryApi.query(flux, influxOrg);
             Map<String, Map<String, Object>> latestByTags = new LinkedHashMap<>();
@@ -253,8 +259,7 @@ public class SelfMetricQueryService {
      * 应用指标式 series 解析（与 MetricQueryService.querySeries 行为一致）。
      * 多个 series（按 tag 区分）都会被返回。
      */
-    private static Map<String, Object> parseSeries(List<FluxTable> tables, String metric,
-                                                    Map<String, String> tagFilters) {
+    private static Map<String, Object> parseSeries(List<FluxTable> tables, String metric) {
         List<Map<String, Object>> resultSeries = new ArrayList<>();
         for (FluxTable table : tables) {
             String seriesName = metric;
@@ -470,7 +475,7 @@ public class SelfMetricQueryService {
         // LinkedHashMap 保留 spec 声明顺序,前端读取稳定。
         Map<String, Object> results = new LinkedHashMap<>();
         List<String> errors = new ArrayList<>();
-        java.util.List<ViewSpec> orderedSpecs = specs;
+        List<ViewSpec> orderedSpecs = specs;
         Map<String, Map<String, Object>> parallel = orderedSpecs.parallelStream()
                 .collect(Collectors.toMap(
                         ViewSpec::key,
@@ -485,7 +490,7 @@ public class SelfMetricQueryService {
                                 return new LinkedHashMap<>(Map.of("series", List.of(), "count", 0, "error", e.getMessage()));
                             }
                         },
-                        (a, b) -> a,
+                        (a, _) -> a,
                         LinkedHashMap::new
                 ));
         for (ViewSpec s : orderedSpecs) {
@@ -499,6 +504,8 @@ public class SelfMetricQueryService {
         return resp;
     }
 
+    @Setter
+    @Getter
     public static class SelfMetricDescriptor {
         private String metric;
         private String category;
@@ -507,17 +514,5 @@ public class SelfMetricQueryService {
         private Double lastValue;
         private Instant lastTime;
 
-        public String getMetric() { return metric; }
-        public void setMetric(String metric) { this.metric = metric; }
-        public String getCategory() { return category; }
-        public void setCategory(String category) { this.category = category; }
-        public String getMeterType() { return meterType; }
-        public void setMeterType(String meterType) { this.meterType = meterType; }
-        public String getGcName() { return gcName; }
-        public void setGcName(String gcName) { this.gcName = gcName; }
-        public Double getLastValue() { return lastValue; }
-        public void setLastValue(Double lastValue) { this.lastValue = lastValue; }
-        public Instant getLastTime() { return lastTime; }
-        public void setLastTime(Instant lastTime) { this.lastTime = lastTime; }
     }
 }

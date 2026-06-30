@@ -8,10 +8,10 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
+import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.AdminClientConfig;
-import org.apache.kafka.clients.admin.ListConsumerGroupOffsetsResult;
 import org.apache.kafka.clients.admin.ListOffsetsResult;
 import org.apache.kafka.clients.admin.OffsetSpec;
 import org.apache.kafka.clients.admin.TopicDescription;
@@ -37,18 +37,14 @@ import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * 按 topic × partition 维度采集 Kafka 利用率,供"是否需要调 partition 数"决策。
- *
  * 调研目的(白皮书 0.5):当前 metrics=12 / logs=6 / heartbeat=3 partition 是否冗余?
  * 通过连续观测每 partition 的 produce_rate / consume_rate,1~2 周后看分布决定是否收敛。
- *
  * 数据来源:纯 AdminClient 采样,**不需要 JMX**。3 个核心数据点:
  *   1. end_offset(最新生产位置,AdminClient listOffsets)
  *   2. committed_offset(消费者提交位点,AdminClient listConsumerGroupOffsets)
  *   3. produce_rate / consume_rate = 本轮 end_offset / committed_offset 差值 / 轮询周期
- *
  * 写入 InfluxDB infra_metrics 桶,tag = {component=kafka, metric=kafka.partition.utilization, topic, partition},
  * field = {produced_rate, consumed_rate, lag, end_offset, committed_offset, replicas, isr}。
- *
  * 注意:第一次采集时所有 rate = 0(没有 prev 值),正常。
  */
 @Slf4j
@@ -81,6 +77,7 @@ public class KafkaPartitionUtilizationGauge {
     private Counter pollOkCounter;
     private Counter pollFailCounter;
     private final AtomicLong lastSuccessEpochMs = new AtomicLong(0L);
+    @Getter
     private volatile String lastError = "";
 
     /** 上轮 end_offset 快照,key = "topic-partition",用于算 produced_rate。 */
@@ -135,9 +132,6 @@ public class KafkaPartitionUtilizationGauge {
         if (scheduler != null) scheduler.shutdownNow();
         if (adminClient != null) adminClient.close();
     }
-
-    public long getLastSuccessEpochMs() { return lastSuccessEpochMs.get(); }
-    public String getLastError() { return lastError; }
 
     private void poll() {
         try {

@@ -50,7 +50,7 @@ public class LogAnomalyDetector {
                 .expireAfterWrite(Duration.ofSeconds(rateTtlSeconds))
                 .maximumSize(maxAppids)
                 .recordStats()
-                .removalListener((key, value, cause) -> {
+                .removalListener((_, _, cause) -> {
                     if (cause == RemovalCause.SIZE) {
                         rateEvictSizeCounter.increment();
                     }
@@ -61,7 +61,7 @@ public class LogAnomalyDetector {
                 .expireAfterWrite(Duration.ofHours(patternTtlHours))
                 .maximumSize(maxAppids)
                 .recordStats()
-                .removalListener((key, value, cause) -> {
+                .removalListener((_, _, cause) -> {
                     if (cause == RemovalCause.SIZE) {
                         patternEvictSizeCounter.increment();
                     }
@@ -88,7 +88,7 @@ public class LogAnomalyDetector {
 
     public SpikingResult isErrorRateSpiking(long appid, double currentRate, double multiplier) {
         log.debug("[spring-watch: LogAnomalyDetector isErrorRateSpiking - appid={}, current={}, multiplier={}]", appid, currentRate, multiplier);
-        Double lastRate = errorRateCache.get(appid, k -> null);
+        Double lastRate = errorRateCache.get(appid, _ -> null);
         errorRateCache.put(appid, currentRate);
         if (lastRate == null || lastRate < minBaseRate) {
             log.debug("[spring-watch: LogAnomalyDetector 跳过突增判断 - appid={}, lastRate={}, minBaseRate={}", appid, lastRate, minBaseRate);
@@ -113,7 +113,7 @@ public class LogAnomalyDetector {
             log.debug("[spring-watch: LogAnomalyDetector isNewPattern fingerprint为空, 跳过 - appid={}", appid);
             return false;
         }
-        PatternSet set = knownPatternsCache.get(appid, k -> new PatternSet(maxPatternsPerAppid));
+        PatternSet set = knownPatternsCache.get(appid, _ -> new PatternSet(maxPatternsPerAppid));
         boolean isNew = set.add(fingerprint);
         if (isNew) {
             newPatternCounter.increment();
@@ -124,10 +124,6 @@ public class LogAnomalyDetector {
         return isNew;
     }
 
-    public int patternSetSize(long appid) {
-        PatternSet set = knownPatternsCache.getIfPresent(appid);
-        return set == null ? 0 : set.size();
-    }
 
     static final class PatternSet {
         private final int maxSize;
@@ -149,10 +145,6 @@ public class LogAnomalyDetector {
                 }
             }
             return set.add(s);
-        }
-
-        synchronized int size() {
-            return set.size();
         }
     }
 }

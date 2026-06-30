@@ -44,7 +44,7 @@ public class AgentMetricsCollector {
                 .map(this::parsePrometheusLine)
                 .filter(Objects::nonNull)
                 .filter(parsed -> !isOtelInfoMetric(parsed.name))
-                .map(parsed -> toMetricEvent(target, parsed, result.status()))
+                .map(parsed -> toMetricEvent(target, parsed))
                 .forEach(event -> {
                     kafkaProducerBridge.sendMetric(event);
                     metricCount[0]++;
@@ -53,14 +53,11 @@ public class AgentMetricsCollector {
                 target.appid(), target.appName(), metricsUrl, metricCount[0]);
     }
 
-    private MetricEvent toMetricEvent(MonitorTarget target, ParsedMetric parsed, int status) {
-        Map<String, String> tags = new HashMap<>();
-//        tags.put("source", "java_agent");
-//        tags.put("statusCode", String.valueOf(status));
+    private MetricEvent toMetricEvent(MonitorTarget target, ParsedMetric parsed) {
+
         return MetricEvent.builder()
                 .appid(target.appid())
                 .metricName(parsed.name)
-//                .method("agent_pull")
                 .value(parsed.value)
                 .timestamp(Instant.now())
                 .tags(parsed.tags)

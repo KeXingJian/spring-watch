@@ -30,7 +30,6 @@ import java.util.concurrent.ConcurrentMap;
 public class InfrastructureAlertScheduler {
 
     private final QueryApi queryApi;
-    private final AsyncAlertExecutor alertExecutor;
     private final AlertNotifier alertNotifier;
     private final MonitorAppRepository monitorAppRepository;
     private final InfraAlertsProperties properties;
@@ -101,7 +100,6 @@ public class InfrastructureAlertScheduler {
         boolean breached;
         String op = rule.getOp() == null ? ">" : rule.getOp();
         switch (op) {
-            case ">" -> breached = value > rule.getThreshold();
             case ">=" -> breached = value >= rule.getThreshold();
             case "<" -> breached = value < rule.getThreshold();
             case "<=" -> breached = value <= rule.getThreshold();

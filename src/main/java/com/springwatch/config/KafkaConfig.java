@@ -134,7 +134,7 @@ public class KafkaConfig {
     public DefaultErrorHandler errorHandler(KafkaTemplate<String, String> template) {
         DeadLetterPublishingRecoverer recoverer = new DeadLetterPublishingRecoverer(
                 template,
-                (record, ex) -> new org.apache.kafka.common.TopicPartition(record.topic() + ".DLQ", record.partition()));
+                (record, _) -> new org.apache.kafka.common.TopicPartition(record.topic() + ".DLQ", record.partition()));
         ExponentialBackOff backoff = new ExponentialBackOff();
         backoff.setInitialInterval(retryInitialInterval);
         backoff.setMultiplier(retryMultiplier);

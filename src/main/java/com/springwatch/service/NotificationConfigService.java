@@ -11,7 +11,6 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.List;
 import java.util.Optional;
 
 @Slf4j
@@ -26,17 +25,11 @@ public class NotificationConfigService {
         return repository.findAll(pageable);
     }
 
-    public List<AlertNotificationConfig> listAll() {
-        return repository.findAll();
-    }
 
     public Page<AlertNotificationConfig> listByAppid(Long appid, Pageable pageable) {
         return repository.findByAppid(appid, pageable);
     }
 
-    public List<AlertNotificationConfig> listByAppid(Long appid) {
-        return repository.findByAppidAndStatus(appid, "enabled");
-    }
 
     public Optional<AlertNotificationConfig> findById(Long id) {
         return repository.findById(id);

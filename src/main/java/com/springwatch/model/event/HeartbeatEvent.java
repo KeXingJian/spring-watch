@@ -16,8 +16,4 @@ public class HeartbeatEvent {
     private String agentVersion;
     private Instant timestamp;
 
-    public String toLogString() {
-        return String.format("[HeartbeatEvent: appid=%s, ip=%s, agentVersion=%s, time=%s]",
-                appid, ip, agentVersion, timestamp);
-    }
 }

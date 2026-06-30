@@ -32,7 +32,6 @@ public class PullRetryQueue {
     private final AppPullTask appPullTask;
     private final MonitorAppRepository repository;
     private final AppScheduleProperties properties;
-    private final MeterRegistry meterRegistry;
 
     private final PriorityBlockingQueue<RetryPull> queue = new PriorityBlockingQueue<>(
             64, Comparator.comparing(RetryPull::enqueueTime));
@@ -55,7 +54,6 @@ public class PullRetryQueue {
         this.appPullTask = appPullTask;
         this.repository = repository;
         this.properties = properties;
-        this.meterRegistry = meterRegistry;
         this.maxQueueSize = properties.getRetry().getMaxQueueSize();
         this.enqueuedCounter = Counter.builder("spring.watch.collector.retry.enqueued")
                 .description("拉取重投入队次数")

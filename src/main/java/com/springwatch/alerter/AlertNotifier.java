@@ -36,9 +36,6 @@ public class AlertNotifier {
     @Value("${spring-watch.alert.mail.from:alert@example.com}")
     private String from;
 
-    @Value("${spring-watch.alert.mail.from-name:spring-watch}")
-    private String fromName;
-
     private static final String INVALID_CHANNELS_MARKER = "__INVALID_CHANNELS__";
 
     @PostConstruct
@@ -77,7 +74,7 @@ public class AlertNotifier {
         } else {
             Map<String, String> channels;
             try {
-                channels = objectMapper.readValue(rule.getNotifyChannels(), new TypeReference<Map<String, String>>() {});
+                channels = objectMapper.readValue(rule.getNotifyChannels(), new TypeReference<>() {});
             } catch (Exception e) {
                 log.warn("[Alerter] 通知渠道配置解析失败 - ruleId={}, raw={}, error={}",
                         rule.getId(), rule.getNotifyChannels(), e.getMessage());

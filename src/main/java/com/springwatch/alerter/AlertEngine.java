@@ -181,7 +181,7 @@ public class AlertEngine {
             stateStore.setState(ruleId, appid, AlertState.FIRING, now, now);
             log.debug("[Alerter] 日志规则构造合成指标 - ruleId={}, appid={}, metric={}, fingerprint={}",
                     ruleId, appid, synthetic.getMetricName(), event.getFingerprint());
-            self.fire(rule, synthetic, now);
+            self.fire(rule, synthetic);
             return;
         }
 
@@ -259,7 +259,7 @@ public class AlertEngine {
             if (timesMet && durationMet) {
                 if (stateStore.tryFire(ruleId, appid, firstBreach, now)) {
                     stateStore.clearTriggerCount(ruleId, appid);
-                    self.fire(rule, event, now);
+                    self.fire(rule, event);
                 } else {
                     log.debug("[Alerter] CAS抢占FIRING失败, 已被其他线程触发 - ruleId={}, appid={}", ruleId, appid);
                 }
@@ -304,7 +304,7 @@ public class AlertEngine {
     }
 
     @Transactional
-    public void fire(AlertRule rule, MetricEvent event, Instant now) {
+    public void fire(AlertRule rule, MetricEvent event) {
         log.info("[Alerter] 告警触发 - ruleId={}, appid={}, metric={}, value={}, expression={}",
                 rule.getId(), event.getAppid(), event.getMetricName(),
                 event.getValue(), rule.getExpression());
@@ -316,8 +316,8 @@ public class AlertEngine {
         AlertHistory history = AlertHistory.builder()
                 .rule(rule)
                 .app(rule.getApp())
-                .alertLevel(determineLevel(event, rule))
-                .alertMessage(buildMessage(rule, event, "firing"))
+                .alertLevel(determineLevel(rule))
+                .alertMessage(buildMessage(rule, event))
                 .build();
         AlertHistory saved = historyRepository.save(history);
 
@@ -336,7 +336,7 @@ public class AlertEngine {
                 .findByAppAppidAndRuleIdAndResolvedAtIsNullOrderByCreatedAtDesc(
                         event.getAppid(), rule.getId());
         if (!open.isEmpty()) {
-            AlertHistory latest = open.get(0);
+            AlertHistory latest = open.getFirst();
             latest.setResolvedAt(now);
             historyRepository.save(latest);
             log.info("[Alerter] 告警历史标记恢复 - historyId={}, resolvedAt={}", latest.getId(), now);
@@ -411,14 +411,14 @@ public class AlertEngine {
             stateStore.clearTriggerCount(rule.getId(), appid);
             log.info("[Alerter] 扫描器触发FIRING - ruleId={}, appid={}, firstBreachAt={}, triggerCount={}, metric={}, value={}",
                     rule.getId(), appid, firstBreachAt, triggerCount, synthetic.getMetricName(), synthetic.getValue());
-            self.fire(rule, synthetic, now);
+            self.fire(rule, synthetic);
         } else {
             log.debug("[Alerter] 扫描器CAS抢占FIRING失败, 已被实时事件触发 - ruleId={}, appid={}",
                     rule.getId(), appid);
         }
     }
 
-    private String determineLevel(MetricEvent event, AlertRule rule) {
+    private String determineLevel(AlertRule rule) {
         String level = rule.getLevel();
         if (level == null || level.isBlank()) {
             return "warning";
@@ -426,10 +426,10 @@ public class AlertEngine {
         return level;
     }
 
-    private String buildMessage(AlertRule rule, MetricEvent event, String type) {
+    private String buildMessage(AlertRule rule, MetricEvent event) {
         String msg = String.format("[%s][%s] appid=%s 指标 %s 当前值=%.2f 规则=%s 时间=%s",
-                determineLevel(event, rule).toUpperCase(),
-                type.toUpperCase(), event.getAppid(), event.getMetricName(),
+                determineLevel(rule).toUpperCase(),
+                "firing".toUpperCase(), event.getAppid(), event.getMetricName(),
                 event.getValue() != null ? event.getValue() : 0.0,
                 rule.getExpression(), Instant.now());
         log.debug("[Alerter] 告警消息构建 - ruleId={}, appid={}, message={}", rule.getId(), event.getAppid(), msg);

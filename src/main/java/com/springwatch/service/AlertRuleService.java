@@ -13,8 +13,6 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.Instant;
-import java.util.List;
 import java.util.Optional;
 
 @Slf4j
@@ -34,13 +32,6 @@ public class AlertRuleService {
         return alertRuleRepository.findByAppAppid(appid, pageable);
     }
 
-    public List<AlertRule> listAll() {
-        return alertRuleRepository.findAll();
-    }
-
-    public List<AlertRule> listByAppid(Long appid) {
-        return alertRuleRepository.findByAppAppid(appid);
-    }
 
     public Optional<AlertRule> findById(Long id) {
         return alertRuleRepository.findById(id);

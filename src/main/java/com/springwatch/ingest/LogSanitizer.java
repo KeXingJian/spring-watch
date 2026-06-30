@@ -10,9 +10,9 @@ import java.util.regex.Pattern;
 @Component
 public class LogSanitizer {
 
-    private static final Pattern PHONE = Pattern.compile("(?<![\\d])1[3-9]\\d{9}(?![\\d])");
-    private static final Pattern ID_CARD = Pattern.compile("(?<![\\d])\\d{17}[\\dXx](?![\\d])");
-    private static final Pattern BANK_CARD = Pattern.compile("(?<![\\d])\\d{16,19}(?![\\d])");
+    private static final Pattern PHONE = Pattern.compile("(?<!\\d)1[3-9]\\d{9}(?!\\d)");
+    private static final Pattern ID_CARD = Pattern.compile("(?<!\\d)\\d{17}[\\dXx](?!\\d)");
+    private static final Pattern BANK_CARD = Pattern.compile("(?<!\\d)\\d{16,19}(?!\\d)");
     private static final Pattern EMAIL = Pattern.compile(
             "\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}\\b");
     private static final Pattern PASSWORD_KV = Pattern.compile(

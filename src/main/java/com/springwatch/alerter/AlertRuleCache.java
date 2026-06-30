@@ -70,7 +70,7 @@ public class AlertRuleCache {
             Cache<Long, List<AlertRule>> newCache = Caffeine.newBuilder()
                     .expireAfterWrite(Duration.ofMillis(refreshIntervalMs * 2))
                     .maximumSize(maxAppids)
-                    .removalListener((key, value, cause) -> {
+                    .removalListener((_, _, cause) -> {
                         if (cause.wasEvicted()) evictions.incrementAndGet();
                     })
                     .build();
@@ -91,7 +91,7 @@ public class AlertRuleCache {
     public List<AlertRule> rulesFor(Long appid) {
         Cache<Long, List<AlertRule>> c = cache;
         if (c == null) return Collections.emptyList();
-        List<AlertRule> rules = c.get(appid, k -> {
+        List<AlertRule> rules = c.get(appid, _ -> {
             misses.incrementAndGet();
             return Collections.emptyList();
         });
@@ -113,9 +113,5 @@ public class AlertRuleCache {
     }
 
     public record CacheStats(long hits, long misses, long evictions, int size) {
-        public double hitRatio() {
-            long total = hits + misses;
-            return total == 0 ? 0.0 : (double) hits / total;
-        }
     }
 }

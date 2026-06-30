@@ -134,8 +134,7 @@ public class KafkaFallbackQueue {
         totalTruncated.incrementAndGet();
         truncatedCounter.increment();
         log.warn("[spring-watch: KafkaFallbackQueue payload 截断 - origBytes={}, limit={}", byteLen, maxPayloadBytes);
-        int charLimit = payload.length();
-        int lo = 0, hi = charLimit;
+        int lo = 0, hi = payload.length();
         while (lo < hi) {
             int mid = (lo + hi + 1) >>> 1;
             if (payload.substring(0, mid).getBytes(StandardCharsets.UTF_8).length <= maxPayloadBytes) {
@@ -167,10 +166,8 @@ public class KafkaFallbackQueue {
                 sent++;
             } catch (Exception e) {
                 failed++;
-                if (failed == 1) {
-                    log.warn("[spring-watch: KafkaFallbackQueue 重投失败, 暂停本轮 - topic={}, key={}, error={}]",
-                            r.topic, r.key, e.getMessage());
-                }
+                log.warn("[spring-watch: KafkaFallbackQueue 重投失败, 暂停本轮 - topic={}, key={}, error={}]",
+                        r.topic, r.key, e.getMessage());
                 long ageMs = Duration.between(r.enqueueAt, Instant.now()).toMillis();
                 if (ageMs > drainIntervalMs * 10) {
                     log.error("[spring-watch: KafkaFallbackQueue 消息停留过久, 丢头 - topic={}, key={}, ageMs={}",

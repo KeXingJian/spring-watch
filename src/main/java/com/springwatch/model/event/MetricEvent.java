@@ -20,8 +20,5 @@ public class MetricEvent {
     private Instant timestamp;
     private Map<String, String> tags;
 
-    public String toLogString() {
-        return String.format("[MetricEvent: appid=%s, metric=%s, method=%s, value=%.2f, time=%s]",
-                appid, metricName, method, value, timestamp);
-    }
+
 }

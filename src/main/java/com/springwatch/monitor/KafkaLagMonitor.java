@@ -8,6 +8,7 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
+import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.AdminClientConfig;
@@ -49,6 +50,7 @@ public class KafkaLagMonitor {
     private Counter pollOkCounter;
     private Counter pollFailCounter;
     private final AtomicLong lastSuccessEpochMs = new AtomicLong(0L);
+    @Getter
     private volatile String lastError = "";
 
     public KafkaLagMonitor(@Qualifier("infraWriteApi") WriteApi writeApi,
@@ -110,13 +112,6 @@ public class KafkaLagMonitor {
         if (adminClient != null) adminClient.close();
     }
 
-    public long getLastSuccessEpochMs() {
-        return lastSuccessEpochMs.get();
-    }
-
-    public String getLastError() {
-        return lastError;
-    }
 
     private void poll() {
         try {
@@ -173,7 +168,7 @@ public class KafkaLagMonitor {
                 long lag = Math.max(0L, end - committedOffset);
                 totalLagByGroup.merge(g, lag, Long::sum);
                 lagByTopicAndGroup
-                        .computeIfAbsent(tp.topic(), k -> new HashMap<>())
+                        .computeIfAbsent(tp.topic(), _ -> new HashMap<>())
                         .merge(g, lag, Long::sum);
 
                 Point p = Point.measurement("infra_metrics")

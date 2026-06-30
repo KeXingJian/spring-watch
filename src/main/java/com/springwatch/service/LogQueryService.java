@@ -150,15 +150,14 @@ public class LogQueryService {
         levelsCounter.increment();
         long start = System.nanoTime();
         try {
-            StringBuilder sb = new StringBuilder();
-            sb.append("from(bucket: \"").append(bucket).append("\")\n");
-            sb.append("  |> range(start: ").append(formatInstant(from)).append(", stop: ").append(formatInstant(to)).append(")\n");
-            sb.append(buildFilter(appid, null, null, null, null, null, null, "message")).append("\n");
-            sb.append("  |> keep(columns: [\"level\", \"_value\"])\n");
-            sb.append("  |> group(columns: [\"level\"])\n");
-            sb.append("  |> count(column: \"_value\")\n");
-            sb.append("  |> group()\n");
-            List<FluxTable> tables = queryApi.query(sb.toString(), influxOrg);
+            String sb = "from(bucket: \"" + bucket + "\")\n" +
+                    "  |> range(start: " + formatInstant(from) + ", stop: " + formatInstant(to) + ")\n" +
+                    buildFilter(appid, null, null, null, null, null, null, "message") + "\n" +
+                    "  |> keep(columns: [\"level\", \"_value\"])\n" +
+                    "  |> group(columns: [\"level\"])\n" +
+                    "  |> count(column: \"_value\")\n" +
+                    "  |> group()\n";
+            List<FluxTable> tables = queryApi.query(sb, influxOrg);
             List<LevelCount> out = new ArrayList<>();
             for (FluxTable table : tables) {
                 String level = null;
@@ -186,7 +185,6 @@ public class LogQueryService {
      */
     public List<ErrorRateBucket> errorRateSeries(long appid, Instant from, Instant to, String every) {
         String window = (every == null || every.isBlank()) ? "1m" : every;
-        long start = System.nanoTime();
         StringBuilder sb = new StringBuilder();
         sb.append("from(bucket: \"").append(bucket).append("\")\n");
         sb.append("  |> range(start: ").append(formatInstant(from)).append(", stop: ").append(formatInstant(to)).append(")\n");
@@ -228,16 +226,15 @@ public class LogQueryService {
         long start = System.nanoTime();
         int safeTop = topN <= 0 ? 10 : topN;
         try {
-            StringBuilder sb = new StringBuilder();
-            sb.append("from(bucket: \"").append(bucket).append("\")\n");
-            sb.append("  |> range(start: ").append(formatInstant(from)).append(", stop: ").append(formatInstant(to)).append(")\n");
-            sb.append(buildFilter(appid, level, null, null, null, null, null, "message")).append("\n");
-            sb.append("  |> group(columns: [\"fingerprint\"])\n");
-            sb.append("  |> count()\n");
-            sb.append("  |> sort(columns: [\"_value\"], desc: true)\n");
-            sb.append("  |> limit(n: ").append(safeTop).append(")\n");
+            String sb = "from(bucket: \"" + bucket + "\")\n" +
+                    "  |> range(start: " + formatInstant(from) + ", stop: " + formatInstant(to) + ")\n" +
+                    buildFilter(appid, level, null, null, null, null, null, "message") + "\n" +
+                    "  |> group(columns: [\"fingerprint\"])\n" +
+                    "  |> count()\n" +
+                    "  |> sort(columns: [\"_value\"], desc: true)\n" +
+                    "  |> limit(n: " + safeTop + ")\n";
 
-            List<FluxTable> tables = queryApi.query(sb.toString(), influxOrg);
+            List<FluxTable> tables = queryApi.query(sb, influxOrg);
             List<PatternTop> out = new ArrayList<>();
             for (FluxTable table : tables) {
                 for (FluxRecord r : table.getRecords()) {
@@ -251,7 +248,7 @@ public class LogQueryService {
             // 注意:PG dedup_count 是近 1h 窗口的累加(Caffeine window + flush 周期),
             // 与 InfluxDB 查的 [from, to] 时间窗并不完全对齐,这里采用"任一指纹命中就补"
             if (!out.isEmpty()) {
-                List<String> fps = out.stream().map(p -> p.fingerprint()).toList();
+                List<String> fps = out.stream().map(PatternTop::fingerprint).toList();
                 List<LogDedupCountRepository.FpCount> rows = dedupCountRepository.sumDedupByFingerprints(appid, fps);
                 Map<String, Long> dedupMap = new HashMap<>();
                 for (LogDedupCountRepository.FpCount r : rows) {
@@ -280,14 +277,13 @@ public class LogQueryService {
      */
     public FingerprintDetail fingerprintDetail(long appid, String fingerprint, Instant from, Instant to) {
         try {
-            StringBuilder sb = new StringBuilder();
-            sb.append("from(bucket: \"").append(bucket).append("\")\n");
-            sb.append("  |> range(start: ").append(formatInstant(from)).append(", stop: ").append(formatInstant(to)).append(")\n");
-            sb.append(buildFilter(appid, null, null, null, fingerprint, null, null, null)).append("\n");
-            sb.append("  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n");
-            sb.append("  |> sort(columns: [\"_time\"], desc: true)\n");
-            sb.append("  |> limit(n: 1)\n");
-            List<FluxTable> tables = queryApi.query(sb.toString(), influxOrg);
+            String sb = "from(bucket: \"" + bucket + "\")\n" +
+                    "  |> range(start: " + formatInstant(from) + ", stop: " + formatInstant(to) + ")\n" +
+                    buildFilter(appid, null, null, null, fingerprint, null, null, null) + "\n" +
+                    "  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n" +
+                    "  |> sort(columns: [\"_time\"], desc: true)\n" +
+                    "  |> limit(n: 1)\n";
+            List<FluxTable> tables = queryApi.query(sb, influxOrg);
             for (FluxTable table : tables) {
                 for (FluxRecord r : table.getRecords()) {
                     return new FingerprintDetail(
@@ -316,15 +312,14 @@ public class LogQueryService {
         traceCounter.increment();
         long start = System.nanoTime();
         try {
-            StringBuilder sb = new StringBuilder();
-            sb.append("from(bucket: \"").append(bucket).append("\")\n");
-            sb.append("  |> range(start: -24h)\n");
-            sb.append(buildFilter(appid, null, null, null, null, traceId, null, "message")).append("\n");
-            sb.append("  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n");
-            sb.append("  |> sort(columns: [\"_time\"])\n");
-            sb.append("  |> limit(n: 200)\n");
+            String sb = "from(bucket: \"" + bucket + "\")\n" +
+                    "  |> range(start: -24h)\n" +
+                    buildFilter(appid, null, null, null, null, traceId, null, "message") + "\n" +
+                    "  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n" +
+                    "  |> sort(columns: [\"_time\"])\n" +
+                    "  |> limit(n: 200)\n";
 
-            List<FluxTable> tables = queryApi.query(sb.toString(), influxOrg);
+            List<FluxTable> tables = queryApi.query(sb, influxOrg);
             return parsePivotedRows(tables);
         } catch (Exception e) {
             queryFailCounter.increment();
@@ -345,15 +340,14 @@ public class LogQueryService {
         try {
             Instant from = center.minusSeconds(beforeSec <= 0 ? 30 : beforeSec);
             Instant to = center.plusSeconds(afterSec <= 0 ? 30 : afterSec);
-            StringBuilder sb = new StringBuilder();
-            sb.append("from(bucket: \"").append(bucket).append("\")\n");
-            sb.append("  |> range(start: ").append(formatInstant(from)).append(", stop: ").append(formatInstant(to)).append(")\n");
-            sb.append(buildFilter(appid, null, logger, threadName, null, null, host, "message")).append("\n");
-            sb.append("  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n");
-            sb.append("  |> sort(columns: [\"_time\"])\n");
-            sb.append("  |> limit(n: ").append(limit <= 0 ? 100 : limit).append(")\n");
+            String sb = "from(bucket: \"" + bucket + "\")\n" +
+                    "  |> range(start: " + formatInstant(from) + ", stop: " + formatInstant(to) + ")\n" +
+                    buildFilter(appid, null, logger, threadName, null, null, host, "message") + "\n" +
+                    "  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n" +
+                    "  |> sort(columns: [\"_time\"])\n" +
+                    "  |> limit(n: " + (limit <= 0 ? 100 : limit) + ")\n";
 
-            List<FluxTable> tables = queryApi.query(sb.toString(), influxOrg);
+            List<FluxTable> tables = queryApi.query(sb, influxOrg);
             return parsePivotedRows(tables);
         } catch (Exception e) {
             queryFailCounter.increment();
@@ -469,7 +463,7 @@ public class LogQueryService {
                 Object tObj = r.getValueByKey("_time");
                 if (tObj == null) continue;
                 String timeKey = tObj.toString();
-                LogRow row = byTime.computeIfAbsent(timeKey, k -> new LogRow());
+                LogRow row = byTime.computeIfAbsent(timeKey, _ -> new LogRow());
                 row.time = timeKey;
                 if (row.appid == null) row.appid = strVal(r.getValueByKey("appid"));
                 if (row.level == null) row.level = strVal(r.getValueByKey("level"));
@@ -586,9 +580,5 @@ public class LogQueryService {
      */
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public record SearchResult(List<LogRow> rows, long total, int page, int pageSize, String error) {
-        public int totalPages() {
-            if (pageSize <= 0 || total <= 0) return 0;
-            return (int) ((total + pageSize - 1) / pageSize);
-        }
     }
 }

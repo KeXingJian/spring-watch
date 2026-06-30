@@ -40,11 +40,11 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Supplier;
 
 /**
  * 自监控采集器 - 定时采样 JVM/进程/系统/Micrometer 指标。
  * P1-6: 缩小 RING_SIZE 至 60（10min 历史）；引入 Meter 白名单，避免高基数 Gauge 撑爆堆。
- *
  * 持久化（与 BatchMetricConsumer 保持同款 InfluxDB 写入路径）：
  * - 每次采样落 InfluxDB self_metrics 桶，measurement=self_monitor_metrics
      * - tags: appid=self, category=jvm|process|meter, metric=<扁平名>, meter_type=counter|gauge|timer, gc_name=<仅 GC>, pool_name=<仅内存池>
@@ -107,17 +107,7 @@ public class SelfMonitorCollector {
     private Counter persistedCounter;
     private Counter persistFailCounter;
 
-    /**
-     * @PostConstruct 只做 meter 注册(无副作用,立即可执行);
-     * scheduler 启动延后到 {@link #onApplicationReady(ApplicationReadyEvent)},
-     * 避免 self-monitor-sampler 在 Flyway 迁移 + InfluxDB bucket 初始化完成前就开始采样。
-     *
-     * 修复前的问题(M-WriteApiSplit / M-SelfMonitorTiming):
-     * - scheduler.scheduleWithFixedDelay(this::sample, 0L, ...) 启动延迟 0 秒
-     * - sampler 立即调 AlertHistoryRepository.count() 查 alert_history → Flyway V1 还没跑,表不存在
-     * - sampler 立即调 selfMetricsWriteApi.writePoints() → InfluxDBBucketInitializer 还没触发 ApplicationReadyEvent,bucket 不存在
-     * - 报错后 Spring Context 卡住,"Started SpringWatchApplication" 不打印
-     */
+
     @PostConstruct
     void registerMeters() {
         this.filteredMeterCounter = Counter.builder("spring.watch.self.monitor.capture.filtered")
@@ -199,7 +189,7 @@ public class SelfMonitorCollector {
      *   - Kafka producer / consumer 已启动
      */
     @EventListener(ApplicationReadyEvent.class)
-    public void onApplicationReady(ApplicationReadyEvent event) {
+    public void onApplicationReady() {
         this.scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "self-monitor-sampler");
             t.setDaemon(true);
@@ -258,7 +248,6 @@ public class SelfMonitorCollector {
      * - jvm 段 → category=jvm, metric=heap.used / nonHeap.used / pool.used(pool_name) / gc.count(gc_name) / gc.time_ms(gc_name) ...
      * - process 段 → category=process, metric=cpu_load / rss_bytes / ...
      * - meters 段 → category=meter, meter_type=counter|gauge|timer, metric=<原始 meter 名>
-     *
      * 这样查询时与 MetricQueryService.querySeries 走同一套 Flux 模板（measurement + appid + metric + _field=value），
      * 减少新增查询路径的心智负担。
      */
@@ -330,8 +319,8 @@ public class SelfMonitorCollector {
 
         ProcessSnap proc = s.process;
         if (proc != null) {
-            add(out, tsNs, CAT_PROCESS, "cpu_load", proc.cpuLoad());
-            add(out, tsNs, CAT_PROCESS, "system_cpu_load", proc.systemCpuLoad());
+            add(out, tsNs, "cpu_load", proc.cpuLoad());
+            add(out, tsNs, "system_cpu_load", proc.systemCpuLoad());
             add(out, tsNs, CAT_PROCESS, "rss_bytes", proc.rssBytes());
             add(out, tsNs, CAT_PROCESS, "virtual_bytes", proc.virtualBytes());
             add(out, tsNs, CAT_PROCESS, "heap_used", proc.heapUsed());
@@ -380,9 +369,9 @@ public class SelfMonitorCollector {
         add(out, tsNs, category, metric, (double) value, Map.of());
     }
 
-    private static void add(List<Point> out, long tsNs, String category, String metric, double value) {
+    private static void add(List<Point> out, long tsNs, String metric, double value) {
         if (Double.isNaN(value) || Double.isInfinite(value)) return;
-        add(out, tsNs, category, metric, value, Map.of());
+        add(out, tsNs, SelfMonitorCollector.CAT_PROCESS, metric, value, Map.of());
     }
 
     private static void add(List<Point> out, long tsNs, String category, String metric, double value,
@@ -468,16 +457,16 @@ public class SelfMonitorCollector {
 
     private ProcessSnap captureProcess() {
         OperatingSystemMXBean os = (OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean();
-        double procCpu = clamp(os.getProcessCpuLoad(), 0d, 1d);
-        double sysCpu = clamp(os.getCpuLoad(), 0d, 1d);
-        long virt = safe(os::getCommittedVirtualMemorySize, 0L);
+        double procCpu = clamp(os.getProcessCpuLoad());
+        double sysCpu = clamp(os.getCpuLoad());
+        long virt = safe(os::getCommittedVirtualMemorySize);
         // 真实 RSS:OperatingSystemMXBean 没现成 API,Linux 上读 /proc/self/status 的 VmRSS
         long rss = readRssBytes();
         long heapUsed = (ManagementFactory.getMemoryMXBean().getHeapMemoryUsage().getUsed());
         long nonHeapUsed = (ManagementFactory.getMemoryMXBean().getNonHeapMemoryUsage().getUsed());
         long sysTotal = os.getTotalMemorySize();
         long sysFree = os.getFreeMemorySize();
-        long diskFree = safe(SelfMonitorCollector::freeDiskBytes, 0L);
+        long diskFree = safe(SelfMonitorCollector::freeDiskBytes);
         return new ProcessSnap(procCpu, sysCpu, rss, virt, heapUsed, nonHeapUsed, sysTotal, sysFree, diskFree, Runtime.getRuntime().availableProcessors());
     }
 
@@ -564,19 +553,25 @@ public class SelfMonitorCollector {
                 continue;
             }
             captured++;
-            if (m instanceof Counter c) {
-                double v = c.count();
-                counters.put(name, v);
-                lastCounterValues.put(name, v);
-            } else if (m instanceof Timer t) {
-                TimerSnap snap = new TimerSnap(t.count(), t.totalTime(TimeUnit.MILLISECONDS), -1.0, t.max(TimeUnit.MILLISECONDS));
-                timers.put(name, snap);
-                lastTimerSnaps.put(name, snap);
-            } else if (m instanceof Gauge g) {
-                double v = g.value();
-                if (!Double.isNaN(v) && !Double.isInfinite(v)) {
-                    gauges.put(name, v);
-                    lastGaugeValues.put(name, v);
+            switch (m) {
+                case Counter c -> {
+                    double v = c.count();
+                    counters.put(name, v);
+                    lastCounterValues.put(name, v);
+                }
+                case Timer t -> {
+                    TimerSnap snap = new TimerSnap(t.count(), t.totalTime(TimeUnit.MILLISECONDS), -1.0, t.max(TimeUnit.MILLISECONDS));
+                    timers.put(name, snap);
+                    lastTimerSnaps.put(name, snap);
+                }
+                case Gauge g -> {
+                    double v = g.value();
+                    if (!Double.isNaN(v) && !Double.isInfinite(v)) {
+                        gauges.put(name, v);
+                        lastGaugeValues.put(name, v);
+                    }
+                }
+                default -> {
                 }
             }
         }
@@ -601,13 +596,13 @@ public class SelfMonitorCollector {
         return root.getUsableSpace();
     }
 
-    private static double clamp(double v, double lo, double hi) {
+    private static double clamp(double v) {
         if (Double.isNaN(v) || Double.isInfinite(v)) return 0d;
-        return Math.max(lo, Math.min(hi, v));
+        return Math.clamp(v, 0.0, 1.0);
     }
 
-    private static long safe(java.util.function.Supplier<Long> s, long def) {
-        try { Long v = s.get(); return v == null ? def : v; } catch (Throwable t) { return def; }
+    private static long safe(Supplier<Long> s) {
+        try { Long v = s.get(); return v == null ? 0L : v; } catch (Throwable t) { return 0L; }
     }
 
     private static double poolBytes(String poolName, java.util.function.ToLongFunction<MemoryUsage> extractor) {
@@ -690,10 +685,10 @@ public class SelfMonitorCollector {
     }
 
     private record ClassLoadingMXBeanWrap(java.lang.management.ClassLoadingMXBean src) {
-        long loaded() { return safe(() -> (long) src.getLoadedClassCount(), 0L); }
-        long totalLoaded() { return safe(() -> (long) src.getTotalLoadedClassCount(), 0L); }
-        long unloaded() { return safe(() -> (long) src.getUnloadedClassCount(), 0L); }
-        private static long safe(java.util.function.Supplier<Long> s, long def) { try { Long v = s.get(); return v == null ? def : v; } catch (Throwable t) { return def; } }
+        long loaded() { return safe(() -> (long) src.getLoadedClassCount()); }
+        long totalLoaded() { return safe(src::getTotalLoadedClassCount); }
+        long unloaded() { return safe(src::getUnloadedClassCount); }
+        private static long safe(Supplier<Long> s) { try { Long v = s.get(); return v == null ? 0L : v; } catch (Throwable t) { return 0L; } }
     }
 
     public record Sample(long ts, String iso, JvmSnap jvm, ProcessSnap process, MeterSnap meters) {}

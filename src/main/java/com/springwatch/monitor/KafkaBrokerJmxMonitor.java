@@ -8,6 +8,7 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
+import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -33,13 +34,11 @@ import org.springframework.beans.factory.annotation.Qualifier;
 
 /**
  * 连到 Kafka broker 的 JMX 端口(默认 9999),拉 broker 进程级 + Kafka 服务级 MBean 写 InfluxDB。
- *
  * 适用场景:用户自己起的专有 Kafka,broker 启动时配了
  *   -Dcom.sun.management.jmxremote.port=9999
  *   -Dcom.sun.management.jmxremote.authenticate=false
  *   -Dcom.sun.management.jmxremote.ssl=false
  * 就能直接连;没配的话这个 monitor 会一直报 connect refused,其它逻辑不受影响。
- *
  * 采集的 MBean 大致分四组:
  *   - BrokerTopicMetrics:*PerSec(总 + topic 级):生产/消费消息、字节流量、失败率
  *   - ReplicaManager:URP、OfflinePartitions、PartitionCount(覆盖 URP 的双源)
@@ -63,9 +62,6 @@ public class KafkaBrokerJmxMonitor {
     @Value("${spring-watch.kafka.broker-jmx.password:}")
     private String jmxPassword;
 
-    @Value("${spring-watch.kafka.broker-jmx.connect-timeout-sec:5}")
-    private int connectTimeoutSec;
-
     @Value("${spring-watch.kafka.broker-jmx.poll-interval-sec:30}")
     private long pollIntervalSec;
 
@@ -77,6 +73,7 @@ public class KafkaBrokerJmxMonitor {
     private final AtomicReference<MBeanServerConnection> connRef = new AtomicReference<>();
     private final AtomicLong lastSuccessEpochMs = new AtomicLong(0L);
     private final AtomicLong lastConnectEpochMs = new AtomicLong(0L);
+    @Getter
     private volatile String lastError = "";
 
     private Counter pollOkCounter;
@@ -134,9 +131,6 @@ public class KafkaBrokerJmxMonitor {
         if (scheduler != null) scheduler.shutdownNow();
         closeQuietly();
     }
-
-    public long getLastSuccessEpochMs() { return lastSuccessEpochMs.get(); }
-    public String getLastError() { return lastError; }
 
     private void pollOnce() {
         try {
@@ -275,7 +269,7 @@ public class KafkaBrokerJmxMonitor {
                     .time(tsNs, WritePrecision.NS);
             if (extraTag != null) {
                 for (Map.Entry<String, String> e : extraTag.entrySet()) {
-                    p = p.addTag(e.getKey(), e.getValue());
+                    p.addTag(e.getKey(), e.getValue());
                 }
             }
             points.add(p);

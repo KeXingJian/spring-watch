@@ -33,7 +33,6 @@ public class NotificationController {
     private static final int MAX_PAGE_SIZE = 200;
 
     private final NotificationConfigService configService;
-    private final AlertNotifier alertNotifier;
 
     @GetMapping("/configs")
     public ApiResponse<Page<AlertNotificationConfig>> listConfigs(

@@ -104,16 +104,16 @@ public class InfraMetricsQueryService {
                     points.add(p);
                 }
                 Map<String, String> tagMap = new LinkedHashMap<>();
-                FluxRecord first = t.getRecords().get(0);
+                FluxRecord first = t.getRecords().getFirst();
                 for (String col : new String[]{"topic", "partition", "group"}) {
                     Object v = first.getValueByKey(col);
                     if (v != null) {
                         tagMap.put(col, v.toString());
-                        if (name.length() > 0) name.append(" / ");
+                        if (!name.isEmpty()) name.append(" / ");
                         name.append(col).append("=").append(v);
                     }
                 }
-                s.put("name", name.length() > 0 ? name.toString() : metric);
+                s.put("name", !name.isEmpty() ? name.toString() : metric);
                 s.put("tags", tagMap);
                 s.put("points", points);
                 seriesOut.add(s);
@@ -130,7 +130,7 @@ public class InfraMetricsQueryService {
         result.put("to", toInstant);
         result.put("every", everyResolved);
         result.put("series", seriesOut);
-        result.put("points", seriesOut.isEmpty() ? List.of() : seriesOut.get(0).get("points"));
+        result.put("points", seriesOut.isEmpty() ? List.of() : seriesOut.getFirst().get("points"));
         result.put("totalPoints", totalPoints);
         return result;
     }
@@ -152,7 +152,7 @@ public class InfraMetricsQueryService {
             List<FluxTable> tables = queryApi.query(flux, influxOrg);
             for (FluxTable t : tables) {
                 if (t.getRecords().isEmpty()) continue;
-                FluxRecord r = t.getRecords().get(0);
+                FluxRecord r = t.getRecords().getFirst();
                 Map<String, Object> p = new LinkedHashMap<>();
                 p.put("t", r.getTime());
                 Object v = r.getValue();
@@ -164,11 +164,11 @@ public class InfraMetricsQueryService {
                     Object tv = r.getValueByKey(col);
                     if (tv != null) {
                         tagMap.put(col, tv.toString());
-                        if (name.length() > 0) name.append(" / ");
+                        if (!name.isEmpty()) name.append(" / ");
                         name.append(col).append("=").append(tv);
                     }
                 }
-                p.put("name", name.length() > 0 ? name.toString() : metric);
+                p.put("name", !name.isEmpty() ? name.toString() : metric);
                 p.put("tags", tagMap);
                 items.add(p);
             }
@@ -177,7 +177,7 @@ public class InfraMetricsQueryService {
         }
         if (items.isEmpty()) return result;
         result.put("items", items);
-        result.put("value", items.get(0).get("v"));
+        result.put("value", items.getFirst().get("v"));
         return result;
     }
 

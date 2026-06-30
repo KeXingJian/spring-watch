@@ -83,7 +83,7 @@ public class LogFingerprinter {
         if (event.getThrowable() != null) {
             int nl = event.getThrowable().indexOf('\n');
             String first = nl > 0 ? event.getThrowable().substring(0, nl) : event.getThrowable();
-            if (sb.length() > 0) {
+            if (!sb.isEmpty()) {
                 sb.append(" | ");
             }
             sb.append(first);

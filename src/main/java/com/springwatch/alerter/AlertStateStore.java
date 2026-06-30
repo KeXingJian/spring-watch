@@ -8,8 +8,10 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PostConstruct;
+import lombok.Builder;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.jspecify.annotations.NonNull;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -30,17 +32,9 @@ public class AlertStateStore {
     public record RuleAppKey(Long ruleId, Long appid) {
     }
 
-    @lombok.Value
-    @lombok.Builder(toBuilder = true)
-    private static class AlertStateData {
-        AlertState state;
-        Instant firstBreachAt;
-        Instant lastFiredAt;
-        long triggerCount;
-        String lastValue;
-        String lastMetric;
-        String lastTagsJson;
-        Instant expireAt;
+    @Builder(toBuilder = true)
+        private record AlertStateData(AlertState state, Instant firstBreachAt, Instant lastFiredAt, long triggerCount,
+                                      String lastValue, String lastMetric, String lastTagsJson, Instant expireAt) {
     }
 
     private static final AlertStateData IDLE_DATA = AlertStateData.builder()
@@ -73,18 +67,18 @@ public class AlertStateStore {
                 .maximumSize(maxEntries)
                 .expireAfter(new Expiry<RuleAppKey, AlertStateData>() {
                     @Override
-                    public long expireAfterCreate(RuleAppKey key, AlertStateData value, long currentTime) {
-                        return nanosUntil(value.getExpireAt(), currentTime);
+                    public long expireAfterCreate(@NonNull RuleAppKey key, @NonNull AlertStateData value, long currentTime) {
+                        return nanosUntil(value.expireAt(), currentTime);
                     }
 
                     @Override
-                    public long expireAfterUpdate(RuleAppKey key, AlertStateData value, long currentTime, long currentDuration) {
-                        return nanosUntil(value.getExpireAt(), currentTime);
+                    public long expireAfterUpdate(@NonNull RuleAppKey key, @NonNull AlertStateData value, long currentTime, long currentDuration) {
+                        return nanosUntil(value.expireAt(), currentTime);
                     }
 
                     @Override
-                    public long expireAfterRead(RuleAppKey key, AlertStateData value, long currentTime, long currentDuration) {
-                        return nanosUntil(value.getExpireAt(), currentTime);
+                    public long expireAfterRead(@NonNull RuleAppKey key, @NonNull AlertStateData value, long currentTime, long currentDuration) {
+                        return nanosUntil(value.expireAt(), currentTime);
                     }
 
                     private long nanosUntil(Instant target, long currentTimeNanos) {
@@ -96,7 +90,7 @@ public class AlertStateStore {
                     }
                 })
                 .recordStats()
-                .removalListener((key, value, cause) -> {
+                .removalListener((_, _, cause) -> {
                     if (cause == RemovalCause.SIZE) {
                         evictSizeCounter.increment();
                     } else if (cause == RemovalCause.EXPIRED) {
@@ -137,34 +131,27 @@ public class AlertStateStore {
         if (data == null) {
             return AlertState.IDLE;
         }
-        if (Instant.now().isAfter(data.getExpireAt())) {
+        if (Instant.now().isAfter(data.expireAt())) {
             return AlertState.IDLE;
         }
-        return data.getState();
+        return data.state();
     }
 
     public Instant getFirstBreachAt(Long ruleId, Long appid) {
         AlertStateData data = stateCache.getIfPresent(new RuleAppKey(ruleId, appid));
-        if (data == null || Instant.now().isAfter(data.getExpireAt())) {
+        if (data == null || Instant.now().isAfter(data.expireAt())) {
             return null;
         }
-        return data.getFirstBreachAt();
+        return data.firstBreachAt();
     }
 
-    public Instant getLastFiredAt(Long ruleId, Long appid) {
-        AlertStateData data = stateCache.getIfPresent(new RuleAppKey(ruleId, appid));
-        if (data == null || Instant.now().isAfter(data.getExpireAt())) {
-            return null;
-        }
-        return data.getLastFiredAt();
-    }
 
     public long incrementTriggerCount(Long ruleId, Long appid) {
         RuleAppKey key = new RuleAppKey(ruleId, appid);
         AtomicLong out = new AtomicLong();
-        stateCache.asMap().compute(key, (k, existing) -> {
+        stateCache.asMap().compute(key, (_, existing) -> {
             AlertStateData current = existing != null ? existing : IDLE_DATA;
-            long newCount = current.getTriggerCount() + 1;
+            long newCount = current.triggerCount() + 1;
             AlertStateData next = current.toBuilder()
                     .triggerCount(newCount)
                     .expireAt(Instant.now().plus(Duration.ofHours(ttlHours)))
@@ -202,16 +189,13 @@ public class AlertStateStore {
     }
 
     public String getLastValue(Long ruleId, Long appid) {
-        return readField(ruleId, appid, AlertStateData::getLastValue);
+        return readField(ruleId, appid, AlertStateData::lastValue);
     }
 
     public String getLastMetric(Long ruleId, Long appid) {
-        return readField(ruleId, appid, AlertStateData::getLastMetric);
+        return readField(ruleId, appid, AlertStateData::lastMetric);
     }
 
-    public String getLastTagsJson(Long ruleId, Long appid) {
-        return readField(ruleId, appid, AlertStateData::getLastTagsJson);
-    }
 
     public void setState(Long ruleId, Long appid, AlertState state, Instant firstBreachAt, Instant lastFiredAt) {
         update(ruleId, appid, current -> current.toBuilder()
@@ -232,9 +216,9 @@ public class AlertStateStore {
     public boolean tryFire(Long ruleId, Long appid, Instant firstBreachAt, Instant lastFiredAt) {
         RuleAppKey key = new RuleAppKey(ruleId, appid);
         AtomicBoolean fired = new AtomicBoolean(false);
-        stateCache.asMap().compute(key, (k, existing) -> {
+        stateCache.asMap().compute(key, (_, existing) -> {
             AlertStateData current = existing != null ? existing : IDLE_DATA;
-            if (current.getState() != AlertState.PENDING) {
+            if (current.state() != AlertState.PENDING) {
                 return existing;
             }
             var b = current.toBuilder()
@@ -263,9 +247,9 @@ public class AlertStateStore {
     public boolean tryResolve(Long ruleId, Long appid) {
         RuleAppKey key = new RuleAppKey(ruleId, appid);
         AtomicBoolean resolved = new AtomicBoolean(false);
-        stateCache.asMap().compute(key, (k, existing) -> {
+        stateCache.asMap().compute(key, (_, existing) -> {
             AlertStateData current = existing != null ? existing : IDLE_DATA;
-            if (current.getState() != AlertState.FIRING) {
+            if (current.state() != AlertState.FIRING) {
                 return existing;
             }
             resolved.set(true);
@@ -298,20 +282,20 @@ public class AlertStateStore {
             if (data == null) {
                 continue;
             }
-            if (Instant.now().isAfter(data.getExpireAt())) {
+            if (Instant.now().isAfter(data.expireAt())) {
                 continue;
             }
-            if (data.getState() != AlertState.PENDING) {
+            if (data.state() != AlertState.PENDING) {
                 continue;
             }
-            if (data.getFirstBreachAt() == null) {
+            if (data.firstBreachAt() == null) {
                 continue;
             }
             result.add(new PendingEntry(
                     entry.getKey().ruleId(),
                     entry.getKey().appid(),
-                    data.getFirstBreachAt(),
-                    data.getTriggerCount()));
+                    data.firstBreachAt(),
+                    data.triggerCount()));
         }
         log.trace("[Alerter] scanPending 完成 - size={}", result.size());
         return result;
@@ -322,7 +306,7 @@ public class AlertStateStore {
 
     private void update(Long ruleId, Long appid, java.util.function.Function<AlertStateData, AlertStateData> mutator) {
         RuleAppKey key = new RuleAppKey(ruleId, appid);
-        stateCache.asMap().compute(key, (k, existing) -> {
+        stateCache.asMap().compute(key, (_, existing) -> {
             AlertStateData current = existing != null ? existing : IDLE_DATA;
             return mutator.apply(current);
         });
@@ -330,7 +314,7 @@ public class AlertStateStore {
 
     private <T> T readField(Long ruleId, Long appid, java.util.function.Function<AlertStateData, T> extractor) {
         AlertStateData data = stateCache.getIfPresent(new RuleAppKey(ruleId, appid));
-        if (data == null || Instant.now().isAfter(data.getExpireAt())) {
+        if (data == null || Instant.now().isAfter(data.expireAt())) {
             return null;
         }
         return extractor.apply(data);

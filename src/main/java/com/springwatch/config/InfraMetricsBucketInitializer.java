@@ -54,7 +54,7 @@ public class InfraMetricsBucketInitializer {
         } else {
             Integer existEvery = null;
             if (existing.getRetentionRules() != null && !existing.getRetentionRules().isEmpty()) {
-                existEvery = existing.getRetentionRules().get(0).getEverySeconds();
+                existEvery = existing.getRetentionRules().getFirst().getEverySeconds();
             }
             if (existEvery == null || existEvery != retentionSeconds) {
                 existing.getRetentionRules().clear();

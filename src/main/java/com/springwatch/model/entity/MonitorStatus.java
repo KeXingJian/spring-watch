@@ -13,10 +13,6 @@ public final class MonitorStatus {
         return PAUSED.equals(status);
     }
 
-    public static boolean isInactive(String status) {
-        return INACTIVE.equals(status);
-    }
-
     public static boolean isActive(String status) {
         return ACTIVE.equals(status);
     }
