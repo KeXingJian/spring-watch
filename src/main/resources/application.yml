@@ -118,7 +118,7 @@ spring-watch:
         cooldown-seconds: 300
       - name: kafka_lag_metrics_high
         component: kafka
-        metric: consumer.lag.total
+        metric: consumer.lag.topic
         tag:
           topic: monitor-metrics
         op: ">"
@@ -127,7 +127,7 @@ spring-watch:
         cooldown-seconds: 300
       - name: kafka_lag_logs_high
         component: kafka
-        metric: consumer.lag.total
+        metric: consumer.lag.topic
         tag:
           topic: monitor-logs
         op: ">"
@@ -335,7 +335,7 @@ influxdb:
 
 logging:
   level:
-    com.springwatch: debug # 自定义包日志级别（P2-3: debug → info，避免每次评估/采样都格式化 toString）
+    com.springwatch: warn # 自定义包日志级别（P2-3: debug → info，避免每次评估/采样都格式化 toString）
   file:
     path: ./.log # 日志输出目录
 

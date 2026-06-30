@@ -160,8 +160,8 @@ public class KafkaLagMonitor {
 
             long tsNs = System.currentTimeMillis() * 1_000_000L;
             List<Point> points = new ArrayList<>();
-            long totalLag = 0L;
-            Map<String, Long> lagByTopic = new HashMap<>();
+            Map<String, Long> totalLagByGroup = new HashMap<>();
+            Map<String, Map<String, Long>> lagByTopicAndGroup = new HashMap<>();
             for (Map.Entry<TopicPartition, ListOffsetsResult.ListOffsetsResultInfo> e : endOffsets.entrySet()) {
                 TopicPartition tp = e.getKey();
                 String g = tpToGroup.getOrDefault(tp, groupId);
@@ -171,8 +171,10 @@ public class KafkaLagMonitor {
                 OffsetAndMetadata cm = committed.get(tp);
                 if (cm != null) committedOffset = cm.offset();
                 long lag = Math.max(0L, end - committedOffset);
-                totalLag += lag;
-                lagByTopic.merge(tp.topic(), lag, Long::sum);
+                totalLagByGroup.merge(g, lag, Long::sum);
+                lagByTopicAndGroup
+                        .computeIfAbsent(tp.topic(), k -> new HashMap<>())
+                        .merge(g, lag, Long::sum);
 
                 Point p = Point.measurement("infra_metrics")
                         .addTag("component", "kafka")
@@ -185,23 +187,28 @@ public class KafkaLagMonitor {
                 points.add(p);
             }
             if (!points.isEmpty()) {
-                Point sum = Point.measurement("infra_metrics")
-                        .addTag("component", "kafka")
-                        .addTag("metric", "consumer.lag.total")
-                        .addTag("group", groupId)
-                        .addField("value", (double) totalLag)
-                        .time(tsNs, WritePrecision.NS);
-                points.add(sum);
-
-                for (Map.Entry<String, Long> e : lagByTopic.entrySet()) {
-                    Point tp = Point.measurement("infra_metrics")
+                for (Map.Entry<String, Long> e : totalLagByGroup.entrySet()) {
+                    Point sum = Point.measurement("infra_metrics")
                             .addTag("component", "kafka")
-                            .addTag("metric", "consumer.lag.topic")
-                            .addTag("topic", e.getKey())
-                            .addTag("group", groupId)
+                            .addTag("metric", "consumer.lag.total")
+                            .addTag("group", e.getKey())
                             .addField("value", (double) e.getValue())
                             .time(tsNs, WritePrecision.NS);
-                    points.add(tp);
+                    points.add(sum);
+                }
+
+                for (Map.Entry<String, Map<String, Long>> topicEntry : lagByTopicAndGroup.entrySet()) {
+                    String topic = topicEntry.getKey();
+                    for (Map.Entry<String, Long> groupEntry : topicEntry.getValue().entrySet()) {
+                        Point tp = Point.measurement("infra_metrics")
+                                .addTag("component", "kafka")
+                                .addTag("metric", "consumer.lag.topic")
+                                .addTag("topic", topic)
+                                .addTag("group", groupEntry.getKey())
+                                .addField("value", (double) groupEntry.getValue())
+                                .time(tsNs, WritePrecision.NS);
+                        points.add(tp);
+                    }
                 }
 
                 writeApi.writePoints(points, writeParameters);
