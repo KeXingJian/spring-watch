@@ -11,7 +11,6 @@ import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.AdminClientConfig;
-import org.apache.kafka.clients.admin.ListConsumerGroupOffsetsResult;
 import org.apache.kafka.clients.admin.ListOffsetsResult;
 import org.apache.kafka.clients.admin.OffsetSpec;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
@@ -40,21 +39,10 @@ public class KafkaLagMonitor {
     private final WriteApi writeApi;
     private final MeterRegistry meterRegistry;
     private final WriteParameters writeParameters;
+    private final LagMonitorProperties props;
 
     @Value("${spring.kafka.bootstrap-servers}")
     private String bootstrapServers;
-
-    @Value("${spring-watch.kafka.lag-monitor.group-id:spring-watch}")
-    private String groupId;
-
-    @Value("${spring-watch.kafka.lag-monitor.topics:monitor-metrics,monitor-logs,monitor-heartbeat}")
-    private String[] topics;
-
-    @Value("${spring-watch.kafka.lag-monitor.poll-interval-sec:30}")
-    private long pollIntervalSec;
-
-    @Value("${spring-watch.kafka.lag-monitor.enabled:true}")
-    private boolean enabled;
 
     private ScheduledExecutorService scheduler;
     private AdminClient adminClient;
@@ -65,11 +53,12 @@ public class KafkaLagMonitor {
 
     public KafkaLagMonitor(@Qualifier("infraWriteApi") WriteApi writeApi,
                            MeterRegistry meterRegistry,
+                           LagMonitorProperties props,
                            @Value("${influxdb.org}") String org,
                            @Value("${influxdb.infra-bucket:infra_metrics}") String infraBucket) {
         this.writeApi = writeApi;
         this.meterRegistry = meterRegistry;
-
+        this.props = props;
         this.writeParameters = new WriteParameters(infraBucket, org, WritePrecision.NS);
     }
 
@@ -85,22 +74,34 @@ public class KafkaLagMonitor {
                 .description("最近一次 Kafka lag 采集成功 epoch ms")
                 .register(meterRegistry);
 
-        if (!enabled) {
+        // 配置体检:每个 topic 必须显式指定 group(否则 lag 会显示"累计消息数"而不是真实堆积)
+        Map<String, String> groups = props.getGroups() != null ? props.getGroups() : Map.of();
+        for (String topic : props.getTopics()) {
+            if (!groups.containsKey(topic)) {
+                log.warn("[spring-watch: KafkaLagMonitor] topic '{}' 没在 lag-monitor.groups 里指定 consumer group,"
+                                + " 默认会用 '{}' 查 committed offset。"
+                                + " 如果该 topic 的实际消费者不在这个 group,lag 数字会等于 log end offset(累计消息数),不是真实堆积",
+                        topic, props.getGroupId());
+            }
+        }
+
+        if (!props.isEnabled()) {
             log.info("[spring-watch: KafkaLagMonitor 禁用]");
             return;
         }
-        Properties props = new Properties();
-        props.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
-        props.put(AdminClientConfig.CLIENT_ID_CONFIG, "spring-watch-lag-monitor");
-        props.put(AdminClientConfig.REQUEST_TIMEOUT_MS_CONFIG, 5000);
-        props.put(AdminClientConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, 10000);
-        this.adminClient = AdminClient.create(props);
+        Properties adminProps = new Properties();
+        adminProps.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+        adminProps.put(AdminClientConfig.CLIENT_ID_CONFIG, "spring-watch-lag-monitor");
+        adminProps.put(AdminClientConfig.REQUEST_TIMEOUT_MS_CONFIG, 5000);
+        adminProps.put(AdminClientConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, 10000);
+        this.adminClient = AdminClient.create(adminProps);
 
         ThreadFactory tf = Thread.ofVirtual().name("kafka-lag-monitor-", 0).factory();
         this.scheduler = Executors.newSingleThreadScheduledExecutor(tf);
-        scheduler.scheduleWithFixedDelay(this::poll, 10L, pollIntervalSec, TimeUnit.SECONDS);
-        log.info("[spring-watch: KafkaLagMonitor 启动 - interval={}s, topics={}, groupId={}",
-                pollIntervalSec, String.join(",", topics), groupId);
+        scheduler.scheduleWithFixedDelay(this::poll, 10L, props.getPollIntervalSec(), TimeUnit.SECONDS);
+        log.info("[spring-watch: KafkaLagMonitor 启动 - interval={}s, topics={}, groupId={}, topicGroups={}",
+                props.getPollIntervalSec(), String.join(",", props.getTopics()),
+                props.getGroupId(), props.getGroups());
     }
 
     @PreDestroy
@@ -119,17 +120,32 @@ public class KafkaLagMonitor {
 
     private void poll() {
         try {
-            Map<TopicPartition, OffsetAndMetadata> committed = adminClient
-                    .listConsumerGroupOffsets(groupId)
-                    .partitionsToOffsetAndMetadata()
-                    .get(8, TimeUnit.SECONDS);
+            String groupId = props.getGroupId();
+            String[] topics = props.getTopics();
+            Map<String, String> topicGroups = props.getGroups() != null ? props.getGroups() : Map.of();
 
+            Map<TopicPartition, String> tpToGroup = new HashMap<>();
             Set<TopicPartition> allPartitions = new HashSet<>();
             for (String topic : topics) {
-                ListConsumerGroupOffsetsResult dummy = null;
                 int partitionCount = guessPartitionCount(topic);
                 for (int i = 0; i < partitionCount; i++) {
-                    allPartitions.add(new TopicPartition(topic, i));
+                    TopicPartition tp = new TopicPartition(topic, i);
+                    allPartitions.add(tp);
+                    String g = topicGroups.getOrDefault(topic, groupId);
+                    tpToGroup.put(tp, g);
+                }
+            }
+
+            Map<String, Map<TopicPartition, OffsetAndMetadata>> committedByGroup = new HashMap<>();
+            Set<String> distinctGroups = new HashSet<>(tpToGroup.values());
+            for (String g : distinctGroups) {
+                try {
+                    committedByGroup.put(g, adminClient
+                            .listConsumerGroupOffsets(g)
+                            .partitionsToOffsetAndMetadata()
+                            .get(8, TimeUnit.SECONDS));
+                } catch (Throwable ignore) {
+                    committedByGroup.put(g, new HashMap<>());
                 }
             }
 
@@ -145,23 +161,25 @@ public class KafkaLagMonitor {
             long tsNs = System.currentTimeMillis() * 1_000_000L;
             List<Point> points = new ArrayList<>();
             long totalLag = 0L;
-            int totalPartitions = 0;
+            Map<String, Long> lagByTopic = new HashMap<>();
             for (Map.Entry<TopicPartition, ListOffsetsResult.ListOffsetsResultInfo> e : endOffsets.entrySet()) {
                 TopicPartition tp = e.getKey();
+                String g = tpToGroup.getOrDefault(tp, groupId);
+                Map<TopicPartition, OffsetAndMetadata> committed = committedByGroup.getOrDefault(g, Map.of());
                 long end = e.getValue().offset();
                 long committedOffset = 0L;
                 OffsetAndMetadata cm = committed.get(tp);
                 if (cm != null) committedOffset = cm.offset();
                 long lag = Math.max(0L, end - committedOffset);
                 totalLag += lag;
-                totalPartitions++;
+                lagByTopic.merge(tp.topic(), lag, Long::sum);
 
                 Point p = Point.measurement("infra_metrics")
                         .addTag("component", "kafka")
                         .addTag("metric", "consumer.lag")
                         .addTag("topic", tp.topic())
                         .addTag("partition", String.valueOf(tp.partition()))
-                        .addTag("group", groupId)
+                        .addTag("group", g)
                         .addField("value", (double) lag)
                         .time(tsNs, WritePrecision.NS);
                 points.add(p);
@@ -175,13 +193,16 @@ public class KafkaLagMonitor {
                         .time(tsNs, WritePrecision.NS);
                 points.add(sum);
 
-                Point parts = Point.measurement("infra_metrics")
-                        .addTag("component", "kafka")
-                        .addTag("metric", "consumer.partitions")
-                        .addTag("group", groupId)
-                        .addField("value", (double) totalPartitions)
-                        .time(tsNs, WritePrecision.NS);
-                points.add(parts);
+                for (Map.Entry<String, Long> e : lagByTopic.entrySet()) {
+                    Point tp = Point.measurement("infra_metrics")
+                            .addTag("component", "kafka")
+                            .addTag("metric", "consumer.lag.topic")
+                            .addTag("topic", e.getKey())
+                            .addTag("group", groupId)
+                            .addField("value", (double) e.getValue())
+                            .time(tsNs, WritePrecision.NS);
+                    points.add(tp);
+                }
 
                 writeApi.writePoints(points, writeParameters);
             }

@@ -794,12 +794,12 @@ watch(pollSec, () => {
     </div>
 
     <div v-show="activeTab === 'influxdb'">
-      <div class="section-title">InfluxDB 自身 · {{ kv.meta }}</div>
+      <div class="section-title">InfluxDB · {{ kv.meta }}</div>
       <InfluxDbPane />
     </div>
 
     <div v-show="activeTab === 'kafka'">
-      <div class="section-title">Kafka 集群 · {{ kv.meta }}</div>
+      <div class="section-title">Kafka · {{ kv.meta }}</div>
       <KafkaPane />
     </div>
   </div>

@@ -11,8 +11,8 @@ type Point = [number, number | null]
 const infra = useInfraComponent('kafka')
 const {
   status, metrics, seriesData, latestData,
-  range, rangeOptions, loading, lastError, componentError,
-  refresh, startPolling, stopPolling, lastUpdateLabel,
+  loading, lastError, componentError,
+  startPolling, stopPolling,
   chartKey, toMbPoints, fmtValue
 } = infra
 
@@ -34,12 +34,32 @@ const partitionsByTopic = computed(() => {
   return out
 })
 
+const SUMMARY_ORDER = [
+  'broker.bytes_in_rate',
+  'broker.bytes_out_rate',
+  'consumer.lag.topic',
+  'broker.messages_in_rate',
+  'broker.produce_requests_rate',
+  'broker.produce_failed_rate',
+  'broker.fetch_failed_rate'
+
+]
+
 const summary = computed(() => {
+  const rank = (m: string) => {
+    const i = SUMMARY_ORDER.indexOf(m)
+    return i === -1 ? SUMMARY_ORDER.length : i
+  }
   const out: { metric: string; data: LineSeriesItem[] }[] = []
-  for (const m of metrics.value) {
-    if (m === 'consumer.lag') continue
+  for (const m of [...metrics.value].sort((a, b) => rank(a) - rank(b))) {
+    if (m === 'consumer.lag' || m === 'consumer.lag.total') continue
     const s = seriesData[chartKey(m)]
-    if (s && s.length > 0) {
+    if (!s || s.length === 0) continue
+    if (m === 'consumer.lag.topic') {
+      const total = seriesData[chartKey('consumer.lag.total')]
+      const merged = [...s, ...(total || []).map((x) => ({ ...x, name: '总滞留' }))]
+      out.push({ metric: m, data: merged })
+    } else {
       out.push({ metric: m, data: s })
     }
   }
@@ -53,13 +73,6 @@ onBeforeUnmount(() => { stopPolling() })
 <template>
   <div>
     <div class="flex items-center mb-3 gap-3 flex-wrap">
-      <div class="range-toggle" role="group" aria-label="时间范围">
-        <button v-for="r in rangeOptions" :key="r"
-                :class="['range-btn', { active: range === r }]"
-                @click="range = r">{{ r }}</button>
-      </div>
-      <button class="btn btn-ghost btn-sm" :disabled="loading" @click="refresh" title="立即刷新">刷新</button>
-      <span class="text-xs text-muted">最后更新 {{ lastUpdateLabel }}</span>
       <span v-if="lastError" class="text-xs" style="color: oklch(var(--er))">异常: {{ lastError }}</span>
       <span v-if="status && status.lastError" class="text-xs" style="color: oklch(var(--wa))">采集告警: {{ status.lastError }}</span>
     </div>
@@ -78,9 +91,9 @@ onBeforeUnmount(() => { stopPolling() })
     </div>
 
     <div v-else>
-      <div v-if="Object.keys(partitionsByTopic).length > 0" class="mb-4">
+      <div v-if="Object.keys(partitionsByTopic).filter((t) => t !== 'monitor-heartbeat').length > 0" class="mb-4">
         <div class="section-title">Consumer Lag(按 topic 分组,每个 partition 一条线)</div>
-        <div v-for="(items, topic) in partitionsByTopic" :key="topic" class="mb-3">
+        <div v-for="(items, topic) in partitionsByTopic" :key="topic" v-show="topic !== 'monitor-heartbeat'" class="mb-3">
           <div class="text-xs text-muted mb-1">topic = {{ topic }}  ·  {{ items.length }} 个 partition</div>
           <Chart
             v-if="items.some((it) => it.points && it.points.length > 0)"

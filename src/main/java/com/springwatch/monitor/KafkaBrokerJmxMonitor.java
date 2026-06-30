@@ -155,9 +155,6 @@ public class KafkaBrokerJmxMonitor {
 
             // 2) Replica manager
             addAttrIfPresent(conn, points, tsNs, null,
-                    "kafka.server:type=ReplicaManager,name=UnderReplicatedPartitions",
-                    "Value", "broker.under_replicated_partitions");
-            addAttrIfPresent(conn, points, tsNs, null,
                     "kafka.server:type=ReplicaManager,name=OfflinePartitionsCount",
                     "Value", "broker.offline_partitions");
             // 3) Controller
@@ -176,15 +173,7 @@ public class KafkaBrokerJmxMonitor {
                     "kafka.server:type=RequestQueueSize",
                     "Value", "broker.request_queue_fetch_consumer");
 
-            // 5) Purgatory(延迟操作堆积,生产侧拥塞指标)
-            addAttrIfPresent(conn, points, tsNs, "delayedOperation=Produce",
-                    "kafka.server:type=DelayedOperationPurgatory,name=PurgatorySize",
-                    "Value", "broker.purgatory_produce");
-            addAttrIfPresent(conn, points, tsNs, "delayedOperation=Fetch",
-                    "kafka.server:type=DelayedOperationPurgatory,name=PurgatorySize",
-                    "Value", "broker.purgatory_fetch");
-
-            // 6) JVM
+            // 5) JVM
             addAttrIfPresent(conn, points, tsNs, null,
                     "java.lang:type=Memory",
                     "HeapMemoryUsage.used", "broker.jvm.heap_used");

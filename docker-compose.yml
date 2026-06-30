@@ -46,9 +46,6 @@ services:
       DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: sw-token-2024
     volumes:
       - .data/influxdb_data:/var/lib/influxdb2
-      # 不挂载 influxdb.conf:InfluxDB 2.7 entrypoint 收到 INFLUXD_CONFIG_PATH 时
-      # 会按 1.x 格式读 config,本配置文件的 key 跟 1.x 一样,被 2.x 判定为 1.x flag 而拒启动
-      # 改用 InfluxDB 2.x 默认配置,内存由容器 mem_limit: 1g 物理兜底(白皮书 §0.6)
     healthcheck:
       test: ["CMD", "influx", "ping"]
       interval: 10s
@@ -62,8 +59,6 @@ services:
     ports:
       - "9092:9092"
       - "9093:9093"
-      # M-KafkaHealth: 把 broker 的 JMX 端口也暴露到宿主,让 spring-watch 进程的
-      # KafkaBrokerJmxMonitor 通过 RMI 连进来拉 BrokerTopicMetrics / ReplicaManager / JVM
       - "9999:9999"
     environment:
       KAFKA_NODE_ID: 1
@@ -76,18 +71,7 @@ services:
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
       KAFKA_LOG_DIRS: /var/lib/kafka/data
-      # M-KafkaTopicInit-Race / v1.5: 关闭 broker 端 auto-create,避免 consumer 抢先订阅
-      # 未知 topic 时触发 1-partition auto-create,覆盖 spring-kafka KafkaAdmin 的 3-partition 创建
-      # 唯一允许创建 topic 的路径: spring-kafka KafkaAdmin (基于 @Bean NewTopic) +
-      #                          KafkaTopicConfig.onApplicationReady() 兜底
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
-      # M-KafkaHealth: 启用 broker JMX,供 spring-watch 的 KafkaBrokerJmxMonitor 连入
-      #  - rmi.port=9999  关键:JMX 默认还会再开一个随机端口做 RMI callback,那个端口没 publish,
-      #    客户端拉 stub 后再连会卡死。把 callback 端口也锁在 9999,只需 expose 一个端口
-      #  - java.rmi.server.hostname=0.0.0.0  容器内 RMI registry 绑 0.0.0.0,
-      #    宿主机/其它容器连 localhost:9999 / sc-kafka:9999 都能通
-      #  - local.only=false  允许远程连接(同主机/同网络,认证靠 authenticate=false 兜底)
-      #  - 9999 端口已在 ports 里 expose 给宿主机
       KAFKA_JMX_OPTS: >-
         -Dcom.sun.management.jmxremote
         -Dcom.sun.management.jmxremote.port=9999

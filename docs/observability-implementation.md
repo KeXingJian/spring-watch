@@ -70,7 +70,6 @@
 |---|---|
 | `consumer.lag` tag=topic+partition | 每个 partition 消费 lag |
 | `consumer.lag.total` | 所有 partition lag 求和 |
-| `consumer.partitions` | 监控的 partition 总数 |
 
 ---
 

@@ -54,8 +54,14 @@ spring-watch:
   kafka:
     lag-monitor:
       enabled: true
-      group-id: spring-watch # 与 spring.kafka.consumer.group-id 一致
+      group-id: spring-watch # 默认 group,与 spring.kafka.consumer.group-id 一致
       topics: monitor-metrics,monitor-logs,monitor-heartbeat
+      # 三个 topic 的实际消费者 group 都不是默认的 spring-watch(都是各自的 -writer 群组),
+      # 这里给每个 topic 单独指定对应的 consumer group,lag 才算得准。没列的 topic 用上面的 group-id。
+      groups:
+        monitor-metrics: spring-watch-metric-writer
+        monitor-logs: spring-watch-log-writer
+        monitor-heartbeat: spring-watch-heartbeat-writer
       poll-interval-sec: 30
     health-monitor:
       enabled: true # M-KafkaHealth: 集群健康 + producer 计数采集
@@ -187,14 +193,6 @@ spring-watch:
         threshold: 50
         level: critical
         cooldown-seconds: 600
-      # M-KafkaHealth: broker 端 URP 兜底(KafkaHealthMonitor 也算了一份,这里走 broker JMX 校准)
-      - name: kafka_broker_urp
-        component: kafka
-        metric: broker.under_replicated_partitions
-        op: ">"
-        threshold: 0
-        level: critical
-        cooldown-seconds: 300
       # M-KafkaHealth: broker 端 JVM 堆使用率(> 80% 告警;字节数,需要看实际堆大小)
       - name: kafka_broker_jvm_heap_high
         component: kafka
@@ -326,12 +324,6 @@ influxdb:
     window: 5m # 降采样窗口大小
     task-every: 1h # 任务调度频率
   write:
-    # M-WriteApiSplit: 阶段 ① 调大 batch/flush/buffer 三个核心参数,默认值保持兼容
-    # 各 WriteApi 实际值见 application.yml 注释 + InfluxDBConfig.java
-    #   metrics:  batch=5000  flush=1000ms  buffer=100000
-    #   logs:     batch=3000  flush=1000ms  buffer=50000
-    #   self:     batch=1000  flush=2000ms  buffer=20000 (默认)
-    #   infra:    batch=1000  flush=2000ms  buffer=20000 (默认)
     batch-size: 1000 # 每批写入条数(默认,各 WriteApi 实际值见 InfluxDBConfig.java)
     flush-interval-ms: 2000 # 刷新间隔（毫秒,P1-8: 1000 → 2000）
     buffer-limit: 20000 # 内存缓冲上限（P1-8: 100000 → 20000）
@@ -343,7 +335,7 @@ influxdb:
 
 logging:
   level:
-    com.springwatch: warn # 自定义包日志级别（P2-3: debug → info，避免每次评估/采样都格式化 toString）
+    com.springwatch: debug # 自定义包日志级别（P2-3: debug → info，避免每次评估/采样都格式化 toString）
   file:
     path: ./.log # 日志输出目录
 

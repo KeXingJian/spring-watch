@@ -304,7 +304,7 @@ export const INFRA_LABELS: Record<string, string> = {
   // Kafka JMX exporter(consumer.*)
   'consumer.lag': '消费者滞后',
   'consumer.lag.total': '消费者总滞后',
-  'consumer.partitions': '消费者分配分区数',
+  'consumer.lag.topic': '消费者按 Topic 滞留',
   'consumer.fetch-rate': '拉取速率',
   'consumer.records-consumed-rate': '消费速率',
   'consumer.records-lag-max': '最大滞后记录数',
@@ -347,7 +347,6 @@ export const INFRA_LABELS: Record<string, string> = {
   'producer.io_wait_time_avg': 'Producer IO 平均等待',
   'producer.metadata_age': 'Producer 元数据年龄',
 
-  // KafkaBrokerJmxMonitor: broker 端 JMX 指标
   'broker.messages_in_rate': 'Broker 入站消息速率',
   'broker.produce_requests_rate': 'Broker 生产请求速率',
   'broker.bytes_in_rate': 'Broker 入站字节速率',
@@ -355,14 +354,11 @@ export const INFRA_LABELS: Record<string, string> = {
   'broker.produce_failed_rate': 'Broker 生产失败速率',
   'broker.fetch_failed_rate': 'Broker 拉取失败速率',
   'broker.invalid_message_total': 'Broker 无效消息累计',
-  'broker.under_replicated_partitions': 'Broker URP(副本不足)',
   'broker.offline_partitions': 'Broker 离线 Partition',
   'broker.active_controller': 'Active Controller(0/1)',
   'broker.request_queue_produce': '生产请求队列长度',
   'broker.request_queue_fetch': 'Fetch 请求队列长度',
   'broker.request_queue_fetch_consumer': 'Consumer Fetch 队列长度',
-  'broker.purgatory_produce': '生产 Purgatory 堆积',
-  'broker.purgatory_fetch': 'Fetch Purgatory 堆积',
   'broker.jvm.heap_used': 'Broker JVM 堆已用',
   'broker.jvm.heap_max': 'Broker JVM 堆上限',
   'broker.jvm.nonheap_used': 'Broker JVM 非堆已用',

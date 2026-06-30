@@ -176,9 +176,8 @@ export function useInfraComponent(component: string) {
     component,
     status, metrics, internalMeasurements, seriesData, latestData,
     range, rangeOptions, loading, lastError, componentError,
-    fetchStatus, fetchInternalMeasurements, fetchMetrics, fetchSeries, fetchLatest,
-    refresh, refreshSeriesOnly, startPolling, stopPolling,
+    refresh, startPolling, stopPolling,
     lastUpdateLabel,
-    chartKey, pickPriorityMetrics, isBytesMetric, fmtBytes, toMbPoints, fmtValue
+    chartKey, pickPriorityMetrics, toMbPoints, fmtValue
   }
 }
