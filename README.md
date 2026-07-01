@@ -10,7 +10,7 @@
 
 | 维度 | 说明 |
 |------|------|
-| **目标用户** | 中小企业团队 / 个人开发者（详见[白皮书 §0.2](白皮书.md#02-目标用户)） |
+| **目标用户** | 中小企业团队 / 个人开发者 |
 | **目标应用** | 仅限 Spring Boot 应用 |
 | **接入方式** | OTel Java Agent（v1.x 过渡）/ 自研 Agent（v2 目标） |
 | **数据来源** | 仅由 Java Agent 字节码拦截产生，不依赖 Actuator / Micrometer |
@@ -29,7 +29,7 @@
 - **存储** — PostgreSQL（元数据）+ InfluxDB 2.7（时序数据，多桶分桶写入）+ Kafka 单 broker（持久化缓冲）
 - **消息解耦** — Kafka 异步缓冲采集数据，支持本地降级队列兜底
 - **本地缓存** — Caffeine 替代 Redis 承接热路径状态（`LogDedupService` / `AlertStateStore` / `LogAnomalyDetector`），单实例零外置状态依赖
-- **自监控** — Micrometer 全方位埋点（HTTP 连接池、消费延迟、Ingest 链路、Kafka 集群健康、4 个 WriteApi 内部状态等）
+- **自监控** — Micrometer 全方位埋点（HTTP 连接池、消费延迟、Ingest 链路、Kafka 健康、4 个 WriteApi 内部状态等）
 
 ---
 
@@ -104,8 +104,6 @@ npm run build
 2. 在 `pom.xml` 加 1 个 annotation jar（`opentelemetry-instrumentation-annotations`，< 50KB）
 3. 业务方法加 `@WithSpan("xxx")` 注解
 4. 在 spring-watch 平台注册目标应用（名称、Endpoint、Metrics 端口）
-
-详细接入清单见[白皮书 §6](白皮书.md#6-客户接入标准流程产品文档唯一形态)。
 
 ---
 
