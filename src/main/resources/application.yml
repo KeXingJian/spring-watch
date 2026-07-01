@@ -1,6 +1,5 @@
 server:
   port: 8080
-
 spring-watch:
   collector:
     pool-size: 80 # 采集线程池大小

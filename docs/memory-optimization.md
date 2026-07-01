@@ -1,38 +1,5 @@
 # spring-watch 内存优化方案
 
-> 状态：M1 + M2 + M3 已实施完毕
-> 范围：`/mnt/d/codespace/ideaProject/spring-watch`（Spring Boot 4.0.1 · Java 25 · 虚拟线程 · JPA + InfluxDB + Redis + Kafka + JEXL）
-> 目标：在不损失采集/告警吞吐与功能完整性的前提下，将常驻 JVM 堆占用降低 **30%–50%**，并消除所有已识别的内存泄漏点。
-
-## 0. 实施进度
-
-| 阶段 | 状态 | 周期 |
-|---|---|---|
-| **M1 止血** | ✅ 完成 | P0-1~5 + P1-1/2/5/7 |
-| **M2 瘦身** | ✅ 完成 | P1-3/4/6/8/9/10 |
-| **M3 精细化** | ✅ 完成 | P2-1/2/3 + GC 参数 |
-
----
-
-## 1. 当前内存画像（基线估算）
-
-> 基于代码静态分析得出的稳态与峰值估算，**未经实测**，仅作量级参考。
-
-| 区域 | 占用 | 稳态/峰值 | 关键路径 | 来源 |
-|---|---:|---|---|---|
-| Kafka 降级队列 | **~200 MB** | 峰值 | Kafka 不可用时 | `collector/KafkaFallbackQueue.java:50` |
-| Kafka producer buffer | 128 MB | 稳态 | 持续 | `config/KafkaConfig.java:68` |
-| 自监控 ring × 全量指标 | ~30 MB | 稳态 | 持续 | `monitor/SelfMonitorCollector.java:51` |
-| InfluxDB WriteApi 缓冲 | ~20 MB | 稳态 | 持续 | `config/InfluxDBConfig.java` |
-| 告警执行器队列（突发） | 1000s × MetricEvent | 峰值 | 突发期 | `alerter/AsyncAlertExecutor.java:33` |
-| Agent HTTP 响应体 | 单次可达数十 MB | 峰值 | 单次拉取 | `collector/AgentHttpClient.java:82` |
-| `findAll()` 加载的告警历史 | 持续增长 | 长期累积 | 长期 | `web/AlertController.java:76` |
-| `HostThrottler.hostSemaphores` | 1 entry/host | 长期累积 | 长期 | `collector/schedule/HostThrottler.java:17` |
-| JPA Open-In-View 1st-level 缓存 | 每请求 1 份 | 稳态 | 每次 HTTP 请求 | `application.yml`（缺省 `true`） |
-| **合计估算** | **400–500 MB** | — | — | — |
-
----
-
 ## 2. 分层优化项（按 ROI 排序）
 
 ### P0 — 必须做（高 ROI、低风险，1–2 天可全部完成）
@@ -80,43 +47,7 @@
   关闭钩子中 `executor.close()`。
 - **验收**：批量 1000 events 注入不再出现队列堆积；JFR 中看不到 `LinkedBlockingQueue` 上的锁竞争。
 
-#### P0-4 告警历史接口分页 + DTO
-- **现状**：
-  - `web/AlertController.java:73-82` `listHistory(...)`：`alertHistoryRepository.findAll().stream().filter(...).limit(limit)`。
-  - 直接返回 `List<AlertHistory>`，Jackson 触发 LAZY `AlertRule` / `MonitorApp` 加载。
-  - 客户端可任意放大 `limit`。
-- **影响**：`alert_history` 表随时间线性增长，单次接口可能加载数十万行 + 关联实体。
-- **改动**：
-  1. `repository/AlertHistoryRepository.java` 新增：
-     ```java
-     Page<AlertHistory> findByAppAppid(Long appid, Pageable pageable);
-     Page<AlertHistory> findAll(Pageable pageable); // 覆盖默认
-     ```
-  2. 新增 DTO `model/dto/AlertHistoryView.java`（字段：`id, level, message, createdAt, resolvedAt, ruleName, appName`），在 service 层用 `JOIN FETCH` 或两次查询组装。
-  3. `web/AlertController.java` 入参改为 `Pageable pageable`（Spring 自动从 `page/size/sort` 解析），服务端硬限 `size <= 200`。
-  4. 同步审计 `service/AlertRuleService.listAll/listByAppid`、`service/MonitorAppService.listAll/listActive`、`service/NotificationConfigService.listAll` —— 全部改为 `Pageable`。
-- **验收**：`GET /api/alert/history?page=0&size=20` 返回 DTO 列表，无 LAZY 触发日志；分页参数越界时 400。
 
-#### P0-5 告警历史保留策略
-- **现状**：`alert_history` 无清理。
-- **改动**：
-  1. `repository/AlertHistoryRepository.java`：
-     ```java
-     @Modifying int deleteByCreatedAtBefore(Instant ts);
-     ```
-  2. 新增 `alerter/AlertHistoryRetention.java`：
-     ```java
-     @Scheduled(cron = "0 30 3 * * *") // 每天 03:30
-     @Transactional
-     public void purge() {
-         int n = repo.deleteByCreatedAtBefore(Instant.now().minus(90, ChronoUnit.DAYS));
-         log.info("purged alert_history rows={}", n);
-     }
-     ```
-  3. 保留期走配置：`spring-watch.alert.history.retention-days: 90`。
-- **验收**：手动调 `purge()` 删除预插入的 100 天前数据；`cron` 在 03:30 触发。
-
----
 
 ### P1 — 强烈建议（中等 ROI，3–5 天）
 
@@ -378,24 +309,6 @@ host.throttler.entries                       # P1-5
 | P2-4 | `BatchLogConsumer.java`, `BatchMetricConsumer.java` | 多 | 代码 | 评估对象复用（先评估后做） |
 | P2-5 | 部署侧 | — | 配置 | GC 参数 + JFR |
 
----
-
-## 8. 附录 A — 暂不动的项
-
-- **JEXL 内部 cache 256**：规则规模增长后再评估。
-- **Lettuce 默认无连接池**：多业务并发时再按需打开 `lettuce.pool`。
-- **Hikari 默认 `maximumPoolSize=10`**：元数据访问量低，无需调整。
-- **Ingest 链路 `MessageDigest` 与 `MapContext` 之外的复用**：JIT 已经做了 EA，收益有限。
-
-## 9. 附录 B — 评审 TODO
-
-- [x] 评审 P0 全量
-- [x] 评审 P1 全量
-- [x] 评审 P2 全量
-- [x] 决定是否引入 Caffeine 依赖（已引入 `com.github.ben-manes.caffeine:caffeine`）
-- [x] 决定 90 天保留期是否符合运营策略（保留 90 天，配置项 `spring-watch.alert.history.retention-days`）
-- [x] 决定 GC 选型（G1 vs ZGC，详见 §10）
-- [x] 排期 M1/M2/M3
 
 ## 10. 部署侧 JVM 参数（已实施参考）
 
@@ -440,31 +353,4 @@ JFR 文件可用 JDK Mission Control 或 `jfr summary` 分析：
 jfr summary ./.log/spring-watch.jfr
 jfr print --events jdk.GCPhasePause,jdk.CPULoad,jdk.ObjectAllocationInNewTLAB ./.log/spring-watch.jfr
 ```
-
-## 11. M1+M2+M3 实施清单
-
-| ID | 文件 | 改动摘要 |
-|---|---|---|
-| P0-1 | `application.yml` | `spring.jpa.open-in-view: false` |
-| P0-2 | `AgentHttpClient.java` | `ofString` → `ofByteArray` + 4MB 封顶 |
-| P0-3 | `AsyncAlertExecutor.java` | `newFixedThreadPool` → `newVirtualThreadPerTaskExecutor` + `Semaphore(8)` |
-| P0-4 | `*Service.java`, `*Controller.java`, `AlertHistoryView.java`(新), `*Repository.java` | `findAll` → `Pageable`（20/200），告警历史走 DTO |
-| P0-5 | `AlertHistoryRepository.java`, `AlertHistoryRetention.java`(新) | 90 天保留 + 每日 03:30 cron 清理 |
-| P1-1 | `KafkaFallbackQueue.java`, `application.yml` | 容量 50k→10k，payload >16KB 截断 |
-| P1-2 | `AgentLogCollector.java` | `JsonParser` 流式解析（修复 `readValueAs`） |
-| P1-3 | `JexlExprEvaluator.java` | `ThreadLocal<MapContext>` 复用 |
-| P1-4 | `LogFingerprinter.java` | `ThreadLocal<MessageDigest>` 复用 |
-| P1-5 | `HostThrottler.java`, `MonitorAppService.java` | `cleanup(host)` + delete 时调用 |
-| P1-6 | `SelfMonitorCollector.java` | RING_SIZE 360→60 + 白名单 + 增量更新 |
-| P1-7 | `application.yml` | `spring.task.scheduling.pool.size: 4` |
-| P1-8 | `application.yml` | InfluxDB `buffer-limit: 20k`, `flush-interval: 2s` |
-| P1-9 | `application.yml` | Kafka `buffer-memory: 32MB` |
-| P1-10 | `AsyncMailExecutor.java`(新), `AlertNotifier.java` | SMTP 独立线程池 |
-| P2-1 | `pom.xml`, `AlertRuleCache.java` | 引入 Caffeine，`expireAfterWrite` + `maximumSize` + 命中率统计 |
-| P2-2 | `application.yml` | `max-poll-records: 200` |
-| P2-3 | `application.yml` | `com.springwatch: info` + `isDebugEnabled` 守卫 |
-| P2-4 | （评估后不做） | JIT EA 已优化对象复用，收益有限 |
-| P2-5 | `docs/memory-optimization.md` §10 | 部署侧 JVM 参数（JFR + G1/ZGC） |
-| — | `SpringWatchApplication.java` | 加 `@EnableSpringDataWebSupport(VIA_DTO)`（修 P0-4 后的运行时警告） |
-| — | `AgentLogCollector.java` | `objectMapper.readValue` → `p.readValueAs`（修 Jackson 3.0 尾随 token 报错） |
 
