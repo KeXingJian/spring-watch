@@ -58,6 +58,15 @@ public class AppPullTask {
         log.info("[spring-watch: AppPullTask开始拉取 - appid={}, app={}, host={}, endpoint={}, metricsPort={}, currentStatus={}]",
                 appid, app.getAppName(), host, app.getEndpoint(), app.getMetricsPort(), app.getStatus());
 
+        if (!hostThrottler.tryAcquire(host, 0L)) {
+            log.warn("[spring-watch: 拉取被限流 - appid={}, host={}, 心跳已发, 入重投队列(借鉴HertzBeat降级重投)]",
+                    appid, host);
+            pullRetryQueue.enqueue(new RetryPull(appid, host, 0, Instant.now()));
+            log.debug("[spring-watch: AppPullTask.run结束 - appid={}, reason=throttled-and-queued, totalCostMs={}]",
+                    appid, (System.nanoTime() - start) / 1_000_000L);
+            return;
+        }
+
         if (!isReachable(app)) {
             markInactive(app);
             log.debug("[spring-watch: AppPullTask.run结束 - appid={}, reason=unreachable, totalCostMs={}]",
@@ -69,14 +78,7 @@ public class AppPullTask {
         log.debug("[spring-watch: 发送心跳 - appid={}, ip={}]", appid, host);
         sendHeartbeat(app);
 
-        if (!hostThrottler.tryAcquire(host, 0L)) {
-            log.warn("[spring-watch: 拉取被限流 - appid={}, host={}, 心跳已发, 入重投队列(借鉴HertzBeat降级重投)]",
-                    appid, host);
-            pullRetryQueue.enqueue(new RetryPull(appid, host, 0, Instant.now()));
-            log.debug("[spring-watch: AppPullTask.run结束 - appid={}, reason=throttled-and-queued, totalCostMs={}]",
-                    appid, (System.nanoTime() - start) / 1_000_000L);
-            return;
-        }
+
         try {
             doHeavyWork(appid);
         } catch (Exception e) {

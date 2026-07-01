@@ -9,6 +9,7 @@ import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.jspecify.annotations.NonNull;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.core.annotation.Order;
@@ -75,7 +76,7 @@ public class CollectScheduleRegistry implements ApplicationRunner {
     }
 
     @Override
-    public void run(ApplicationArguments args) {
+    public void run(@NonNull ApplicationArguments args) {
         log.info("[kxj: 启动加载全部应用开始 - 首次延迟采用 appid hash 分摊,防雷鸣群羊]");
         List<MonitorApp> allApps = repository.findAll();
         log.info("[spring-watch: 启动加载全部应用 - dbCount={}]", allApps.size());
