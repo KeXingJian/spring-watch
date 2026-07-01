@@ -7,6 +7,9 @@ import com.springwatch.model.entity.MonitorApp;
 import com.springwatch.model.entity.MonitorStatus;
 import com.springwatch.model.event.HeartbeatEvent;
 import com.springwatch.repository.MonitorAppRepository;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -26,6 +29,16 @@ public class AppPullTask {
     private final HostThrottler hostThrottler;
     private final PullRetryQueue pullRetryQueue;
     private final AgentHttpClient agentHttpClient;
+    private final MeterRegistry meterRegistry;
+
+    private Counter slowPullCounter;
+
+    @PostConstruct
+    void registerMeters() {
+        this.slowPullCounter = Counter.builder("spring.watch.collector.pull.slow")
+                .description("单次拉取耗时超过 5s 的次数")
+                .register(meterRegistry);
+    }
 
     public void run(Long appid) {
         long start = System.nanoTime();
@@ -72,6 +85,7 @@ public class AppPullTask {
             hostThrottler.release(host);
             long costMs = (System.nanoTime() - start) / 1_000_000L;
             if (costMs > 5_000L) {
+                slowPullCounter.increment();
                 log.warn("[spring-watch: 拉取耗时过长 - appid={}, app={}, costMs={}]", appid, app.getAppName(), costMs);
             } else {
                 log.debug("[spring-watch: 拉取完成耗时 - appid={}, costMs={}]", appid, costMs);
@@ -129,8 +143,8 @@ public class AppPullTask {
         int port = app.getMetricsPort() != null ? app.getMetricsPort() : 9464;
         String host = extractHost(app);
         String url = "http://" + host + ":" + port + "/metrics";
-        boolean ok = agentHttpClient.reachable(url, 3000);
-        log.debug("[spring-watch: 可达性探测 - appid={}, url={}, reachable={}]",
+        boolean ok = agentHttpClient.reachable(url, 5000);
+        log.debug("[kxj: 可达性探测走 HEAD - appid={}, url={}, reachable={}, RTT缩短至1RTT]",
                 app.getAppid(), url, ok);
         return ok;
     }

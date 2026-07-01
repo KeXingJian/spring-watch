@@ -32,7 +32,7 @@ public class MonitorApp {
     private Integer metricsPort = 9464;
 
     @Builder.Default
-    private Integer scrapeInterval = 15;
+    private Integer scrapeInterval = 30;
 
     @Column(name = "schedule_type", length = 16)
     @Builder.Default

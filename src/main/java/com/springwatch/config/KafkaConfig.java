@@ -62,7 +62,7 @@ public class KafkaConfig {
     @Value("${spring.kafka.producer.batch-size:65536}")
     private int batchSize;
 
-    @Value("${spring.kafka.producer.linger-ms:30}")
+    @Value("${spring.kafka.producer.linger-ms:50}")
     private int lingerMs;
 
     @Value("${spring.kafka.producer.buffer-memory:134217728}")

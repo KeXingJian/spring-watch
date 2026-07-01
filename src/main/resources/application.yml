@@ -266,8 +266,8 @@ spring:
       acks: all # 副本全部确认
       compression-type: lz4 # 压缩算法
       batch-size: 65536 # 批大小（字节）
-      linger-ms: 30 # 批等待时间（毫秒）
-      buffer-memory: 33554432 # 客户端总缓冲（字节，P1-9: 128MB → 32MB）
+      linger-ms: 50 # 批等待时间（毫秒，P0-5: 30→50,提升批合并率）
+      buffer-memory: 67108864 # 客户端总缓冲（字节，P0-5: 32MB→64MB,适应大指标量）
       delivery-timeout-ms: 120000 # 投递总超时（毫秒）
       request-timeout-ms: 30000 # 单次请求超时（毫秒）
     listener:

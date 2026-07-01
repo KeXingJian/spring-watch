@@ -65,11 +65,22 @@ public record AppSchedule(
                     appid, now, next, delay);
             return delay;
         }
-        long jittered = jitterIntervalMs(intervalMs, jitterPercent);
-        long firstDelay = jittered / 2;
-        log.info("[spring-watch: 首次延迟计算 - appid={}, type=INTERVAL, baseMs={}, jitteredMs={}, firstDelayMs={}]",
-                appid, intervalMs, jittered, firstDelay);
+        long firstDelay = firstDelayAntiHerd(intervalMs, jitterPercent);
+        log.info("[kxj: 首次延迟防雷鸣群羊 - appid={}, type=INTERVAL, intervalMs={}, jitterPercent={}%, firstDelayMs={}]",
+                appid, intervalMs, jitterPercent, firstDelay);
         return firstDelay;
+    }
+
+    /**
+     * kxj: 防雷鸣群羊(thundering herd) - 启动时 N 个 app 的首次拉取均匀分摊到 [0, intervalMs) 完整窗口
+     * 旧实现 firstDelay = jittered / 500 app 集中在 6~9s 3s 窗口,瞬间并发 200 HTTP
+     * 新实现: appid 哈希 % intervalMs 确定基础桶位 + ±jitterRange 随机扰动,200 app 均匀分散到 15s
+     */
+    private long firstDelayAntiHerd(long interval, int jitterPct) {
+        long bucket = Math.floorMod(appid == null ? 0L : appid, Math.max(1L, interval));
+        int jitterRange = Math.max(50, (int) (interval * (long) jitterPct / 200L));
+        long jitter = ThreadLocalRandom.current().nextLong(-jitterRange, jitterRange + 1L);
+        return Math.clamp(interval - 1L, 0L, bucket + jitter);
     }
 
     public long nextIntervalMs(Instant now) {

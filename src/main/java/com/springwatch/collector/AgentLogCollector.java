@@ -8,12 +8,14 @@ import tools.jackson.core.JsonParser;
 import tools.jackson.core.JsonToken;
 import tools.jackson.databind.ObjectMapper;
 
+import java.io.InputStream;
 import java.net.URI;
 import java.time.Instant;
 
 /**
  * 拉取 Agent 日志并入 Kafka。
- * P1-2: 改用 JsonParser 逐条流式解析，避免把整段日志 List 化在堆里。
+ * P0-2: 改用 InputStream 替代 ofByteArray,避免全 body 入堆
+ * P1-2: 内部 JsonParser 逐条流式解析(原 v1.6 已优化)
  */
 @Slf4j
 @Component
@@ -39,14 +41,14 @@ public class AgentLogCollector {
                     appid, appName, url, result.status());
             return since;
         }
-        String body = result.body();
-        if (body == null || body.isEmpty()) {
+        InputStream body = result.body();
+        if (body == null) {
             return since;
         }
 
         Instant latest = since;
         int sent = 0;
-        try (JsonParser p = objectMapper.createParser(body)) {
+        try (InputStream in = body; JsonParser p = objectMapper.createParser(in)) {
             if (p.nextToken() != JsonToken.START_ARRAY) {
                 log.warn("[spring-watch: Agent日志响应非数组 - appid={}, app={}]", appid, appName);
                 return since;
@@ -91,9 +93,6 @@ public class AgentLogCollector {
         return normalizeBaseUrl(base) + "/api/agent/logs?since=" + since.toString();
     }
 
-    /**
-     * kxj: 统一补全 scheme - 修复 "host:port" 形式 endpoint 缺 http:// 报 invalid URI scheme
-     */
     private static String normalizeBaseUrl(String hostOrUrl) {
         if (hostOrUrl == null || hostOrUrl.isBlank()) {
             return "http://localhost";

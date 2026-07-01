@@ -3,6 +3,8 @@ package com.springwatch.collector.schedule;
 import com.springwatch.collector.AppPullTask;
 import com.springwatch.model.entity.MonitorApp;
 import com.springwatch.repository.MonitorAppRepository;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
@@ -12,6 +14,7 @@ import org.springframework.boot.ApplicationRunner;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
@@ -30,16 +33,23 @@ public class CollectScheduleRegistry implements ApplicationRunner {
     private final MonitorAppRepository repository;
     private final AppPullTask appPullTask;
     private final AppScheduleProperties properties;
+    private final MeterRegistry meterRegistry;
 
     private ScheduledExecutorService scheduler;
     private final ConcurrentHashMap<Long, ScheduledFuture<?>> jobs = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, AppSchedule> activeSchedules = new ConcurrentHashMap<>();
+    private Timer startupRegisterTimer;
 
     @PostConstruct
     void init() {
         ThreadFactory tf = Thread.ofVirtual().name("collect-sched-", 0).factory();
         this.scheduler = Executors.newScheduledThreadPool(properties.getPoolSize(), tf);
-        log.info("[spring-watch: 调度器初始化 - poolSize={}, perHostConcurrent={}, jitterPercent={}, threadFactory=virtualThread]",
+        this.startupRegisterTimer = Timer.builder("spring.watch.collector.startup.register")
+                .description("启动加载全部应用注册耗时(防雷鸣群羊效果验证)")
+                .publishPercentiles(0.5, 0.95, 0.99)
+                .register(meterRegistry);
+        meterRegistry.gauge("spring.watch.collector.startup.jobs", jobs, ConcurrentHashMap::size);
+        log.info("[kxj: 调度器初始化 - poolSize={}, perHostConcurrent={}, jitterPercent={}, threadFactory=virtualThread, antiHerd=appidHash+interval分散]",
                 properties.getPoolSize(), properties.getPerHostConcurrent(), properties.getJitterPercent());
     }
 
@@ -66,11 +76,15 @@ public class CollectScheduleRegistry implements ApplicationRunner {
 
     @Override
     public void run(ApplicationArguments args) {
-        log.info("[spring-watch: 启动加载全部应用开始]");
+        log.info("[kxj: 启动加载全部应用开始 - 首次延迟采用 appid hash 分摊,防雷鸣群羊]");
         List<MonitorApp> allApps = repository.findAll();
         log.info("[spring-watch: 启动加载全部应用 - dbCount={}]", allApps.size());
+        long startNs = System.nanoTime();
         allApps.forEach(this::upsert);
-        log.info("[spring-watch: 启动加载完成 - 已注册任务数={}/{}]", allApps.size(), allApps.size());
+        long costMs = (System.nanoTime() - startNs) / 1_000_000L;
+        startupRegisterTimer.record(Duration.ofMillis(costMs));
+        log.info("[kxj: 启动加载完成 - 已注册任务数={}/{}, 注册耗时={}ms, 首次拉取分摊到 0~intervalMs 区间, 避免雷鸣群羊]",
+                allApps.size(), allApps.size(), costMs);
     }
 
     public synchronized void upsert(MonitorApp app) {
@@ -107,9 +121,10 @@ public class CollectScheduleRegistry implements ApplicationRunner {
                     initialDelay,
                     schedule.baseIntervalMs(),
                     TimeUnit.MILLISECONDS);
-            log.info("[spring-watch: 注册INTERVAL任务 - appid={}, app={}, status={}, initialDelayMs={}, periodMs={}, jitterPercent={}]",
+            log.info("[kxj: 注册INTERVAL任务(防雷鸣群羊) - appid={}, app={}, status={}, initialDelayMs={}/{}ms, periodMs={}, jitterPercent={}%, hash桶分散]",
                     app.getAppid(), app.getAppName(), app.getStatus(), initialDelay,
-                    schedule.baseIntervalMs(), properties.getJitterPercent());
+                    schedule.baseIntervalMs(), schedule.baseIntervalMs(),
+                    properties.getJitterPercent());
         }
         jobs.put(app.getAppid(), future);
         log.info("[spring-watch: upsert完成 - appid={}, activeJobs={}]", app.getAppid(), jobs.size());
