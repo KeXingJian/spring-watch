@@ -16,9 +16,9 @@ const tabs: { key: Tab; label: string }[] = [
   { key: 'collect',  label: '采集' },
   { key: 'jvm',      label: 'JVM' },
   { key: 'process',  label: '进程' },
-  { key: 'meters',   label: '指标库' },
   { key: 'influxdb', label: 'InfluxDB' },
-  { key: 'kafka',    label: 'Kafka' }
+  { key: 'kafka',    label: 'Kafka' },
+  { key: 'meters',   label: '指标库' }
 ]
 const activeTab = ref<Tab>('overview')
 
