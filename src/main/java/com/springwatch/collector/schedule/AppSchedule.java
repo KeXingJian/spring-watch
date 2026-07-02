@@ -14,13 +14,14 @@ public record AppSchedule(
         AppScheduleType type,
         long intervalMs,
         CronExpression cron,
-        int jitterPercent
+        int jitterPercent,
+        int firstDelaySpreadMultiplier
 ) {
 
     private static final long MIN_DELAY_MS = 1_000L;
     private static final int DEFAULT_INTERVAL_SECONDS = 15;
 
-    public static AppSchedule from(MonitorApp app, int jitterPercent) {
+    public static AppSchedule from(MonitorApp app, int jitterPercent, int firstDelaySpreadMultiplier) {
         Long appid = app.getAppid();
         int intervalSec = app.getScrapeInterval() == null || app.getScrapeInterval() < 1
                 ? DEFAULT_INTERVAL_SECONDS
@@ -49,7 +50,8 @@ public record AppSchedule(
             log.debug("[spring-watch: 调度解析 - appid={}, type=INTERVAL, intervalSec={}, intervalMs={}]",
                     appid, intervalSec, intervalMs);
         }
-        return new AppSchedule(appid, type, intervalMs, cron, Math.max(0, jitterPercent));
+        return new AppSchedule(appid, type, intervalMs, cron,
+                Math.max(0, jitterPercent), Math.max(1, firstDelaySpreadMultiplier));
     }
 
     public long firstDelayMs(Instant now) {
@@ -65,22 +67,25 @@ public record AppSchedule(
                     appid, now, next, delay);
             return delay;
         }
-        long firstDelay = firstDelayAntiHerd(intervalMs, jitterPercent);
-        log.info("[kxj: 首次延迟防雷鸣群羊 - appid={}, type=INTERVAL, intervalMs={}, jitterPercent={}%, firstDelayMs={}]",
-                appid, intervalMs, jitterPercent, firstDelay);
+        long firstDelay = firstDelayAntiHerd(intervalMs, jitterPercent, firstDelaySpreadMultiplier);
+        log.info("[kxj: 首次延迟防雷鸣群羊 - appid={}, type=INTERVAL, intervalMs={}, spreadWindowMs={}({}x), jitterPercent={}%, firstDelayMs={}]",
+                appid, intervalMs, intervalMs * firstDelaySpreadMultiplier, firstDelaySpreadMultiplier, jitterPercent, firstDelay);
         return firstDelay;
     }
 
     /**
-     * kxj: 防雷鸣群羊(thundering herd) - 启动时 N 个 app 的首次拉取均匀分摊到 [0, intervalMs) 完整窗口
-     * 旧实现 firstDelay = jittered / 500 app 集中在 6~9s 3s 窗口,瞬间并发 200 HTTP
-     * 新实现: appid 哈希 % intervalMs 确定基础桶位 + ±jitterRange 随机扰动,200 app 均匀分散到 15s
+     * kxj: 防雷鸣群羊(thundering herd) - 启动时 N 个 app 的首次拉取分摊到 spreadWindowMs 窗口
+     * 旧实现: 500 app 集中在 6~9s 3s 窗口,瞬间并发 200 HTTP
+     * 中间实现: appid 哈希 % intervalMs → [0, 15s) 窗口,500 app 分散到 15s (33/s, 仍高于 global=80 吞吐能力 16/s)
+     * 当前实现: 窗口 = intervalMs × firstDelaySpreadMultiplier,默认 2x = [0, 30s) 窗口,500 app 分散到 30s (16.7/s,匹配吞吐)
+     *          hash 桶位 + ±jitterRange 随机扰动,后续周期偏移量保持
      */
-    private long firstDelayAntiHerd(long interval, int jitterPct) {
-        long bucket = Math.floorMod(appid == null ? 0L : appid, Math.max(1L, interval));
+    private long firstDelayAntiHerd(long interval, int jitterPct, int spreadMultiplier) {
+        long spreadWindow = interval * Math.max(1, spreadMultiplier);
+        long bucket = Math.floorMod(appid == null ? 0L : appid, spreadWindow);
         int jitterRange = Math.max(50, (int) (interval * (long) jitterPct / 200L));
         long jitter = ThreadLocalRandom.current().nextLong(-jitterRange, jitterRange + 1L);
-        return Math.clamp(interval - 1L, 0L, bucket + jitter);
+        return Math.clamp(spreadWindow - 1L, 0L, bucket + jitter);
     }
 
     public long nextIntervalMs(Instant now) {

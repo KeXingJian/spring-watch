@@ -15,8 +15,9 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
 @Slf4j
@@ -37,8 +38,14 @@ public class PendingStateScanner {
     @PostConstruct
     void init() {
         ThreadFactory tf = Thread.ofVirtual().name("pending-scanner-", 0).factory();
-        this.scanExecutor = Executors.newSingleThreadExecutor(tf);
-        log.info("[Alerter] PENDING扫描器初始化 - batchSize={}, threadType=virtual", batchSize);
+        this.scanExecutor = new ThreadPoolExecutor(
+                1, 1, 0L, TimeUnit.MILLISECONDS,
+                new LinkedBlockingQueue<>(1),
+                tf,
+                (r, exec) -> log.warn("[kxj: 扫描任务被丢弃 - workerBusy={}, queueSize={}, 等下个周期(下次触发会重扫)]",
+                        exec.getActiveCount(), exec.getQueue().size()));
+        log.info("[kxj: PENDING扫描器初始化 - batchSize={}, threadType=virtual, queueCapacity=1(防OOM,满了丢)]",
+                batchSize);
     }
 
     @PreDestroy
@@ -71,8 +78,7 @@ public class PendingStateScanner {
         try {
             scanExecutor.execute(this::doScan);
         } catch (Exception e) {
-            log.warn("[Alerter] 提交扫描任务失败, 同步执行 - error={}", e.getMessage());
-            doScan();
+            log.warn("[Alerter] 提交扫描任务失败, 跳过本轮 - error={}", e.getMessage());
         }
     }
 

@@ -51,7 +51,7 @@ public class AgentHttpClient {
     public AgentHttpClient(MeterRegistry registry,
                            @Value("${spring-watch.collector.http.connect-timeout-ms:3000}") int connectTimeoutMs,
                            @Value("${spring-watch.collector.http.read-timeout-ms:10000}") int readTimeoutMs,
-                           @Value("${spring-watch.collector.http.max-conn-per-host:80}") int maxConnPerHost,
+                           @Value("${spring-watch.collector.per-host-concurrent:80}") int maxConnPerHost,
                            @Value("${spring-watch.collector.http.max-body-bytes:4194304}") int maxBodyBytes) {
         this.defaultReadTimeoutMs = readTimeoutMs;
         this.maxConnPerHost = maxConnPerHost;

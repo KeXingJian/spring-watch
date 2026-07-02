@@ -17,6 +17,8 @@ public class AppScheduleProperties {
 
     private int jitterPercent = 10;
 
+    private int firstDelaySpreadMultiplier = 2;
+
     private Retry retry = new Retry();
 
     @Data

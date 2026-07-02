@@ -42,7 +42,7 @@ public class AppPullTask {
 
     public void run(Long appid) {
         long start = System.nanoTime();
-        log.debug("[spring-watch: AppPullTask.run开始 - appid={}]", appid);
+
         MonitorApp app = monitorAppRepository.findByAppid(appid).orElse(null);
         if (app == null) {
             log.warn("[spring-watch: AppPullTask.run跳过 - appid={} 在DB中不存在]", appid);
@@ -59,11 +59,9 @@ public class AppPullTask {
                 appid, app.getAppName(), host, app.getEndpoint(), app.getMetricsPort(), app.getStatus());
 
         if (!hostThrottler.tryAcquire(host, 0L)) {
-            log.warn("[spring-watch: 拉取被限流 - appid={}, host={}, 心跳已发, 入重投队列(借鉴HertzBeat降级重投)]",
+            log.warn("[spring-watch: 拉取被限流 - appid={}, host={}, 心跳已发, 入重投队列]",
                     appid, host);
             pullRetryQueue.enqueue(new RetryPull(appid, host, 0, Instant.now()));
-            log.debug("[spring-watch: AppPullTask.run结束 - appid={}, reason=throttled-and-queued, totalCostMs={}]",
-                    appid, (System.nanoTime() - start) / 1_000_000L);
             return;
         }
 
@@ -75,7 +73,6 @@ public class AppPullTask {
         }
         log.debug("[spring-watch: 可达性探测通过 - appid={}, host={}]", appid, host);
 
-        log.debug("[spring-watch: 发送心跳 - appid={}, ip={}]", appid, host);
         sendHeartbeat(app);
 
 

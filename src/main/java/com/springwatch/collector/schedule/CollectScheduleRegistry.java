@@ -104,7 +104,9 @@ public class CollectScheduleRegistry implements ApplicationRunner {
 
         cancelInternal(app.getAppid());
 
-        AppSchedule schedule = AppSchedule.from(app, properties.getJitterPercent());
+        AppSchedule schedule = AppSchedule.from(app,
+                properties.getJitterPercent(),
+                properties.getFirstDelaySpreadMultiplier());
         activeSchedules.put(app.getAppid(), schedule);
 
         long initialDelay = schedule.firstDelayMs(Instant.now());
