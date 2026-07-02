@@ -1,6 +1,6 @@
 package com.springwatch.collector;
 
-import com.springwatch.collector.schedule.HostThrottler;
+import com.springwatch.collector.schedule.CollectorThrottler;
 import com.springwatch.collector.schedule.PullRetryQueue;
 import com.springwatch.collector.schedule.RetryPull;
 import com.springwatch.model.entity.MonitorApp;
@@ -26,7 +26,7 @@ public class AppPullTask {
     private final AgentMetricsCollector agentMetricsCollector;
     private final AgentLogCollector agentLogCollector;
     private final KafkaProducerBridge kafkaProducerBridge;
-    private final HostThrottler hostThrottler;
+    private final CollectorThrottler hostThrottler;
     private final PullRetryQueue pullRetryQueue;
     private final AgentHttpClient agentHttpClient;
     private final MeterRegistry meterRegistry;

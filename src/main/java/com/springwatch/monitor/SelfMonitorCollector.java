@@ -5,7 +5,7 @@ import com.influxdb.client.domain.WritePrecision;
 import com.influxdb.client.write.Point;
 import com.influxdb.client.write.WriteParameters;
 import com.springwatch.collector.KafkaFallbackQueue;
-import com.springwatch.collector.schedule.HostThrottler;
+import com.springwatch.collector.schedule.CollectorThrottler;
 import com.sun.management.OperatingSystemMXBean;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Gauge;
@@ -89,7 +89,7 @@ public class SelfMonitorCollector {
 
     private final MeterRegistry meterRegistry;
     private final KafkaFallbackQueue kafkaFallbackQueue;
-    private final HostThrottler hostThrottler;
+    private final CollectorThrottler hostThrottler;
     @Qualifier("selfMetricsWriteApi")
     private final WriteApi writeApi;
     private final WriteParameters selfMetricsWriteParameters;
@@ -125,8 +125,8 @@ public class SelfMonitorCollector {
         Gauge.builder("spring.watch.collector.kafka.fallback.size", kafkaFallbackQueue, KafkaFallbackQueue::size)
                 .description("Kafka 兜底队列当前堆积")
                 .register(meterRegistry);
-        Gauge.builder("spring.watch.collector.host_throttler.active", hostThrottler, h -> (double) h.activeHosts())
-                .description("已注册主机限流器数量")
+        Gauge.builder("spring.watch.collector.throttler.host.active", hostThrottler, h -> (double) h.activeHosts())
+                .description("已注册主机限流器数量(两级限流中的主机层)")
                 .register(meterRegistry);
         Gauge.builder("spring.watch.self.monitor.ring.size", this, s -> (double) s.size())
                 .description("自监控 ring 当前样本数")

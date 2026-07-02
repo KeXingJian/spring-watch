@@ -2,7 +2,7 @@ package com.springwatch.service;
 
 import com.springwatch.collector.OtelConfigGenerator;
 import com.springwatch.collector.schedule.CollectScheduleRegistry;
-import com.springwatch.collector.schedule.HostThrottler;
+import com.springwatch.collector.schedule.CollectorThrottler;
 import com.springwatch.model.dto.AppRegisterRequest;
 import com.springwatch.model.entity.MonitorApp;
 import com.springwatch.repository.MonitorAppRepository;
@@ -27,7 +27,7 @@ public class MonitorAppService {
     private final MonitorAppRepository monitorAppRepository;
     private final CollectScheduleRegistry collectScheduleRegistry;
     private final OtelConfigGenerator otelConfigGenerator;
-    private final HostThrottler hostThrottler;
+    private final CollectorThrottler hostThrottler;
 
     public Page<MonitorApp> listAll(Pageable pageable) {
         return monitorAppRepository.findAll(pageable);
@@ -107,7 +107,7 @@ public class MonitorAppService {
         } catch (Exception e) {
             log.warn("[spring-watch: 调度注销失败 - appid={}, error={}]", app.getAppid(), e.getMessage());
         }
-        // P1-5: 释放 HostThrottler 中该 host 的限流器，避免 hostSemaphores 缓慢泄漏
+        // P1-5: 释放 CollectorThrottler 中该 host 的限流器，避免 hostSemaphores 缓慢泄漏
         String host = parseHost(app.getEndpoint());
         if (host != null) {
             try {

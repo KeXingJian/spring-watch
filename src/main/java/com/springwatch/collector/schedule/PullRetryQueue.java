@@ -28,7 +28,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 @Component
 public class PullRetryQueue {
 
-    private final HostThrottler throttler;
+    private final CollectorThrottler throttler;
     private final AppPullTask appPullTask;
     private final MonitorAppRepository repository;
     private final AppScheduleProperties properties;
@@ -45,7 +45,7 @@ public class PullRetryQueue {
     private final Counter rejectedCounter;
     private final Counter droppedCounter;
 
-    public PullRetryQueue(HostThrottler throttler,
+    public PullRetryQueue(CollectorThrottler throttler,
                           @Lazy AppPullTask appPullTask,
                           MonitorAppRepository repository,
                           AppScheduleProperties properties,
