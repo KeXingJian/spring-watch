@@ -182,8 +182,10 @@ public class PullRetryQueue {
             boolean reachable = appPullTask.doHeavyWork(pull.appid());
             if (!reachable) {
                 appPullTask.markUnreachable(app);
+            }else {
+                appPullTask.recordCost(retryStart, pull.appid(), "retry:" + pull.appid());
             }
-            appPullTask.recordCost(retryStart, pull.appid(), "retry:" + pull.appid());
+
         } catch (Throwable t) {
             log.warn("[spring-watch: 重投执行异常 - drainer={}, appid={}, error={}]", drainerName, pull.appid(), t.getMessage(), t);
         } finally {

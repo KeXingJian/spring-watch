@@ -1,7 +1,7 @@
 
 DO $$
 DECLARE
-    v_total INT := 100;
+    v_total INT := 1000;
     v_hosts INT := 10;
     v_base_appid BIGINT := 700000000000000;  -- appid 起始,避免和真实 appid 冲突
 BEGIN

@@ -82,7 +82,7 @@ public class AppPullTask {
             log.warn("[spring-watch: 拉取被限流 - appid={}, host={}, 心跳已发, 入重投队列]",
                     appid, host);
             pullRetryQueue.enqueue(new RetryPull(appid, host, 0, Instant.now()));
-            recordCost(start, appid, app.getAppName());
+//            recordCost(start, appid, app.getAppName());
             return;
         }
 
