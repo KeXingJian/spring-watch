@@ -32,12 +32,12 @@ public class AgentLogCollector {
 
         AgentHttpClient.Result result = agentHttpClient.get(url);
         if (!result.isOk()) {
-            log.warn("[spring-watch: Agent日志拉取失败 - appid={}, app={}, url={}, error={}]",
+            log.warn("[kxj: Agent日志拉取失败 - appid={}, app={}, url={}, error={}]",
                     appid, appName, url, result.error());
             return since;
         }
         if (result.status() != 200) {
-            log.warn("[spring-watch: Agent日志拉取非200 - appid={}, app={}, url={}, status={}]",
+            log.warn("[kxj: Agent日志拉取非200 - appid={}, app={}, url={}, status={}]",
                     appid, appName, url, result.status());
             return since;
         }
@@ -50,12 +50,12 @@ public class AgentLogCollector {
         int sent = 0;
         try (InputStream in = body; JsonParser p = objectMapper.createParser(in)) {
             if (p.nextToken() != JsonToken.START_ARRAY) {
-                log.warn("[spring-watch: Agent日志响应非数组 - appid={}, app={}]", appid, appName);
+                log.warn("[kxj: Agent日志响应非数组 - appid={}, app={}]", appid, appName);
                 return since;
             }
             while (p.nextToken() != JsonToken.END_ARRAY) {
                 if (p.currentToken() != JsonToken.START_OBJECT) {
-                    log.warn("[spring-watch: Agent日志元素非对象 - appid={}, app={}, token={}]",
+                    log.warn("[kxj: Agent日志元素非对象 - appid={}, app={}, token={}]",
                             appid, appName, p.currentToken());
                     p.skipChildren();
                     continue;
@@ -77,11 +77,11 @@ public class AgentLogCollector {
                 }
             }
         } catch (Exception e) {
-            log.warn("[spring-watch: Agent日志解析失败 - appid={}, app={}, error={}]",
+            log.warn("[kxj: Agent日志解析失败 - appid={}, app={}, error={}]",
                     appid, appName, e.getMessage());
             return latest.isAfter(since) ? latest : since;
         }
-        log.info("[spring-watch: Agent日志拉取 - appid={}, app={}, since={}, count={}, latest={}]",
+        log.info("[kxj: Agent日志拉取 - appid={}, app={}, since={}, count={}, latest={}]",
                 appid, appName, since, sent, latest);
         return latest;
     }

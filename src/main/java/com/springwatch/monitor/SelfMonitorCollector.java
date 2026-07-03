@@ -196,14 +196,14 @@ public class SelfMonitorCollector {
             return t;
         });
         scheduler.scheduleWithFixedDelay(this::sample, 0L, SAMPLE_INTERVAL_SEC, TimeUnit.SECONDS);
-        log.info("[spring-watch: SelfMonitorCollector 启动(延后到 ApplicationReadyEvent) - interval={}s, ring={}, whitelist={}]",
+        log.info("[kxj: SelfMonitorCollector 启动(延后到 ApplicationReadyEvent) - interval={}s, ring={}, whitelist={}]",
                 SAMPLE_INTERVAL_SEC, RING_SIZE, METER_WHITELIST_PREFIXES.size());
     }
 
     @PreDestroy
     void stop() {
         if (scheduler != null) scheduler.shutdownNow();
-        log.info("[spring-watch: SelfMonitorCollector 关闭 - samples={}]", ring.size());
+        log.info("[kxj: SelfMonitorCollector 关闭 - samples={}]", ring.size());
     }
 
     private void sample() {
@@ -215,7 +215,7 @@ public class SelfMonitorCollector {
             }
             persist(s);
         } catch (Throwable t) {
-            log.warn("[spring-watch: SelfMonitorCollector 采样异常 - error={}]", t.getMessage());
+            log.warn("[kxj: SelfMonitorCollector 采样异常 - error={}]", t.getMessage());
         }
     }
 
@@ -229,7 +229,7 @@ public class SelfMonitorCollector {
             points = toPoints(s);
         } catch (Throwable t) {
             persistFailCounter.increment();
-            log.warn("[spring-watch: SelfMonitorCollector 转换InfluxDB Point失败 - error={}]", t.getMessage());
+            log.warn("[kxj: SelfMonitorCollector 转换InfluxDB Point失败 - error={}]", t.getMessage());
             return;
         }
         if (points.isEmpty()) return;
@@ -238,7 +238,7 @@ public class SelfMonitorCollector {
             persistedCounter.increment(points.size());
         } catch (Throwable t) {
             persistFailCounter.increment();
-            log.warn("[spring-watch: SelfMonitorCollector 写InfluxDB失败 - size={}, error={}]",
+            log.warn("[kxj: SelfMonitorCollector 写InfluxDB失败 - size={}, error={}]",
                     points.size(), t.getMessage());
         }
     }
@@ -505,7 +505,7 @@ public class SelfMonitorCollector {
                 }
             }
         } catch (Throwable t) {
-            log.debug("[spring-watch: SelfMonitorCollector 读Linux VmRSS失败 - error={}]", t.getMessage());
+            log.debug("[kxj: SelfMonitorCollector 读Linux VmRSS失败 - error={}]", t.getMessage());
         }
         return -1L;
     }
@@ -526,7 +526,7 @@ public class SelfMonitorCollector {
                 }
             }
         } catch (Throwable t) {
-            log.debug("[spring-watch: SelfMonitorCollector 读Windows WorkingSet64失败 - error={}]", t.getMessage());
+            log.debug("[kxj: SelfMonitorCollector 读Windows WorkingSet64失败 - error={}]", t.getMessage());
         } finally {
             if (p != null && p.isAlive()) {
                 try {

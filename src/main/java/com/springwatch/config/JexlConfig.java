@@ -30,7 +30,7 @@ public class JexlConfig {
                 .features(features)
                 .create();
 
-        log.info("[spring-watch: JexlEngine 初始化 - 沙箱化: loops/lambda/methodCall/newInstance/annotation/pragma/register 全部禁用]");
+        log.info("[kxj: JexlEngine 初始化 - 沙箱化: loops/lambda/methodCall/newInstance/annotation/pragma/register 全部禁用]");
         return engine;
     }
 }

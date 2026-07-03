@@ -52,7 +52,7 @@ public class LogAggregator {
      * kxj: 错误率聚合-某appid指定窗口内的total/error/warn计数
      */
     public ErrorRateStats errorRate(long appid, Instant from, Instant to) {
-        log.debug("[spring-watch: LogAggregator errorRate 查询开始 - appid={}, from={}, to={}]", appid, from, to);
+        log.debug("[kxj: LogAggregator errorRate 查询开始 - appid={}, from={}, to={}]", appid, from, to);
         String flux = String.format("""
                 from(bucket: "%s")
                   |> range(start: %s, stop: %s)
@@ -88,7 +88,7 @@ public class LogAggregator {
                     });
         } catch (Exception e) {
             queryFailCounter.increment();
-            log.warn("[spring-watch: LogAggregator errorRate查询失败 - appid={}, error={}]", appid, e.getMessage(), e);
+            log.warn("[kxj: LogAggregator errorRate查询失败 - appid={}, error={}]", appid, e.getMessage(), e);
         } finally {
             errorRateTimer.record(Duration.ofNanos(System.nanoTime() - start));
         }
@@ -96,7 +96,7 @@ public class LogAggregator {
         long errorVal = error.get();
         long warnVal = warn.get();
         double rate = totalVal == 0 ? 0.0 : (double) errorVal / totalVal;
-        log.debug("[spring-watch: LogAggregator errorRate - appid={}, total={}, error={}, warn={}, rate={}]",
+        log.debug("[kxj: LogAggregator errorRate - appid={}, total={}, error={}, warn={}, rate={}]",
                 appid, totalVal, errorVal, warnVal, rate);
         return new ErrorRateStats(totalVal, errorVal, warnVal, rate);
     }

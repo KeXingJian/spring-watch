@@ -19,6 +19,8 @@ public class AppScheduleProperties {
 
     private int firstDelaySpreadMultiplier = 2;
 
+    private int maxAppCount = 1024;
+
     private Retry retry = new Retry();
 
     @Data

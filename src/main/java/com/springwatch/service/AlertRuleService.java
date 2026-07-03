@@ -56,7 +56,7 @@ public class AlertRuleService {
                 .build();
         AlertRule saved = alertRuleRepository.save(rule);
         ruleCache.refresh();
-        log.info("[spring-watch: 告警规则创建 - id={}, name={}, appid={}]", saved.getId(), saved.getRuleName(), req.getAppid());
+        log.info("[kxj: 告警规则创建 - id={}, name={}, appid={}]", saved.getId(), saved.getRuleName(), req.getAppid());
         return saved;
     }
 

@@ -102,7 +102,7 @@ public class KafkaConfig {
         props.put(ProducerConfig.BUFFER_MEMORY_CONFIG, bufferMemory);
         props.put(ProducerConfig.DELIVERY_TIMEOUT_MS_CONFIG, deliveryTimeoutMs);
         props.put(ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG, requestTimeoutMs);
-        log.info("[spring-watch: KafkaProducer 初始化 - acks={}, idempotence=true, batch={}B, linger={}ms, compression={}, buffer={}MB]",
+        log.info("[kxj: KafkaProducer 初始化 - acks={}, idempotence=true, batch={}B, linger={}ms, compression={}, buffer={}MB]",
                 acks, batchSize, lingerMs, compressionType, bufferMemory / 1024 / 1024);
         return new DefaultKafkaProducerFactory<>(props);
     }
@@ -125,7 +125,7 @@ public class KafkaConfig {
         props.put(ConsumerConfig.FETCH_MAX_WAIT_MS_CONFIG, fetchMaxWait);
         props.put(ConsumerConfig.MAX_POLL_INTERVAL_MS_CONFIG, maxPollIntervalMs);
         props.put(ConsumerConfig.ISOLATION_LEVEL_CONFIG, "read_committed");
-        log.info("[spring-watch: KafkaConsumer 初始化 - bootstrap={}, groupId={}, maxPollRecords={}, fetchMinSize={}B, maxPollInterval={}ms]",
+        log.info("[kxj: KafkaConsumer 初始化 - bootstrap={}, groupId={}, maxPollRecords={}, fetchMinSize={}B, maxPollInterval={}ms]",
                 bootstrapServers, groupId, maxPollRecords, fetchMinSize, maxPollIntervalMs);
         return new DefaultKafkaConsumerFactory<>(props);
     }
@@ -141,7 +141,7 @@ public class KafkaConfig {
         backoff.setMaxInterval(retryMaxInterval);
         backoff.setMaxAttempts(retryMaxAttempts);
         DefaultErrorHandler handler = new DefaultErrorHandler(recoverer, backoff);
-        log.info("[spring-watch: KafkaErrorHandler 初始化 - DLQ后缀=.DLQ, 重试{}次, 初始{}ms, 倍数{}, 上限{}ms",
+        log.info("[kxj: KafkaErrorHandler 初始化 - DLQ后缀=.DLQ, 重试{}次, 初始{}ms, 倍数{}, 上限{}ms",
                 retryMaxAttempts, retryInitialInterval, retryMultiplier, retryMaxInterval);
         return handler;
     }
@@ -158,7 +158,7 @@ public class KafkaConfig {
         factory.setCommonErrorHandler(errorHandler);
         factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.BATCH);
         factory.getContainerProperties().setPollTimeout(pollTimeout);
-        log.info("[spring-watch: BatchKafkaListenerContainerFactory 初始化 - concurrency={}, batch=true, ackMode=BATCH, pollTimeout={}ms",
+        log.info("[kxj: BatchKafkaListenerContainerFactory 初始化 - concurrency={}, batch=true, ackMode=BATCH, pollTimeout={}ms",
                 concurrency, pollTimeout);
         return factory;
     }

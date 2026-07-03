@@ -84,7 +84,7 @@ public class KafkaProducerJmxCollector {
                 .register(meterRegistry);
 
         if (!enabled) {
-            log.info("[spring-watch: KafkaProducerJmxCollector 禁用]");
+            log.info("[kxj: KafkaProducerJmxCollector 禁用]");
             return;
         }
         try {
@@ -92,14 +92,14 @@ public class KafkaProducerJmxCollector {
             // 没设的话每次都新建;为了避免反复创建,这里只调一次,长期持有引用专供 metrics()。
             this.metricsProducer = producerFactory.createProducer();
         } catch (Throwable t) {
-            log.warn("[spring-watch: KafkaProducerJmxCollector 启动失败,producer 不可用 - error={}]", t.getMessage());
+            log.warn("[kxj: KafkaProducerJmxCollector 启动失败,producer 不可用 - error={}]", t.getMessage());
             return;
         }
 
         ThreadFactory tf = Thread.ofVirtual().name("kafka-producer-jmx-", 0).factory();
         this.scheduler = Executors.newSingleThreadScheduledExecutor(tf);
         scheduler.scheduleWithFixedDelay(this::poll, 5L, pollIntervalSec, TimeUnit.SECONDS);
-        log.info("[spring-watch: KafkaProducerJmxCollector 启动 - interval={}s", pollIntervalSec);
+        log.info("[kxj: KafkaProducerJmxCollector 启动 - interval={}s", pollIntervalSec);
     }
 
     @PreDestroy
@@ -181,10 +181,10 @@ public class KafkaProducerJmxCollector {
             }
             lastSuccessEpochMs.set(System.currentTimeMillis());
             pollOkCounter.increment();
-            log.trace("[spring-watch: Kafka producer JMX 采集 - total={}, matched={}]", metrics.size(), matched);
+            log.trace("[kxj: Kafka producer JMX 采集 - total={}, matched={}]", metrics.size(), matched);
         } catch (Throwable t) {
             pollFailCounter.increment();
-            log.warn("[spring-watch: Kafka producer JMX 采集失败 - error={}]", t.getMessage());
+            log.warn("[kxj: Kafka producer JMX 采集失败 - error={}]", t.getMessage());
         }
     }
 

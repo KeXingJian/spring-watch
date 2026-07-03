@@ -62,12 +62,12 @@ public class DlqMonitorConsumer {
             // 批量入库
             dlqMessageRepository.saveAll(entities);
             persistedCounter.increment(entities.size());
-            log.warn("[spring-watch: DLQ批处理 落库成功 - count={}, topics={}]",
+            log.warn("[kxj: DLQ批处理 落库成功 - count={}, topics={}]",
                     entities.size(), summarizeTopics(records));
         } catch (Exception e) {
             // 落库失败不影响 Kafka 提交，避免毒消息阻塞消费；仅计数+告警
             persistFailCounter.increment(entities.size());
-            log.error("[spring-watch: DLQ批处理 落库失败 - count={}, error={}]",
+            log.error("[kxj: DLQ批处理 落库失败 - count={}, error={}]",
                     entities.size(), e.getMessage(), e);
         }
     }

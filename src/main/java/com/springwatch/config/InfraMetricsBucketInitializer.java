@@ -35,12 +35,12 @@ public class InfraMetricsBucketInitializer {
                     .findFirst()
                     .orElse(null);
             if (org == null) {
-                log.error("[spring-watch: InfluxDB organization 不存在 - org={}]", influxOrg);
+                log.error("[kxj: InfluxDB organization 不存在 - org={}]", influxOrg);
                 return;
             }
             ensureBucketInternal(infraBucket, org, infraRetentionSeconds);
         } catch (Exception e) {
-            log.error("[spring-watch: infra_metrics bucket 初始化失败 - error={}]", e.getMessage(), e);
+            log.error("[kxj: infra_metrics bucket 初始化失败 - error={}]", e.getMessage(), e);
         }
     }
 
@@ -49,7 +49,7 @@ public class InfraMetricsBucketInitializer {
         if (existing == null) {
             BucketRetentionRules rules = new BucketRetentionRules().everySeconds(retentionSeconds);
             Bucket created = influxDBClient.getBucketsApi().createBucket(bucketName, rules, org);
-            log.info("[spring-watch: infra bucket 创建成功 - name={}, id={}, retentionSeconds={}]",
+            log.info("[kxj: infra bucket 创建成功 - name={}, id={}, retentionSeconds={}]",
                     bucketName, created.getId(), retentionSeconds);
         } else {
             Integer existEvery = null;
@@ -60,10 +60,10 @@ public class InfraMetricsBucketInitializer {
                 existing.getRetentionRules().clear();
                 existing.getRetentionRules().add(new BucketRetentionRules().everySeconds(retentionSeconds));
                 influxDBClient.getBucketsApi().updateBucket(existing);
-                log.info("[spring-watch: infra bucket retention 更新 - name={}, retentionSeconds={}->{}]",
+                log.info("[kxj: infra bucket retention 更新 - name={}, retentionSeconds={}->{}]",
                         bucketName, existEvery, retentionSeconds);
             } else {
-                log.info("[spring-watch: infra bucket 已存在 - name={}, retentionSeconds={}]",
+                log.info("[kxj: infra bucket 已存在 - name={}, retentionSeconds={}]",
                         bucketName, existEvery);
             }
         }

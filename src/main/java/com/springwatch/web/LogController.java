@@ -48,7 +48,7 @@ public class LogController {
             @RequestParam(defaultValue = "20") int pageSize) {
         Instant fromInstant = (from == null) ? Instant.now().minusSeconds(900) : from;
         Instant toInstant = (to == null) ? Instant.now() : to;
-        log.info("[spring-watch: log search - appid={}, keyword={}, level={}, page={}/{}, from={}, to={}]",
+        log.info("[kxj: log search - appid={}, keyword={}, level={}, page={}/{}, from={}, to={}]",
                 appid, keyword, level, page, pageSize, fromInstant, toInstant);
         return ApiResponse.ok(logQueryService.search(appid, keyword, level, logger, threadName,
                 traceId, fingerprint, fromInstant, toInstant, page, pageSize));

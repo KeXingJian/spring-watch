@@ -100,7 +100,7 @@ public class BatchLogConsumer {
                 if (event.getAppid() == null) {
                     failed++;
                     parseFailCounter.increment();
-                    log.warn("[spring-watch: BatchLogConsumer 跳过无appid日志 - payload={}]", message);
+                    log.warn("[kxj: BatchLogConsumer 跳过无appid日志 - payload={}]", message);
                     continue;
                 }
 
@@ -123,7 +123,7 @@ public class BatchLogConsumer {
             } catch (Exception e) {
                 failed++;
                 parseFailCounter.increment();
-                log.warn("[spring-watch: BatchLogConsumer 反序列化失败 - error={}, payload={}]",
+                log.warn("[kxj: BatchLogConsumer 反序列化失败 - error={}, payload={}]",
                         e.getMessage(), message);
             }
         }
@@ -133,15 +133,15 @@ public class BatchLogConsumer {
                 writeApi.writePoints(points, logWriteParameters);
                 writeTimer.record(Duration.ofNanos(System.nanoTime() - start));
                 keptCounter.increment(points.size());
-                log.info("[spring-watch: BatchLogConsumer 写入InfluxDB - total={}, kept={}, deduped={}, failed={}]",
+                log.info("[kxj: BatchLogConsumer 写入InfluxDB - total={}, kept={}, deduped={}, failed={}]",
                         messages.size(), points.size(), deduped, failed);
             } catch (Exception e) {
                 writeFailCounter.increment();
-                log.error("[spring-watch: BatchLogConsumer 写InfluxDB失败 - size={}, error={}], 本批丢弃,不重投,避免一条坏数据死循环]",
+                log.error("[kxj: BatchLogConsumer 写InfluxDB失败 - size={}, error={}], 本批丢弃,不重投,避免一条坏数据死循环]",
                         points.size(), e.getMessage());
             }
         } else if (deduped > 0 || failed > 0) {
-            log.info("[spring-watch: BatchLogConsumer 全部丢弃 - total={}, deduped={}, failed={}]",
+            log.info("[kxj: BatchLogConsumer 全部丢弃 - total={}, deduped={}, failed={}]",
                     messages.size(), deduped, failed);
         }
         alertCandidates.forEach(candidate -> {

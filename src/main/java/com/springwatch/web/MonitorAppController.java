@@ -65,32 +65,32 @@ public class MonitorAppController {
 
     @PostMapping
     public ApiResponse<MonitorApp> create(@RequestBody @Valid AppRegisterRequest req) {
-        log.info("[spring-watch: 创建应用 - name={}, endpoint={}]", req.getAppName(), req.getEndpoint());
+        log.info("[kxj: 创建应用 - name={}, endpoint={}]", req.getAppName(), req.getEndpoint());
         return ApiResponse.ok(monitorAppService.create(req));
     }
 
     @PutMapping("/{id}")
     public ApiResponse<MonitorApp> update(@PathVariable Long id, @RequestBody AppRegisterRequest req) {
-        log.info("[spring-watch: 更新应用 - id={}, name={}]", id, req.getAppName());
+        log.info("[kxj: 更新应用 - id={}, name={}]", id, req.getAppName());
         return ApiResponse.ok(monitorAppService.update(id, req));
     }
 
     @DeleteMapping("/{id}")
     public ApiResponse<Void> delete(@PathVariable Long id) {
-        log.info("[spring-watch: 删除应用 - id={}]", id);
+        log.info("[kxj: 删除应用 - id={}]", id);
         monitorAppService.delete(id);
         return ApiResponse.ok(null);
     }
 
     @PostMapping("/{id}/pause")
     public ApiResponse<MonitorApp> pause(@PathVariable Long id) {
-        log.info("[spring-watch: 暂停应用 - id={}]", id);
+        log.info("[kxj: 暂停应用 - id={}]", id);
         return ApiResponse.ok(monitorAppService.pause(id));
     }
 
     @PostMapping("/{id}/resume")
     public ApiResponse<MonitorApp> resume(@PathVariable Long id) {
-        log.info("[spring-watch: 恢复应用 - id={}]", id);
+        log.info("[kxj: 恢复应用 - id={}]", id);
         return ApiResponse.ok(monitorAppService.resume(id));
     }
 

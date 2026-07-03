@@ -43,7 +43,7 @@ public class NotificationConfigService {
                 .status(req.getStatus() == null ? "enabled" : req.getStatus())
                 .build();
         AlertNotificationConfig saved = repository.save(cfg);
-        log.info("[spring-watch: 通知配置创建 - id={}, appid={}, target={}]", saved.getId(), saved.getAppid(), saved.getTarget());
+        log.info("[kxj: 通知配置创建 - id={}, appid={}, target={}]", saved.getId(), saved.getAppid(), saved.getTarget());
         return saved;
     }
 

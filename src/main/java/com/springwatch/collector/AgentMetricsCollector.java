@@ -23,12 +23,12 @@ public class AgentMetricsCollector {
 
         AgentHttpClient.Result result = agentHttpClient.get(metricsUrl);
         if (!result.isOk()) {
-            log.warn("[spring-watch: Agent拉取失败 - appid={}, app={}, url={}, error={}]",
+            log.warn("[kxj: Agent拉取失败 - appid={}, app={}, url={}, error={}]",
                     target.appid(), target.appName(), metricsUrl, result.error());
             return false;
         }
         if (result.status() != 200) {
-            log.warn("[spring-watch: Agent拉取非200 - appid={}, app={}, url={}, status={}]",
+            log.warn("[kxj: Agent拉取非200 - appid={}, app={}, url={}, status={}]",
                     target.appid(), target.appName(), metricsUrl, result.status());
             return false;
         }
@@ -53,13 +53,13 @@ public class AgentMetricsCollector {
                 metricCount[0]++;
             });
         } catch (Exception e) {
-            log.warn("[spring-watch: Agent指标解析失败 - appid={}, app={}, error={}]",
+            log.warn("[kxj: Agent指标解析失败 - appid={}, app={}, error={}]",
                     target.appid(), target.appName(), e.getMessage());
             return false;
         } finally {
             try { body.close(); } catch (Exception ignore) { }
         }
-        log.trace("[spring-watch: Agent拉取成功 - appid={}, app={}, url={}, metrics={}]",
+        log.trace("[kxj: Agent拉取成功 - appid={}, app={}, url={}, metrics={}]",
                 target.appid(), target.appName(), metricsUrl, metricCount[0]);
         return true;
     }

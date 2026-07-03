@@ -93,7 +93,7 @@ public class MetricQueryService {
             return result;
         } catch (Exception e) {
             failCounter.increment();
-            log.warn("[spring-watch: 指标列表查询失败 - appid={}, error={}]", appid, e.getMessage());
+            log.warn("[kxj: 指标列表查询失败 - appid={}, error={}]", appid, e.getMessage());
             return List.of();
         } finally {
             latestTimer.record(System.nanoTime() - startNs, TimeUnit.NANOSECONDS);
@@ -140,7 +140,7 @@ public class MetricQueryService {
             return Map.of("rows", rows, "count", rows.size());
         } catch (Exception e) {
             failCounter.increment();
-            log.warn("[spring-watch: latest查询失败 - appid={}, metric={}, error={}]", appid, metric, e.getMessage());
+            log.warn("[kxj: latest查询失败 - appid={}, metric={}, error={}]", appid, metric, e.getMessage());
             return Map.of("rows", List.of(), "count", 0, "error", e.getMessage());
         } finally {
             latestTimer.record(System.nanoTime() - startNs, TimeUnit.NANOSECONDS);
@@ -215,7 +215,7 @@ public class MetricQueryService {
             return Map.of("series", resultSeries, "count", resultSeries.size());
         } catch (Exception e) {
             failCounter.increment();
-            log.warn("[spring-watch: series查询失败 - appid={}, metric={}, error={}]", appid, metric, e.getMessage());
+            log.warn("[kxj: series查询失败 - appid={}, metric={}, error={}]", appid, metric, e.getMessage());
             return Map.of("series", List.of(), "count", 0, "error", e.getMessage());
         } finally {
             seriesTimer.record(System.nanoTime() - startNs, TimeUnit.NANOSECONDS);
@@ -267,7 +267,7 @@ public class MetricQueryService {
             return Map.of("groups", groups, "count", groups.size());
         } catch (Exception e) {
             failCounter.increment();
-            log.warn("[spring-watch: grouped查询失败 - appid={}, metric={}, groupBy={}, error={}]",
+            log.warn("[kxj: grouped查询失败 - appid={}, metric={}, groupBy={}, error={}]",
                     appid, metric, groupBy, e.getMessage());
             return Map.of("groups", List.of(), "count", 0, "error", e.getMessage());
         } finally {
@@ -373,7 +373,7 @@ public class MetricQueryService {
             return Map.of("points", outPoints, "count", outPoints.size());
         } catch (Exception e) {
             failCounter.increment();
-            log.warn("[spring-watch: histogram-quantile查询失败 - appid={}, metric={}, error={}]",
+            log.warn("[kxj: histogram-quantile查询失败 - appid={}, metric={}, error={}]",
                     appid, metric, e.getMessage());
             return Map.of("points", List.of(), "count", 0, "error", e.getMessage());
         } finally {
@@ -548,7 +548,7 @@ public class MetricQueryService {
                 default -> Map.of("error", "unsupported spec type: " + spec.type());
             };
         } catch (Exception e) {
-            log.warn("[spring-watch: batch spec 失败 - key={}, type={}, metric={}, error={}]",
+            log.warn("[kxj: batch spec 失败 - key={}, type={}, metric={}, error={}]",
                     spec.key(), spec.type(), spec.metric(), e.getMessage());
             return new LinkedHashMap<>(Map.of("error", e.getMessage()));
         }

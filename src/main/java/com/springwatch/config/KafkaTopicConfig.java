@@ -83,7 +83,7 @@ public class KafkaTopicConfig {
 
     private NewTopic build(String name, int partitions) {
         NewTopic t = TopicBuilder.name(name).partitions(partitions).replicas(replicationFactor).build();
-        log.info("[spring-watch: Topic声明 - {} (partitions={}, replicas={})]", t.name(), partitions, replicationFactor);
+        log.info("[kxj: Topic声明 - {} (partitions={}, replicas={})]", t.name(), partitions, replicationFactor);
         return t;
     }
 
@@ -124,20 +124,20 @@ public class KafkaTopicConfig {
             for (NewTopic nt : expected) {
                 if (!existingPartitions.containsKey(nt.name())) {
                     toCreate.add(nt);
-                    log.warn("[spring-watch: 兜底创建 topic - name={}, partitions={}, replicas={}]",
+                    log.warn("[kxj: 兜底创建 topic - name={}, partitions={}, replicas={}]",
                             nt.name(), nt.numPartitions(), nt.replicationFactor());
                 } else {
                     int actual = existingPartitions.get(nt.name());
                     int expectedPartitions = nt.numPartitions();
                     if (actual == expectedPartitions) {
-                        log.debug("[spring-watch: topic 已存在且 partition 数对 - name={}, partitions={}]",
+                        log.debug("[kxj: topic 已存在且 partition 数对 - name={}, partitions={}]",
                                 nt.name(), actual);
                     } else {
                         mismatchedCount++;
                         // Kafka 协议:partition 数只能加不能减,且不能通过 AdminClient 改
                         // 必须用户手动 `kafka-topics.sh --delete` 后让本方法下次启动重建
                         //   --delete 需在 broker 配 delete.topic.enable=true(默认 true)
-                        log.error("[spring-watch: topic 已存在但 partition 数不符 - name={}, actual={}, expected={}]." +
+                        log.error("[kxj: topic 已存在但 partition 数不符 - name={}, actual={}, expected={}]." +
                                         " Kafka 协议禁止缩 partition,需手动 `kafka-topics.sh --bootstrap-server localhost:9092 --delete --topic {}` 后重启 spring-watch",
                                 nt.name(), actual, expectedPartitions, nt.name());
                     }
@@ -148,27 +148,27 @@ public class KafkaTopicConfig {
             if (!toCreate.isEmpty()) {
                 try {
                     admin.createTopics(toCreate).all().get(8, TimeUnit.SECONDS);
-                    log.info("[spring-watch: 兜底创建 topic 完成 - count={}, names={}]",
+                    log.info("[kxj: 兜底创建 topic 完成 - count={}, names={}]",
                             toCreate.size(),
                             toCreate.stream().map(NewTopic::name).toList());
                 } catch (ExecutionException ee) {
                     // 部分 topic 可能因 broker auto-create 抢先创建(TOPIC_ALREADY_EXISTS)而不报错
                     // 这里把 TOPIC_ALREADY_EXISTS 单独识别,其他错误才打 ERROR
                     if (ee.getCause() instanceof org.apache.kafka.common.errors.TopicExistsException) {
-                        log.info("[spring-watch: 兜底创建 topic —— 已被 broker 抢先 auto-create,跳过 - count={}]", toCreate.size());
+                        log.info("[kxj: 兜底创建 topic —— 已被 broker 抢先 auto-create,跳过 - count={}]", toCreate.size());
                     } else {
                         throw ee;
                     }
                 }
             } else {
-                log.info("[spring-watch: 兜底检查完成 - 所有 topic 已存在,无需创建 mismatched={}]", mismatchedCount);
+                log.info("[kxj: 兜底检查完成 - 所有 topic 已存在,无需创建 mismatched={}]", mismatchedCount);
             }
             if (mismatchedCount > 0) {
-                log.error("[spring-watch: ❌ {} 个 topic partition 数不符,Kafka 协议禁止缩,需手动 --delete + 重启", mismatchedCount);
+                log.error("[kxj: ❌ {} 个 topic partition 数不符,Kafka 协议禁止缩,需手动 --delete + 重启", mismatchedCount);
             }
         } catch (Throwable t) {
             // 兜底失败不抛,spring-boot 不因此启动失败,后续 KafkaPartitionUtilizationGauge 也会报 unknown topic
-            log.error("[spring-watch: 兜底创建 topic 失败 - error={}]", t.getMessage(), t);
+            log.error("[kxj: 兜底创建 topic 失败 - error={}]", t.getMessage(), t);
         }
     }
 }

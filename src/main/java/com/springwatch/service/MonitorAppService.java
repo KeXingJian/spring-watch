@@ -63,9 +63,9 @@ public class MonitorAppService {
         try {
             collectScheduleRegistry.upsert(saved);
         } catch (Exception e) {
-            log.warn("[spring-watch: 应用注册调度失败 - appid={}, error={}]", appid, e.getMessage());
+            log.warn("[kxj: 应用注册调度失败 - appid={}, error={}]", appid, e.getMessage());
         }
-        log.info("[spring-watch: 应用注册成功 - appid={}, name={}, endpoint={}]",
+        log.info("[kxj: 应用注册成功 - appid={}, name={}, endpoint={}]",
                 appid, saved.getAppName(), saved.getEndpoint());
         return saved;
     }
@@ -85,7 +85,7 @@ public class MonitorAppService {
         try {
             collectScheduleRegistry.upsert(saved);
         } catch (Exception e) {
-            log.warn("[spring-watch: 调度刷新失败 - appid={}, error={}]", saved.getAppid(), e.getMessage());
+            log.warn("[kxj: 调度刷新失败 - appid={}, error={}]", saved.getAppid(), e.getMessage());
         }
         return saved;
     }
@@ -105,7 +105,7 @@ public class MonitorAppService {
         try {
             collectScheduleRegistry.cancel(app.getAppid());
         } catch (Exception e) {
-            log.warn("[spring-watch: 调度注销失败 - appid={}, error={}]", app.getAppid(), e.getMessage());
+            log.warn("[kxj: 调度注销失败 - appid={}, error={}]", app.getAppid(), e.getMessage());
         }
         // P1-5: 释放 CollectorThrottler 中该 host 的限流器，避免 hostSemaphores 缓慢泄漏
         String host = parseHost(app.getEndpoint());
@@ -113,7 +113,7 @@ public class MonitorAppService {
             try {
                 hostThrottler.cleanup(host);
             } catch (Exception e) {
-                log.warn("[spring-watch: 主机限流器清理失败 - appid={}, host={}, error={}]",
+                log.warn("[kxj: 主机限流器清理失败 - appid={}, host={}, error={}]",
                         app.getAppid(), host, e.getMessage());
             }
         }
@@ -129,7 +129,7 @@ public class MonitorAppService {
         try {
             collectScheduleRegistry.cancel(app.getAppid());
         } catch (Exception e) {
-            log.warn("[spring-watch: 暂停调度失败 - appid={}, error={}]", app.getAppid(), e.getMessage());
+            log.warn("[kxj: 暂停调度失败 - appid={}, error={}]", app.getAppid(), e.getMessage());
         }
         return saved;
     }
@@ -143,7 +143,7 @@ public class MonitorAppService {
         try {
             collectScheduleRegistry.upsert(saved);
         } catch (Exception e) {
-            log.warn("[spring-watch: 恢复调度失败 - appid={}, error={}]", saved.getAppid(), e.getMessage());
+            log.warn("[kxj: 恢复调度失败 - appid={}, error={}]", saved.getAppid(), e.getMessage());
         }
         return saved;
     }

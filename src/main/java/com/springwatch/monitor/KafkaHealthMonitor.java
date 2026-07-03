@@ -111,7 +111,7 @@ public class KafkaHealthMonitor {
                 .register(meterRegistry);
 
         if (!enabled) {
-            log.info("[spring-watch: KafkaHealthMonitor 禁用]");
+            log.info("[kxj: KafkaHealthMonitor 禁用]");
             return;
         }
         Properties props = new Properties();
@@ -124,7 +124,7 @@ public class KafkaHealthMonitor {
         ThreadFactory tf = Thread.ofVirtual().name("kafka-health-monitor-", 0).factory();
         this.scheduler = Executors.newSingleThreadScheduledExecutor(tf);
         scheduler.scheduleWithFixedDelay(this::poll, 5L, pollIntervalSec, TimeUnit.SECONDS);
-        log.info("[spring-watch: KafkaHealthMonitor 启动 - interval={}s, bootstrap={}",
+        log.info("[kxj: KafkaHealthMonitor 启动 - interval={}s, bootstrap={}",
                 pollIntervalSec, bootstrapServers);
     }
 
@@ -230,7 +230,7 @@ public class KafkaHealthMonitor {
         } catch (Throwable t) {
             pollFailCounter.increment();
             lastError = t.getClass().getSimpleName() + ":" + t.getMessage();
-            log.warn("[spring-watch: Kafka 健康采集失败 - error={}]", t.getMessage());
+            log.warn("[kxj: Kafka 健康采集失败 - error={}]", t.getMessage());
         }
     }
 

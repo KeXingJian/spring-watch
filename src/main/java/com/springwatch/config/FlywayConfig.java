@@ -13,7 +13,7 @@ public class FlywayConfig {
 
     @Bean
     public Flyway flyway(DataSource dataSource) {
-        log.info("[spring-watch: Flyway 数据库迁移开始]");
+        log.info("[kxj: Flyway 数据库迁移开始]");
         Flyway flyway = Flyway.configure()
                 .dataSource(dataSource)
                 .locations("classpath:db/migration")
@@ -23,7 +23,7 @@ public class FlywayConfig {
                 .load();
         flyway.repair();
         flyway.migrate();
-        log.info("[spring-watch: Flyway 数据库迁移完成]");
+        log.info("[kxj: Flyway 数据库迁移完成]");
         return flyway;
     }
 }

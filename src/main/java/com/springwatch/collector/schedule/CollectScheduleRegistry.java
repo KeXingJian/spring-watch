@@ -56,7 +56,7 @@ public class CollectScheduleRegistry implements ApplicationRunner {
 
     @PreDestroy
     void shutdown() {
-        log.info("[spring-watch: 调度器关闭开始 - activeJobs={}]", jobs.size());
+        log.info("[kxj: 调度器关闭开始 - activeJobs={}]", jobs.size());
         jobs.values().forEach(f -> f.cancel(false));
         jobs.clear();
         activeSchedules.clear();
@@ -64,7 +64,7 @@ public class CollectScheduleRegistry implements ApplicationRunner {
             scheduler.shutdown();
             try {
                 if (!scheduler.awaitTermination(5, TimeUnit.SECONDS)) {
-                    log.warn("[spring-watch: 调度器未在5s内优雅关闭 - 强制 shutdownNow]");
+                    log.warn("[kxj: 调度器未在5s内优雅关闭 - 强制 shutdownNow]");
                     scheduler.shutdownNow();
                 }
             } catch (InterruptedException e) {
@@ -72,14 +72,20 @@ public class CollectScheduleRegistry implements ApplicationRunner {
                 Thread.currentThread().interrupt();
             }
         }
-        log.info("[spring-watch: 调度器关闭完成]");
+        log.info("[kxj: 调度器关闭完成]");
     }
 
     @Override
     public void run(@NonNull ApplicationArguments args) {
         log.info("[kxj: 启动加载全部应用开始 - 首次延迟采用 appid hash 分摊,防雷鸣群羊]");
         List<MonitorApp> allApps = repository.findAll();
-        log.info("[spring-watch: 启动加载全部应用 - dbCount={}]", allApps.size());
+        log.info("[kxj: 启动加载全部应用 - dbCount={}]", allApps.size());
+        int max = properties.getMaxAppCount();
+        if (allApps.size() > max) {
+            log.error("[kxj: 启动中止 - 应用数 {} 超过配置上限 {}, 请调整 spring-watch.collector.max-app-count 或减少应用后再启动]",
+                    allApps.size(), max);
+            throw new IllegalStateException("应用数超限: " + allApps.size() + " > " + max);
+        }
         long startNs = System.nanoTime();
         allApps.forEach(this::upsert);
         long costMs = (System.nanoTime() - startNs) / 1_000_000L;
@@ -90,15 +96,15 @@ public class CollectScheduleRegistry implements ApplicationRunner {
 
     public synchronized void upsert(MonitorApp app) {
         if (app == null || app.getAppid() == null) {
-            log.warn("[spring-watch: upsert跳过 - app为空或appid为空, id={}]", app == null ? null : app.getId());
+            log.warn("[kxj: upsert跳过 - app为空或appid为空, id={}]", app == null ? null : app.getId());
             return;
         }
         if (app.getAppid() <= 0L) {
-            log.info("[spring-watch: upsert跳过 - appid={} 是 sentinel/infra 标记, 不注册采集任务, app={}",
+            log.info("[kxj: upsert跳过 - appid={} 是 sentinel/infra 标记, 不注册采集任务, app={}",
                     app.getAppid(), app.getAppName());
             return;
         }
-        log.info("[spring-watch: upsert开始 - appid={}, app={}, status={}, scheduleType={}, scrapeInterval={}, cron={}]",
+        log.info("[kxj: upsert开始 - appid={}, app={}, status={}, scheduleType={}, scrapeInterval={}, cron={}]",
                 app.getAppid(), app.getAppName(), app.getStatus(),
                 app.getScheduleType(), app.getScrapeInterval(), app.getCronExpression());
 
@@ -116,7 +122,7 @@ public class CollectScheduleRegistry implements ApplicationRunner {
                     () -> cronLoop(app.getAppid()),
                     initialDelay,
                     TimeUnit.MILLISECONDS);
-            log.info("[spring-watch: 注册CRON任务 - appid={}, app={}, status={}, initialDelayMs={}, cron={}]",
+            log.info("[kxj: 注册CRON任务 - appid={}, app={}, status={}, initialDelayMs={}, cron={}]",
                     app.getAppid(), app.getAppName(), app.getStatus(), initialDelay, app.getCronExpression());
         } else {
             future = scheduler.scheduleWithFixedDelay(
@@ -130,17 +136,17 @@ public class CollectScheduleRegistry implements ApplicationRunner {
                     properties.getJitterPercent());
         }
         jobs.put(app.getAppid(), future);
-        log.info("[spring-watch: upsert完成 - appid={}, activeJobs={}]", app.getAppid(), jobs.size());
+        log.info("[kxj: upsert完成 - appid={}, activeJobs={}]", app.getAppid(), jobs.size());
     }
 
     public void cancel(Long appid) {
         if (appid == null) {
-            log.warn("[spring-watch: cancel跳过 - appid为空]");
+            log.warn("[kxj: cancel跳过 - appid为空]");
             return;
         }
-        log.info("[spring-watch: cancel开始 - appid={}]", appid);
+        log.info("[kxj: cancel开始 - appid={}]", appid);
         cancelInternal(appid);
-        log.info("[spring-watch: cancel完成 - appid={}, activeJobs={}]", appid, jobs.size());
+        log.info("[kxj: cancel完成 - appid={}, activeJobs={}]", appid, jobs.size());
     }
 
     private void cancelInternal(Long appid) {
@@ -148,10 +154,10 @@ public class CollectScheduleRegistry implements ApplicationRunner {
         activeSchedules.remove(appid);
         if (old != null) {
             old.cancel(false);
-            log.debug("[spring-watch: 取消旧future - appid={}, wasDone={}, wasCancelled={}]",
+            log.debug("[kxj: 取消旧future - appid={}, wasDone={}, wasCancelled={}]",
                     appid, old.isDone(), old.isCancelled());
         } else {
-            log.trace("[spring-watch: 无旧future需要取消 - appid={}]", appid);
+            log.trace("[kxj: 无旧future需要取消 - appid={}]", appid);
         }
     }
 
@@ -159,24 +165,24 @@ public class CollectScheduleRegistry implements ApplicationRunner {
     private void cronLoop(Long appid) {
         AppSchedule schedule = activeSchedules.get(appid);
         if (schedule == null || schedule.type() != AppScheduleType.CRON) {
-            log.debug("[spring-watch: cronLoop退出 - appid={}, schedule={}](非cron或已移除)", appid, schedule);
+            log.debug("[kxj: cronLoop退出 - appid={}, schedule={}](非cron或已移除)", appid, schedule);
             return;
         }
         ScheduledFuture<?> current = jobs.get(appid);
         if (current == null || current.isCancelled()) {
-            log.info("[spring-watch: cronLoop退出 - appid={}, future已取消]", appid);
+            log.info("[kxj: cronLoop退出 - appid={}, future已取消]", appid);
             return;
         }
-        log.info("[spring-watch: cron触发执行 - appid={}]", appid);
+        log.info("[kxj: cron触发执行 - appid={}]", appid);
         safeRun(appid);
 
         if (!jobs.containsKey(appid)) {
-            log.info("[spring-watch: cronLoop终止 - appid={}, 执行期间被移除]", appid);
+            log.info("[kxj: cronLoop终止 - appid={}, 执行期间被移除]", appid);
             return;
         }
         AppSchedule latest = activeSchedules.get(appid);
         if (latest == null) {
-            log.info("[spring-watch: cronLoop终止 - appid={}, schedule已清空]", appid);
+            log.info("[kxj: cronLoop终止 - appid={}, schedule已清空]", appid);
             return;
         }
         long nextDelay = latest.nextIntervalMs(Instant.now());
@@ -186,22 +192,22 @@ public class CollectScheduleRegistry implements ApplicationRunner {
                 TimeUnit.MILLISECONDS);
         ScheduledFuture<?> prev = jobs.put(appid, next);
         if (prev != null && prev != current && !prev.isDone()) {
-            log.warn("[spring-watch: cronLoop清理残留future - appid={}]", appid);
+            log.warn("[kxj: cronLoop清理残留future - appid={}]", appid);
             prev.cancel(false);
         }
-        log.debug("[spring-watch: cronLoop排下一次 - appid={}, nextDelayMs={}]", appid, nextDelay);
+        log.debug("[kxj: cronLoop排下一次 - appid={}, nextDelayMs={}]", appid, nextDelay);
     }
 
     private void safeRun(Long appid) {
         long start = System.nanoTime();
-        log.debug("[spring-watch: safeRun开始 - appid={}]", appid);
+        log.debug("[kxj: safeRun开始 - appid={}]", appid);
         try {
             appPullTask.run(appid);
         } catch (Throwable t) {
-            log.warn("[spring-watch: 采集执行异常 - appid={}, error={}]", appid, t.getMessage(), t);
+            log.warn("[kxj: 采集执行异常 - appid={}, error={}]", appid, t.getMessage(), t);
         } finally {
             long costMs = (System.nanoTime() - start) / 1_000_000L;
-            log.debug("[spring-watch: safeRun结束 - appid={}, costMs={}]", appid, costMs);
+            log.debug("[kxj: safeRun结束 - appid={}, costMs={}]", appid, costMs);
         }
     }
 }

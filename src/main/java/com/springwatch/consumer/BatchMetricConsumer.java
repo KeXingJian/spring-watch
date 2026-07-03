@@ -75,7 +75,7 @@ public class BatchMetricConsumer {
             } catch (Exception e) {
                 failed++;
                 parseFailCounter.increment();
-                log.warn("[spring-watch: BatchMetricConsumer 反序列化失败 - error={}, payload={}",
+                log.warn("[kxj: BatchMetricConsumer 反序列化失败 - error={}, payload={}",
                         e.getMessage(), message);
             }
         }
@@ -85,11 +85,11 @@ public class BatchMetricConsumer {
                 writeApi.writePoints(points, metricsWriteParameters);
                 writeTimer.record(Duration.ofNanos(System.nanoTime() - start));
                 keptCounter.increment(points.size());
-                log.info("[spring-watch: BatchMetricConsumer 写入InfluxDB - size={}, failed={}",
+                log.info("[kxj: BatchMetricConsumer 写入InfluxDB - size={}, failed={}",
                         points.size(), failed);
             } catch (Exception e) {
                 writeFailCounter.increment();
-                log.error("[spring-watch: BatchMetricConsumer 写InfluxDB失败 - size={}, error={}], 本批丢弃,不重投]",
+                log.error("[kxj: BatchMetricConsumer 写InfluxDB失败 - size={}, error={}], 本批丢弃,不重投]",
                         points.size(), e.getMessage());
             }
         }

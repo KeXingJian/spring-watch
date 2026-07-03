@@ -123,7 +123,7 @@ public class LogDedupService {
                 flushed++;
             } catch (Exception e) {
                 failed++;
-                log.warn("[spring-watch: dedup flush 失败 - appid={}, fingerprint={}, error={}]",
+                log.warn("[kxj: dedup flush 失败 - appid={}, fingerprint={}, error={}]",
                         entry.getKey().appid(), entry.getKey().fingerprint(), e.getMessage());
             }
         }
@@ -133,7 +133,7 @@ public class LogDedupService {
             flushFailCounter.increment(failed);
         }
         if (flushed > 0 || failed > 0) {
-            log.info("[spring-watch: dedup flush 完成 - flushed={}, failed={}]",
+            log.info("[kxj: dedup flush 完成 - flushed={}, failed={}]",
                     flushed, failed);
         }
     }

@@ -79,7 +79,7 @@ public class KafkaFallbackQueue {
                 .description("KafkaFallbackQueue 因消息停留过久被丢弃次数")
                 .register(meterRegistry);
         meterRegistry.gauge("spring.watch.kafka.fallback.queue.size", this, KafkaFallbackQueue::gaugeSize);
-        log.info("[spring-watch: KafkaFallbackQueue 启动 - capacity={}, maxPayloadBytes={}, drainInterval={}ms, sendTimeout={}ms, alertThreshold={}]",
+        log.info("[kxj: KafkaFallbackQueue 启动 - capacity={}, maxPayloadBytes={}, drainInterval={}ms, sendTimeout={}ms, alertThreshold={}]",
                 capacity, maxPayloadBytes, drainIntervalMs, sendTimeoutMs, alertThreshold);
     }
 
@@ -94,19 +94,19 @@ public class KafkaFallbackQueue {
             drainer.shutdownNow();
         }
         int pending = queue == null ? 0 : queue.size();
-        log.info("[spring-watch: KafkaFallbackQueue 关闭 - pending={}, totalEnqueued={}, totalDrained={}, totalDropped={}, totalTruncated={}]",
+        log.info("[kxj: KafkaFallbackQueue 关闭 - pending={}, totalEnqueued={}, totalDrained={}, totalDropped={}, totalTruncated={}]",
                 pending, totalEnqueued.get(), totalDrained.get(), totalDropped.get(), totalTruncated.get());
     }
 
     public void offer(String topic, String key, String payload) {
         if (queue == null) {
-            log.warn("[spring-watch: KafkaFallbackQueue 未初始化, 丢弃消息 - topic={}, key={}]", topic, key);
+            log.warn("[kxj: KafkaFallbackQueue 未初始化, 丢弃消息 - topic={}, key={}]", topic, key);
             totalDropped.incrementAndGet();
             capacityFullCounter.increment();
             return;
         }
         if (queue.size() >= capacity) {
-            log.error("[spring-watch: KafkaFallbackQueue 已满, 丢弃消息 - topic={}, key={}, size={}]", topic, key, queue.size());
+            log.error("[kxj: KafkaFallbackQueue 已满, 丢弃消息 - topic={}, key={}, size={}]", topic, key, queue.size());
             totalDropped.incrementAndGet();
             capacityFullCounter.increment();
             return;
@@ -117,7 +117,7 @@ public class KafkaFallbackQueue {
             totalEnqueued.incrementAndGet();
             int size = queue.size();
             if (size >= alertThreshold && size % alertThreshold == 0) {
-                log.warn("[spring-watch: KafkaFallbackQueue 堆积告警 - size={}, threshold={}, topic={}]",
+                log.warn("[kxj: KafkaFallbackQueue 堆积告警 - size={}, threshold={}, topic={}]",
                         size, alertThreshold, topic);
             }
         }
@@ -133,7 +133,7 @@ public class KafkaFallbackQueue {
         }
         totalTruncated.incrementAndGet();
         truncatedCounter.increment();
-        log.warn("[spring-watch: KafkaFallbackQueue payload 截断 - origBytes={}, limit={}", byteLen, maxPayloadBytes);
+        log.warn("[kxj: KafkaFallbackQueue payload 截断 - origBytes={}, limit={}", byteLen, maxPayloadBytes);
         int lo = 0, hi = payload.length();
         while (lo < hi) {
             int mid = (lo + hi + 1) >>> 1;
@@ -166,11 +166,11 @@ public class KafkaFallbackQueue {
                 sent++;
             } catch (Exception e) {
                 failed++;
-                log.warn("[spring-watch: KafkaFallbackQueue 重投失败, 暂停本轮 - topic={}, key={}, error={}]",
+                log.warn("[kxj: KafkaFallbackQueue 重投失败, 暂停本轮 - topic={}, key={}, error={}]",
                         r.topic, r.key, e.getMessage());
                 long ageMs = Duration.between(r.enqueueAt, Instant.now()).toMillis();
                 if (ageMs > drainIntervalMs * 10) {
-                    log.error("[spring-watch: KafkaFallbackQueue 消息停留过久, 丢头 - topic={}, key={}, ageMs={}",
+                    log.error("[kxj: KafkaFallbackQueue 消息停留过久, 丢头 - topic={}, key={}, ageMs={}",
                             r.topic, r.key, ageMs);
                     queue.poll();
                     totalDropped.incrementAndGet();
@@ -181,7 +181,7 @@ public class KafkaFallbackQueue {
         }
         if (sent > 0 || failed > 0) {
             totalDrained.addAndGet(sent);
-            log.info("[spring-watch: KafkaFallbackQueue drain - sent={}, failed={}, pending={}, costMs={}]",
+            log.info("[kxj: KafkaFallbackQueue drain - sent={}, failed={}, pending={}, costMs={}]",
                     sent, failed, queue.size(), System.currentTimeMillis() - startMs);
         }
     }

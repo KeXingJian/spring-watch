@@ -43,7 +43,7 @@ public class InfraMetricsQueryService {
                   |> distinct(column: "metric")
                   |> sort(columns: ["metric"])
                 """, infraBucket, component);
-        log.debug("[spring-watch: infra listMetrics flux] {}", flux.replace("\n", " | "));
+        log.debug("[kxj: infra listMetrics flux] {}", flux.replace("\n", " | "));
         List<String> out = new ArrayList<>();
         try {
             List<FluxTable> tables = queryApi.query(flux, influxOrg);
@@ -54,7 +54,7 @@ public class InfraMetricsQueryService {
                 }
             }
         } catch (Exception e) {
-            log.warn("[spring-watch: infra listMetrics 失败 - component={}, error={}]", component, e.getMessage());
+            log.warn("[kxj: infra listMetrics 失败 - component={}, error={}]", component, e.getMessage());
         }
         return out;
     }
@@ -84,7 +84,7 @@ public class InfraMetricsQueryService {
                   |> aggregateWindow(every: %s, fn: last, createEmpty: false)
                   |> keep(columns: ["_time", "_value", "topic", "partition", "group"])
                 """, infraBucket, fromInstant, toInstant, component, metric, everyResolved);
-        log.debug("[spring-watch: infra querySeries flux - metric={}] {}", metric, flux.replace("\n", " | "));
+        log.debug("[kxj: infra querySeries flux - metric={}] {}", metric, flux.replace("\n", " | "));
 
         List<Map<String, Object>> seriesOut = new ArrayList<>();
         long totalPoints = 0L;
@@ -120,7 +120,7 @@ public class InfraMetricsQueryService {
                 totalPoints += points.size();
             }
         } catch (Exception e) {
-            log.warn("[spring-watch: infra querySeries 失败 - metric={}, error={}]", metric, e.getMessage());
+            log.warn("[kxj: infra querySeries 失败 - metric={}, error={}]", metric, e.getMessage());
         }
 
         Map<String, Object> result = new LinkedHashMap<>();
@@ -144,7 +144,7 @@ public class InfraMetricsQueryService {
                   |> filter(fn: (r) => r.component == "%s" and r.metric == "%s")
                   |> last()
                 """, infraBucket, component, metric);
-        log.debug("[spring-watch: infra queryLatest flux - metric={}] {}", metric, flux.replace("\n", " | "));
+        log.debug("[kxj: infra queryLatest flux - metric={}] {}", metric, flux.replace("\n", " | "));
 
         Map<String, Object> result = new LinkedHashMap<>();
         List<Map<String, Object>> items = new ArrayList<>();
@@ -173,7 +173,7 @@ public class InfraMetricsQueryService {
                 items.add(p);
             }
         } catch (Exception e) {
-            log.warn("[spring-watch: infra queryLatest 失败 - metric={}, error={}]", metric, e.getMessage());
+            log.warn("[kxj: infra queryLatest 失败 - metric={}, error={}]", metric, e.getMessage());
         }
         if (items.isEmpty()) return result;
         result.put("items", items);
@@ -196,7 +196,7 @@ public class InfraMetricsQueryService {
                 }
             }
         } catch (Exception e) {
-            log.debug("[spring-watch: listInternalMeasurements 失败(token 可能无 _internal 读权限) - error={}]", e.getMessage());
+            log.debug("[kxj: listInternalMeasurements 失败(token 可能无 _internal 读权限) - error={}]", e.getMessage());
         }
         return out;
     }

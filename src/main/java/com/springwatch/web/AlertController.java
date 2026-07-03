@@ -56,26 +56,26 @@ public class AlertController {
 
     @PostMapping("/rules")
     public ApiResponse<AlertRule> createRule(@RequestBody @Valid AlertRuleRequest req) {
-        log.info("[spring-watch: 创建告警规则 - name={}, type={}, appid={}]", req.getRuleName(), req.getRuleType(), req.getAppid());
+        log.info("[kxj: 创建告警规则 - name={}, type={}, appid={}]", req.getRuleName(), req.getRuleType(), req.getAppid());
         return ApiResponse.ok(alertRuleService.create(req));
     }
 
     @PutMapping("/rules/{id}")
     public ApiResponse<AlertRule> updateRule(@PathVariable Long id, @RequestBody AlertRuleRequest req) {
-        log.info("[spring-watch: 更新告警规则 - id={}]", id);
+        log.info("[kxj: 更新告警规则 - id={}]", id);
         return ApiResponse.ok(alertRuleService.update(id, req));
     }
 
     @DeleteMapping("/rules/{id}")
     public ApiResponse<Void> deleteRule(@PathVariable Long id) {
-        log.info("[spring-watch: 删除告警规则 - id={}]", id);
+        log.info("[kxj: 删除告警规则 - id={}]", id);
         alertRuleService.delete(id);
         return ApiResponse.ok(null);
     }
 
     @PostMapping("/rules/{id}/toggle")
     public ApiResponse<AlertRule> toggleRule(@PathVariable Long id) {
-        log.info("[spring-watch: 切换告警规则状态 - id={}]", id);
+        log.info("[kxj: 切换告警规则状态 - id={}]", id);
         return ApiResponse.ok(alertRuleService.toggle(id));
     }
 

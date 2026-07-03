@@ -110,7 +110,7 @@ public class KafkaPartitionUtilizationGauge {
                 .register(meterRegistry);
 
         if (!enabled) {
-            log.info("[spring-watch: KafkaPartitionUtilizationGauge 禁用]");
+            log.info("[kxj: KafkaPartitionUtilizationGauge 禁用]");
             return;
         }
         Properties props = new Properties();
@@ -123,7 +123,7 @@ public class KafkaPartitionUtilizationGauge {
         ThreadFactory tf = Thread.ofVirtual().name("kafka-partition-util-", 0).factory();
         this.scheduler = Executors.newSingleThreadScheduledExecutor(tf);
         scheduler.scheduleWithFixedDelay(this::poll, 10L, pollIntervalSec, TimeUnit.SECONDS);
-        log.info("[spring-watch: KafkaPartitionUtilizationGauge 启动 - interval={}s, topics={}, groupId={}",
+        log.info("[kxj: KafkaPartitionUtilizationGauge 启动 - interval={}s, topics={}, groupId={}",
                 pollIntervalSec, String.join(",", topics), groupId);
     }
 
@@ -219,11 +219,11 @@ public class KafkaPartitionUtilizationGauge {
             lastSuccessEpochMs.set(System.currentTimeMillis());
             lastError = "";
             pollOkCounter.increment();
-            log.trace("[spring-watch: Kafka partition 利用率采集 - partitions={}]", points.size());
+            log.trace("[kxj: Kafka partition 利用率采集 - partitions={}]", points.size());
         } catch (Throwable t) {
             pollFailCounter.increment();
             lastError = t.getClass().getSimpleName() + ":" + t.getMessage();
-            log.warn("[spring-watch: Kafka partition 利用率采集失败 - error={}]", t.getMessage());
+            log.warn("[kxj: Kafka partition 利用率采集失败 - error={}]", t.getMessage());
         }
     }
 }

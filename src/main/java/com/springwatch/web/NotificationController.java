@@ -48,19 +48,19 @@ public class NotificationController {
 
     @PostMapping("/configs")
     public ApiResponse<AlertNotificationConfig> createConfig(@RequestBody @Valid NotificationConfigRequest req) {
-        log.info("[spring-watch: 创建通知配置 - appid={}, target={}]", req.getAppid(), req.getTarget());
+        log.info("[kxj: 创建通知配置 - appid={}, target={}]", req.getAppid(), req.getTarget());
         return ApiResponse.ok(configService.create(req));
     }
 
     @PutMapping("/configs/{id}")
     public ApiResponse<AlertNotificationConfig> updateConfig(@PathVariable Long id, @RequestBody NotificationConfigRequest req) {
-        log.info("[spring-watch: 更新通知配置 - id={}]", id);
+        log.info("[kxj: 更新通知配置 - id={}]", id);
         return ApiResponse.ok(configService.update(id, req));
     }
 
     @DeleteMapping("/configs/{id}")
     public ApiResponse<Void> deleteConfig(@PathVariable Long id) {
-        log.info("[spring-watch: 删除通知配置 - id={}]", id);
+        log.info("[kxj: 删除通知配置 - id={}]", id);
         configService.delete(id);
         return ApiResponse.ok(null);
     }
@@ -70,7 +70,7 @@ public class NotificationController {
         if (to == null || to.isBlank()) {
             return ApiResponse.fail(40001, "缺少必填参数 to");
         }
-        log.info("[spring-watch: 测试邮件 - to={}]", to);
+        log.info("[kxj: 测试邮件 - to={}]", to);
         String raw = configService.testEmail(to);
         boolean ok = raw != null && raw.contains("\"status\":\"ok\"");
         return ApiResponse.ok(Map.of(

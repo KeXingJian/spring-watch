@@ -17,7 +17,7 @@ public class OtelConfigGenerator {
     private String prometheusHost;
 
     public Map<String, String> generateOtelConfig(Long appid, int metricsPort) {
-        log.info("[spring-watch: 生成OTel Agent配置 - appid={}, metricsPort={}, 模式=Agent暴露Prometheus端点]",
+        log.info("[kxj: 生成OTel Agent配置 - appid={}, metricsPort={}, 模式=Agent暴露Prometheus端点]",
                 appid, metricsPort);
 
         Map<String, String> config = new LinkedHashMap<>();

@@ -44,7 +44,7 @@ public class InfrastructureAlertScheduler {
 
     @PostConstruct
     void init() {
-        log.info("[spring-watch: InfrastructureAlertScheduler 初始化 - enabled={}, rules={}, appid={}",
+        log.info("[kxj: InfrastructureAlertScheduler 初始化 - enabled={}, rules={}, appid={}",
                 properties.isEnabled(), properties.getRules().size(), properties.getAppid());
     }
 
@@ -59,7 +59,7 @@ public class InfrastructureAlertScheduler {
         try {
             Optional<MonitorApp> byId = monitorAppRepository.findByAppid(appid);
             if (byId.isPresent()) {
-                log.info("[spring-watch: 基础设施告警 自监控 app 已存在 - appid={}, name={}]",
+                log.info("[kxj: 基础设施告警 自监控 app 已存在 - appid={}, name={}]",
                         appid, byId.get().getAppName());
                 return;
             }
@@ -71,9 +71,9 @@ public class InfrastructureAlertScheduler {
                     .status("active")
                     .build();
             monitorAppRepository.save(app);
-            log.info("[spring-watch: 基础设施告警 自监控 app 创建成功 - appid={}, name={}]", appid, name);
+            log.info("[kxj: 基础设施告警 自监控 app 创建成功 - appid={}, name={}]", appid, name);
         } catch (Exception e) {
-            log.warn("[spring-watch: 基础设施告警 自监控 app 创建失败 - error={}]", e.getMessage());
+            log.warn("[kxj: 基础设施告警 自监控 app 创建失败 - error={}]", e.getMessage());
         }
     }
 
@@ -86,7 +86,7 @@ public class InfrastructureAlertScheduler {
             try {
                 evaluateOne(rule);
             } catch (Throwable t) {
-                log.warn("[spring-watch: 基础设施告警评估异常 - rule={}, error={}]",
+                log.warn("[kxj: 基础设施告警评估异常 - rule={}, error={}]",
                         rule.getName(), t.getMessage());
             }
         }
@@ -116,7 +116,7 @@ public class InfrastructureAlertScheduler {
             return;
         }
         lastFiredAt.put(rule.getName(), now);
-        log.warn("[spring-watch: 基础设施告警触发 - rule={}, value={}, threshold={}, op={}",
+        log.warn("[kxj: 基础设施告警触发 - rule={}, value={}, threshold={}, op={}",
                 rule.getName(), value, rule.getThreshold(), op);
 
         long appid = properties.getAppid();
@@ -143,7 +143,7 @@ public class InfrastructureAlertScheduler {
         try {
             alertNotifier.notify(alertRule, synthetic, "infra_alert");
         } catch (Exception e) {
-            log.warn("[spring-watch: 基础设施告警 邮件发送失败 - rule={}, error={}]",
+            log.warn("[kxj: 基础设施告警 邮件发送失败 - rule={}, error={}]",
                     rule.getName(), e.getMessage());
         }
     }
@@ -178,7 +178,7 @@ public class InfrastructureAlertScheduler {
                 }
             }
         } catch (Exception e) {
-            log.debug("[spring-watch: infra 查询最新值失败 - component={}, metric={}, error={}]",
+            log.debug("[kxj: infra 查询最新值失败 - component={}, metric={}, error={}]",
                     component, metric, e.getMessage());
         }
         return null;

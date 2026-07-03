@@ -93,7 +93,7 @@ public class SelfMetricQueryService {
             return out;
         } catch (Exception e) {
             listFailCounter.increment();
-            log.warn("[spring-watch: 自监控 category 查询失败 - error={}]", e.getMessage());
+            log.warn("[kxj: 自监控 category 查询失败 - error={}]", e.getMessage());
             return List.of();
         } finally {
             listTimer.record(System.nanoTime() - startNs, TimeUnit.NANOSECONDS);
@@ -152,7 +152,7 @@ public class SelfMetricQueryService {
             return out;
         } catch (Exception e) {
             listFailCounter.increment();
-            log.warn("[spring-watch: 自监控 metric 列表查询失败 - category={}, tags={}, error={}]",
+            log.warn("[kxj: 自监控 metric 列表查询失败 - category={}, tags={}, error={}]",
                     category, extraTags, e.getMessage());
             return List.of();
         } finally {
@@ -203,7 +203,7 @@ public class SelfMetricQueryService {
             return parseSeries(tables, metric);
         } catch (Exception e) {
             seriesFailCounter.increment();
-            log.warn("[spring-watch: 自监控 series 查询失败 - metric={}, error={}]", metric, e.getMessage());
+            log.warn("[kxj: 自监控 series 查询失败 - metric={}, error={}]", metric, e.getMessage());
             return Map.of("series", List.of(), "count", 0, "error", e.getMessage());
         } finally {
             seriesTimer.record(System.nanoTime() - startNs, TimeUnit.NANOSECONDS);
@@ -248,7 +248,7 @@ public class SelfMetricQueryService {
             return Map.of("rows", rows, "count", rows.size());
         } catch (Exception e) {
             latestFailCounter.increment();
-            log.warn("[spring-watch: 自监控 latest 查询失败 - metric={}, error={}]", metric, e.getMessage());
+            log.warn("[kxj: 自监控 latest 查询失败 - metric={}, error={}]", metric, e.getMessage());
             return Map.of("rows", List.of(), "count", 0, "error", e.getMessage());
         } finally {
             latestTimer.record(System.nanoTime() - startNs, TimeUnit.NANOSECONDS);
@@ -488,7 +488,7 @@ public class SelfMetricQueryService {
                             try {
                                 return querySeries(spec.category(), spec.metric(), from, to, spec.agg(), window, tagFilters, spec.field());
                             } catch (Exception e) {
-                                log.warn("[spring-watch: view={} spec={} 失败 - {}]", view, spec.key(), e.getMessage());
+                                log.warn("[kxj: view={} spec={} 失败 - {}]", view, spec.key(), e.getMessage());
                                 return new LinkedHashMap<>(Map.of("series", List.of(), "count", 0, "error", e.getMessage()));
                             }
                         },

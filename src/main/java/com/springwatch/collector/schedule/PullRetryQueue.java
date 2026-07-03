@@ -15,6 +15,8 @@ import org.springframework.stereotype.Component;
 import java.net.URI;
 import java.time.Instant;
 import java.util.Comparator;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.PriorityBlockingQueue;
@@ -41,9 +43,12 @@ public class PullRetryQueue {
     private ScheduledExecutorService scheduler;
     private ExecutorService drainerPool;
 
+    private final Set<Long> inFlight = ConcurrentHashMap.newKeySet();
+
     private final Counter enqueuedCounter;
     private final Counter rejectedCounter;
     private final Counter droppedCounter;
+    private final Counter dedupedCounter;
 
     public PullRetryQueue(CollectorThrottler throttler,
                           @Lazy AppPullTask appPullTask,
@@ -64,6 +69,9 @@ public class PullRetryQueue {
         this.droppedCounter = Counter.builder("spring.watch.collector.retry.dropped")
                 .description("拉取重投丢弃次数")
                 .register(meterRegistry);
+        this.dedupedCounter = Counter.builder("spring.watch.collector.retry.deduped")
+                .description("拉取重投去重丢弃次数(appid已在重投中)")
+                .register(meterRegistry);
         meterRegistry.gauge("spring.watch.collector.retry.queue.size", queueSize);
     }
 
@@ -74,7 +82,7 @@ public class PullRetryQueue {
         this.scheduler = Executors.newScheduledThreadPool(1, schedTf);
         this.drainerPool = Executors.newFixedThreadPool(properties.getRetry().getDrainerCount(), drainTf);
         running.set(true);
-        log.info("[spring-watch: 重投队列启动 - drainerCount={}, maxAttempts={}, maxQueueSize={}, baseBackoffMs=500, maxBackoffShift=6]",
+        log.info("[kxj: 重投队列启动 - drainerCount={}, maxAttempts={}, maxQueueSize={}, baseBackoffMs=500, maxBackoffShift=6]",
                 properties.getRetry().getDrainerCount(), properties.getRetry().getMaxAttempts(), maxQueueSize);
         for (int i = 0; i < properties.getRetry().getDrainerCount(); i++) {
             final int drainerId = i;
@@ -84,7 +92,7 @@ public class PullRetryQueue {
 
     @PreDestroy
     void stop() {
-        log.info("[spring-watch: 重投队列关闭 - pending={}]", queueSize.get());
+        log.info("[kxj: 重投队列关闭 - pending={}]", queueSize.get());
         running.set(false);
         if (drainerPool != null) {
             drainerPool.shutdownNow();
@@ -95,20 +103,28 @@ public class PullRetryQueue {
     }
 
     public boolean enqueue(RetryPull pull) {
+        if (!inFlight.add(pull.appid())) {
+            dedupedCounter.increment();
+            log.debug("[kxj: 重投去重 - appid={} 已在重投中, 丢弃新重投, host={}, attempt={}]",
+                    pull.appid(), pull.host(), pull.attempt());
+            return false;
+        }
         if (queueSize.get() >= maxQueueSize) {
+            inFlight.remove(pull.appid());
             rejectedCounter.increment();
             droppedCounter.increment();
-            log.warn("[spring-watch: 重投队列已满, 丢弃 - appid={}, host={}, attempt={}, pending={}/{}]",
+            log.warn("[kxj: 重投队列已满, 丢弃 - appid={}, host={}, attempt={}, pending={}/{}]",
                     pull.appid(), pull.host(), pull.attempt(), queueSize.get(), maxQueueSize);
             return false;
         }
         if (queue.offer(pull)) {
             queueSize.incrementAndGet();
             enqueuedCounter.increment();
-            log.debug("[spring-watch: 入重投队列 - appid={}, host={}, attempt={}, pending={}/{}]",
+            log.debug("[kxj: 入重投队列 - appid={}, host={}, attempt={}, pending={}/{}]",
                     pull.appid(), pull.host(), pull.attempt(), queueSize.get(), maxQueueSize);
             return true;
         }
+        inFlight.remove(pull.appid());
         return false;
     }
 
@@ -120,12 +136,13 @@ public class PullRetryQueue {
         RetryPull p = queue.poll();
         if (p != null) {
             queueSize.decrementAndGet();
+            inFlight.remove(p.appid());
         }
         return p;
     }
 
     private void drainLoop(String drainerName) {
-        log.info("[spring-watch: 重投drainer启动完成 - drainer={}]", drainerName);
+        log.info("[kxj: 重投drainer启动完成 - drainer={}]", drainerName);
         while (running.get() && !Thread.currentThread().isInterrupted()) {
             try {
                 RetryPull pull = pollHead();
@@ -138,24 +155,24 @@ public class PullRetryQueue {
                     }
                     continue;
                 }
-                log.info("[spring-watch: drainer出队 - drainer={}, appid={}, attempt={}, pending={}]",
+                log.info("[kxj: drainer出队 - drainer={}, appid={}, attempt={}, pending={}]",
                         drainerName, pull.appid(), pull.attempt(), queueSize.get());
                 processPull(pull, drainerName);
             } catch (Throwable t) {
-                log.warn("[spring-watch: 重投drainer异常 - drainer={}, error={}]", drainerName, t.getMessage(), t);
+                log.warn("[kxj: 重投drainer异常 - drainer={}, error={}]", drainerName, t.getMessage(), t);
             }
         }
-        log.info("[spring-watch: 重投drainer退出 - drainer={}]", drainerName);
+        log.info("[kxj: 重投drainer退出 - drainer={}]", drainerName);
     }
 
     private void processPull(RetryPull pull, String drainerName) {
         MonitorApp app = repository.findByAppid(pull.appid()).orElse(null);
         if (app == null) {
-            log.info("[spring-watch: 重投跳过 - drainer={}, appid={} 已删除]", drainerName, pull.appid());
+            log.info("[kxj: 重投跳过 - drainer={}, appid={} 已删除]", drainerName, pull.appid());
             return;
         }
         if (MonitorStatus.isPaused(app.getStatus())) {
-            log.debug("[spring-watch: 重投跳过 - drainer={}, appid={} 已暂停]", drainerName, pull.appid());
+            log.debug("[kxj: 重投跳过 - drainer={}, appid={} 已暂停]", drainerName, pull.appid());
             return;
         }
         String host = extractHost(app);
@@ -163,13 +180,13 @@ public class PullRetryQueue {
         if (!throttler.tryAcquire(host, 0)) {
             int max = properties.getRetry().getMaxAttempts();
             if (pull.attempt() >= max) {
-                log.warn("[spring-watch: 重投耗尽 - drainer={}, appid={}, host={}, attempts={}, 放弃, 等下个周期]",
+                log.warn("[kxj: 重投耗尽 - drainer={}, appid={}, host={}, attempts={}, 放弃, 等下个周期]",
                         drainerName, pull.appid(), host, pull.attempt() + 1);
                 return;
             }
             RetryPull next = pull.withIncrementedAttempt();
             long backoff = next.backoffMs();
-            log.info("[spring-watch: 重投仍被限流 - drainer={}, appid={}, host={}, attempt={}->{}, backoffMs={}, enqueueAt~={}]",
+            log.info("[kxj: 重投仍被限流 - drainer={}, appid={}, host={}, attempt={}->{}, backoffMs={}, enqueueAt~={}]",
                     drainerName, pull.appid(), host, pull.attempt(), next.attempt(), backoff, Instant.now().plusMillis(backoff));
             scheduler.schedule(() -> enqueue(next), backoff, TimeUnit.MILLISECONDS);
             return;
@@ -177,7 +194,7 @@ public class PullRetryQueue {
 
         try {
             long retryStart = System.nanoTime();
-            log.info("[spring-watch: 重投执行 - drainer={}, appid={}, host={}, attempt={}, path=retry]",
+            log.info("[kxj: 重投执行 - drainer={}, appid={}, host={}, attempt={}, path=retry]",
                     drainerName, pull.appid(), host, pull.attempt());
             boolean reachable = appPullTask.doHeavyWork(pull.appid());
             if (!reachable) {
@@ -187,7 +204,7 @@ public class PullRetryQueue {
             }
 
         } catch (Throwable t) {
-            log.warn("[spring-watch: 重投执行异常 - drainer={}, appid={}, error={}]", drainerName, pull.appid(), t.getMessage(), t);
+            log.warn("[kxj: 重投执行异常 - drainer={}, appid={}, error={}]", drainerName, pull.appid(), t.getMessage(), t);
         } finally {
             throttler.release(host);
         }

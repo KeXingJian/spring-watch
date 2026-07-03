@@ -38,7 +38,7 @@ public class MetricController {
      */
     @GetMapping("/available")
     public ApiResponse<List<MetricQueryService.MetricDescriptor>> available(@RequestParam("appid") Long appid) {
-        log.info("[spring-watch: 指标available - appid={}]", appid);
+        log.info("[kxj: 指标available - appid={}]", appid);
         return ApiResponse.ok(metricQueryService.listAvailable(appid));
     }
 
@@ -57,7 +57,7 @@ public class MetricController {
                                                    @RequestParam("metric") String metric,
                                                    @RequestParam(required = false) Map<String, String> allParams) {
         Map<String, String> tagFilters = extractTagFilters(allParams, "appid", "metric");
-        log.trace("[spring-watch: 指标latest - appid={}, metric={}, allParams={}, extractedTags={}]",
+        log.trace("[kxj: 指标latest - appid={}, metric={}, allParams={}, extractedTags={}]",
                 appid, metric, allParams, tagFilters);
         return ApiResponse.ok(metricQueryService.queryLatest(appid, metric, tagFilters));
     }
@@ -87,7 +87,7 @@ public class MetricController {
         Map<String, String> tagFilters = extractTagFilters(allParams, "appid", "metric", "from", "to", "agg", "every");
         Instant fromInstant = (from == null) ? Instant.now().minusSeconds(900) : from;
         Instant toInstant = (to == null) ? Instant.now() : to;
-        log.info("[spring-watch: 指标series - appid={}, metric={}, from={}, to={}, agg={}, every={}]",
+        log.info("[kxj: 指标series - appid={}, metric={}, from={}, to={}, agg={}, every={}]",
                 appid, metric, fromInstant, toInstant, agg, every);
         return ApiResponse.ok(metricQueryService.querySeries(appid, metric, fromInstant, toInstant, agg, every, tagFilters));
     }
@@ -109,7 +109,7 @@ public class MetricController {
                                                     @RequestParam("metric") String metric,
                                                     @RequestParam("groupBy") String groupBy,
                                                     @RequestParam(required = false, defaultValue = "last") String agg) {
-        log.info("[spring-watch: 指标grouped - appid={}, metric={}, groupBy={}, agg={}]", appid, metric, groupBy, agg);
+        log.info("[kxj: 指标grouped - appid={}, metric={}, groupBy={}, agg={}]", appid, metric, groupBy, agg);
         return ApiResponse.ok(metricQueryService.queryGrouped(appid, metric, groupBy, agg));
     }
 
@@ -145,7 +145,7 @@ public class MetricController {
         Map<String, String> tagFilters = extractTagFilters(allParams, "appid", "metric", "quantiles", "from", "to", "every");
         Instant fromInstant = (from == null) ? Instant.now().minusSeconds(900) : from;
         Instant toInstant = (to == null) ? Instant.now() : to;
-        log.info("[spring-watch: 指标histogram-quantile - appid={}, metric={}, quantiles={}, from={}, to={}, tags={}]",
+        log.info("[kxj: 指标histogram-quantile - appid={}, metric={}, quantiles={}, from={}, to={}, tags={}]",
                 appid, metric, qs, fromInstant, toInstant, tagFilters);
         return ApiResponse.ok(metricQueryService.queryHistogramQuantile(appid, metric, qs, fromInstant, toInstant, every, tagFilters));
     }
@@ -162,7 +162,7 @@ public class MetricController {
     @GetMapping("/by-prefix")
     public ApiResponse<Map<String, Object>> byPrefix(@RequestParam("appid") Long appid,
                                                      @RequestParam("prefix") String prefix) {
-        log.info("[spring-watch: 指标by-prefix - appid={}, prefix={}]", appid, prefix);
+        log.info("[kxj: 指标by-prefix - appid={}, prefix={}]", appid, prefix);
         List<MetricQueryService.MetricDescriptor> all = metricQueryService.listAvailable(appid);
         List<MetricQueryService.MetricDescriptor> matched = new ArrayList<>();
         for (MetricQueryService.MetricDescriptor d : all) {
@@ -189,7 +189,7 @@ public class MetricController {
                                                   @RequestBody BatchRequest body) {
         Instant from = body.from() != null ? body.from() : Instant.now().minusSeconds(900);
         Instant to = body.to() != null ? body.to() : Instant.now();
-        log.info("[spring-watch: 应用指标 batch - appid={}, specs={}]", appid, body.specs() == null ? 0 : body.specs().size());
+        log.info("[kxj: 应用指标 batch - appid={}, specs={}]", appid, body.specs() == null ? 0 : body.specs().size());
         return ApiResponse.ok(metricQueryService.queryBatch(appid, from, to, body.every(), body.specs()));
     }
 

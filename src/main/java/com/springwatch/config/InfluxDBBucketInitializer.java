@@ -78,7 +78,7 @@ public class InfluxDBBucketInitializer {
                     .findFirst()
                     .orElse(null);
             if (org == null) {
-                log.error("[spring-watch: InfluxDB organization 不存在 - org={}]", influxOrg);
+                log.error("[kxj: InfluxDB organization 不存在 - org={}]", influxOrg);
                 return;
             }
             ensureBucket(metricsBucket, org, metricsRetentionSeconds);
@@ -91,7 +91,7 @@ public class InfluxDBBucketInitializer {
                         downsampleWindow, downsampleTaskEvery, org);
             }
         } catch (Exception e) {
-            log.error("[spring-watch: InfluxDB bucket 初始化失败 - error={}]", e.getMessage(), e);
+            log.error("[kxj: InfluxDB bucket 初始化失败 - error={}]", e.getMessage(), e);
         }
     }
 
@@ -102,7 +102,7 @@ public class InfluxDBBucketInitializer {
                     .everySeconds(retentionSeconds);
             Bucket created = influxDBClient.getBucketsApi()
                     .createBucket(bucketName, rules, org);
-            log.info("[spring-watch: InfluxDB bucket 创建成功 - name={}, id={}, retentionSeconds={}]",
+            log.info("[kxj: InfluxDB bucket 创建成功 - name={}, id={}, retentionSeconds={}]",
                     bucketName, created.getId(), retentionSeconds);
         } else {
             Integer existEvery = null;
@@ -113,10 +113,10 @@ public class InfluxDBBucketInitializer {
                 existing.getRetentionRules().clear();
                 existing.getRetentionRules().add(new BucketRetentionRules().everySeconds(retentionSeconds));
                 influxDBClient.getBucketsApi().updateBucket(existing);
-                log.info("[spring-watch: InfluxDB bucket retention 更新 - name={}, retentionSeconds={}->{}]",
+                log.info("[kxj: InfluxDB bucket retention 更新 - name={}, retentionSeconds={}->{}]",
                         bucketName, existEvery, retentionSeconds);
             } else {
-                log.info("[spring-watch: InfluxDB bucket 已存在 - name={}, retentionSeconds={}]",
+                log.info("[kxj: InfluxDB bucket 已存在 - name={}, retentionSeconds={}]",
                         bucketName, existEvery);
             }
         }
@@ -131,7 +131,7 @@ public class InfluxDBBucketInitializer {
         boolean alreadyExists = existing.stream()
                 .anyMatch(t -> "spring-watch-downsample-metrics".equals(t.getName()));
         if (alreadyExists) {
-            log.info("[spring-watch: InfluxDB downsample task 已存在 - name={}]", "spring-watch-downsample-metrics");
+            log.info("[kxj: InfluxDB downsample task 已存在 - name={}]", "spring-watch-downsample-metrics");
             return;
         }
         String flux = String.format("""
@@ -156,7 +156,7 @@ public class InfluxDBBucketInitializer {
                 .flux(flux)
                 .description("spring-watch auto-managed downsample for " + "springboot_metrics");
         Task created = influxDBClient.getTasksApi().createTask(req);
-        log.info("[spring-watch: InfluxDB downsample task 创建成功 - name={}, id={}, src={}, dest={}, every={}, agg={}]",
+        log.info("[kxj: InfluxDB downsample task 创建成功 - name={}, id={}, src={}, dest={}, every={}, agg={}]",
                 "spring-watch-downsample-metrics", created.getId(), sourceBucket, destBucket, taskEvery, aggWindow);
     }
 }

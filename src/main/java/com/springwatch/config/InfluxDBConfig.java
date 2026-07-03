@@ -52,7 +52,7 @@ public class InfluxDBConfig {
 
     @Bean(destroyMethod = "close")
     public InfluxDBClient influxDBClient() {
-        log.info("[spring-watch: InfluxDBClient 初始化 - url={}, org={}]",
+        log.info("[kxj: InfluxDBClient 初始化 - url={}, org={}]",
                 url, influxOrg);
         return InfluxDBClientFactory.create(url, token.toCharArray(), influxOrg);
     }
@@ -98,7 +98,7 @@ public class InfluxDBConfig {
                 .maxRetryTime(writeMaxRetryTimeMs)
                 .jitterInterval(writeJitterIntervalMs)
                 .build();
-        log.info("[spring-watch: WriteApi(metrics) 初始化 - batch=5000, flush=1000ms, buffer=100000]");
+        log.info("[kxj: WriteApi(metrics) 初始化 - batch=5000, flush=1000ms, buffer=100000]");
         return client.makeWriteApi(options);
     }
 
@@ -114,7 +114,7 @@ public class InfluxDBConfig {
                 .maxRetryTime(writeMaxRetryTimeMs)
                 .jitterInterval(writeJitterIntervalMs)
                 .build();
-        log.info("[spring-watch: WriteApi(logs) 初始化 - batch=3000, flush=1000ms, buffer=50000]");
+        log.info("[kxj: WriteApi(logs) 初始化 - batch=3000, flush=1000ms, buffer=50000]");
         return client.makeWriteApi(options);
     }
 
@@ -130,7 +130,7 @@ public class InfluxDBConfig {
                 .maxRetryTime(writeMaxRetryTimeMs)
                 .jitterInterval(writeJitterIntervalMs)
                 .build();
-        log.info("[spring-watch: WriteApi(selfMetrics) 初始化 - batch=1000, flush=2000ms, buffer=20000]");
+        log.info("[kxj: WriteApi(selfMetrics) 初始化 - batch=1000, flush=2000ms, buffer=20000]");
         return client.makeWriteApi(options);
     }
 
@@ -146,7 +146,7 @@ public class InfluxDBConfig {
                 .maxRetryTime(writeMaxRetryTimeMs)
                 .jitterInterval(writeJitterIntervalMs)
                 .build();
-        log.info("[spring-watch: WriteApi(infra) 初始化 - batch=1000, flush=2000ms, buffer=20000]");
+        log.info("[kxj: WriteApi(infra) 初始化 - batch=1000, flush=2000ms, buffer=20000]");
         return client.makeWriteApi(options);
     }
 
@@ -156,7 +156,7 @@ public class InfluxDBConfig {
      */
     @Bean
     public QueryApi queryApi(InfluxDBClient client) {
-        log.info("[spring-watch: QueryApi 初始化(单例共享) - org={}]", influxOrg);
+        log.info("[kxj: QueryApi 初始化(单例共享) - org={}]", influxOrg);
         return client.getQueryApi();
     }
 }

@@ -136,7 +136,7 @@ public class LogQueryService {
             return new SearchResult(rows, totalBase, safePage, safeSize, null);
         } catch (Exception e) {
             queryFailCounter.increment();
-            log.warn("[spring-watch: log search失败 - appid={}, keyword={}, error={}]", appid, keyword, e.getMessage());
+            log.warn("[kxj: log search失败 - appid={}, keyword={}, error={}]", appid, keyword, e.getMessage());
             return new SearchResult(List.of(), 0L, safePage, safeSize, e.getMessage());
         } finally {
             searchTimer.record(System.nanoTime() - start, java.util.concurrent.TimeUnit.NANOSECONDS);
@@ -173,7 +173,7 @@ public class LogQueryService {
             return out;
         } catch (Exception e) {
             queryFailCounter.increment();
-            log.warn("[spring-watch: log levelDistribution失败 - appid={}, error={}]", appid, e.getMessage(), e);
+            log.warn("[kxj: log levelDistribution失败 - appid={}, error={}]", appid, e.getMessage(), e);
             return List.of();
         } finally {
             levelsTimer.record(System.nanoTime() - start, java.util.concurrent.TimeUnit.NANOSECONDS);
@@ -211,7 +211,7 @@ public class LogQueryService {
                 }
             }
         } catch (Exception e) {
-            log.warn("[spring-watch: log errorRateSeries失败 - appid={}, error={}]", appid, e.getMessage(), e);
+            log.warn("[kxj: log errorRateSeries失败 - appid={}, error={}]", appid, e.getMessage(), e);
         }
         List<ErrorRateBucket> out = new ArrayList<>(buckets.values());
         for (ErrorRateBucket b : out) b.total = b.total + b.error + b.warn;
@@ -265,7 +265,7 @@ public class LogQueryService {
             return out;
         } catch (Exception e) {
             queryFailCounter.increment();
-            log.warn("[spring-watch: log topFingerprints失败 - appid={}, error={}]", appid, e.getMessage());
+            log.warn("[kxj: log topFingerprints失败 - appid={}, error={}]", appid, e.getMessage());
             return List.of();
         } finally {
             patternTimer.record(System.nanoTime() - start, java.util.concurrent.TimeUnit.NANOSECONDS);
@@ -300,7 +300,7 @@ public class LogQueryService {
             }
             return null;
         } catch (Exception e) {
-            log.warn("[spring-watch: log fingerprintDetail失败 - appid={}, fp={}, error={}]", appid, fingerprint, e.getMessage());
+            log.warn("[kxj: log fingerprintDetail失败 - appid={}, fp={}, error={}]", appid, fingerprint, e.getMessage());
             return null;
         }
     }
@@ -323,7 +323,7 @@ public class LogQueryService {
             return parsePivotedRows(tables);
         } catch (Exception e) {
             queryFailCounter.increment();
-            log.warn("[spring-watch: log byTraceId失败 - traceId={}, error={}]", traceId, e.getMessage());
+            log.warn("[kxj: log byTraceId失败 - traceId={}, error={}]", traceId, e.getMessage());
             return List.of();
         } finally {
             traceTimer.record(System.nanoTime() - start, java.util.concurrent.TimeUnit.NANOSECONDS);
@@ -351,7 +351,7 @@ public class LogQueryService {
             return parsePivotedRows(tables);
         } catch (Exception e) {
             queryFailCounter.increment();
-            log.warn("[spring-watch: log context失败 - appid={}, error={}]", appid, e.getMessage());
+            log.warn("[kxj: log context失败 - appid={}, error={}]", appid, e.getMessage());
             return List.of();
         } finally {
             contextTimer.record(System.nanoTime() - start, java.util.concurrent.TimeUnit.NANOSECONDS);
@@ -381,7 +381,7 @@ public class LogQueryService {
             return out;
         } catch (Exception e) {
             queryFailCounter.increment();
-            log.warn("[spring-watch: log topDedup失败 - appid={}, error={}]", appid, e.getMessage());
+            log.warn("[kxj: log topDedup失败 - appid={}, error={}]", appid, e.getMessage());
             return List.of();
         } finally {
             dedupTopTimer.record(System.nanoTime() - start, java.util.concurrent.TimeUnit.NANOSECONDS);
@@ -420,7 +420,7 @@ public class LogQueryService {
                 }
             }
         } catch (Exception e) {
-            log.warn("[spring-watch: log topDedup元数据补充失败 - appid={}, error={}]", appid, e.getMessage());
+            log.warn("[kxj: log topDedup元数据补充失败 - appid={}, error={}]", appid, e.getMessage());
         }
         return out;
     }

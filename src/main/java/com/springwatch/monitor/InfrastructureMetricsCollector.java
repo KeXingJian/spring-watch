@@ -94,14 +94,14 @@ public class InfrastructureMetricsCollector {
                 .register(meterRegistry);
 
         if (!enabled) {
-            log.info("[spring-watch: InfrastructureMetricsCollector 禁用]");
+            log.info("[kxj: InfrastructureMetricsCollector 禁用]");
             return;
         }
         initMappings();
         ThreadFactory tf = Thread.ofVirtual().name("infra-metrics-", 0).factory();
         this.scheduler = Executors.newSingleThreadScheduledExecutor(tf);
         scheduler.scheduleWithFixedDelay(this::poll, 10L, pollIntervalSec, TimeUnit.SECONDS);
-        log.info("[spring-watch: InfrastructureMetricsCollector 启动 - interval={}s, url={}, mappings={}",
+        log.info("[kxj: InfrastructureMetricsCollector 启动 - interval={}s, url={}, mappings={}",
                 pollIntervalSec, influxUrl, mappings.size());
     }
 
@@ -176,7 +176,7 @@ public class InfrastructureMetricsCollector {
         } catch (Throwable t) {
             pollFailCounter.increment();
             lastError = t.getClass().getSimpleName() + ":" + t.getMessage();
-            log.warn("[spring-watch: infra 指标采集失败 - error={}]", t.getMessage());
+            log.warn("[kxj: infra 指标采集失败 - error={}]", t.getMessage());
         }
     }
 

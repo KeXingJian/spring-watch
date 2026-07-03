@@ -42,7 +42,7 @@ public class KafkaProducerBridge {
         registerTopic(TOPIC_METRICS);
         registerTopic(TOPIC_LOGS);
         registerTopic(TOPIC_HEARTBEAT);
-        log.info("[spring-watch: KafkaProducerBridge 启动 - 指标粒度: sent/failed.latency per topic]");
+        log.info("[kxj: KafkaProducerBridge 启动 - 指标粒度: sent/failed.latency per topic]");
     }
 
     private void registerTopic(String topic) {
@@ -82,7 +82,7 @@ public class KafkaProducerBridge {
         try {
             json = objectMapper.writeValueAsString(event);
         } catch (Exception e) {
-            log.error("[spring-watch: JSON序列化失败 - topic={}, key={}]", topic, key, e);
+            log.error("[kxj: JSON序列化失败 - topic={}, key={}]", topic, key, e);
             return;
         }
         try {
@@ -93,13 +93,13 @@ public class KafkaProducerBridge {
                 if (ex != null) {
                     Counter fc = failedCounters.get(topic);
                     if (fc != null) fc.increment();
-                    log.warn("[spring-watch: Kafka发送失败, 转入降级队列 - topic={}, key={}, error={}]",
+                    log.warn("[kxj: Kafka发送失败, 转入降级队列 - topic={}, key={}, error={}]",
                             topic, key, ex.getMessage());
                     fallbackQueue.offer(topic, key, json);
                 } else {
                     Counter sc = sentCounters.get(topic);
                     if (sc != null) sc.increment();
-                    log.trace("[spring-watch: Kafka发送成功 - topic={}, key={}, partition={}, offset={}]",
+                    log.trace("[kxj: Kafka发送成功 - topic={}, key={}, partition={}, offset={}]",
                             topic, key,
                             result.getRecordMetadata().partition(),
                             result.getRecordMetadata().offset());
@@ -108,7 +108,7 @@ public class KafkaProducerBridge {
         } catch (Exception e) {
             Counter fc = failedCounters.get(topic);
             if (fc != null) fc.increment();
-            log.warn("[spring-watch: KafkaTemplate.send 抛异常, 直接入降级队列 - topic={}, key={}, error={}]",
+            log.warn("[kxj: KafkaTemplate.send 抛异常, 直接入降级队列 - topic={}, key={}, error={}]",
                     topic, key, e.getMessage());
             fallbackQueue.offer(topic, key, json);
         }

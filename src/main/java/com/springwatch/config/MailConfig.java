@@ -64,7 +64,7 @@ public class MailConfig {
         props.put("mail.smtp.timeout", String.valueOf(timeout));
         props.put("mail.smtp.writetimeout", String.valueOf(writeTimeout));
 
-        log.info("[spring-watch: JavaMailSender 显式初始化 - host={}, port={}, username={}, smtpAuth={}, startTls={}]",
+        log.info("[kxj: JavaMailSender 显式初始化 - host={}, port={}, username={}, smtpAuth={}, startTls={}]",
                 host, port, username.isBlank() ? "(empty)" : username, smtpAuth, startTlsEnable);
         return sender;
     }

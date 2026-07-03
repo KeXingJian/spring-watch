@@ -66,20 +66,20 @@ public class AppPullTask {
 
         MonitorApp app = monitorAppRepository.findByAppid(appid).orElse(null);
         if (app == null) {
-            log.warn("[spring-watch: AppPullTask.run跳过 - appid={} 在DB中不存在]", appid);
+            log.warn("[kxj: AppPullTask.run跳过 - appid={} 在DB中不存在]", appid);
             return;
         }
         if (MonitorStatus.isPaused(app.getStatus())) {
-            log.debug("[spring-watch: AppPullTask.run跳过 - appid={}, status=paused(用户暂停), 调度任务保持运行不取消]", appid);
+            log.debug("[kxj: AppPullTask.run跳过 - appid={}, status=paused(用户暂停), 调度任务保持运行不取消]", appid);
             return;
         }
 
         String host = extractHost(app);
-        log.info("[spring-watch: AppPullTask开始拉取 - appid={}, app={}, host={}, endpoint={}, metricsPort={}, currentStatus={}]",
+        log.info("[kxj: AppPullTask开始拉取 - appid={}, app={}, host={}, endpoint={}, metricsPort={}, currentStatus={}]",
                 appid, app.getAppName(), host, app.getEndpoint(), app.getMetricsPort(), app.getStatus());
 
         if (!hostThrottler.tryAcquire(host, 0L)) {
-            log.warn("[spring-watch: 拉取被限流 - appid={}, host={}, 心跳已发, 入重投队列]",
+            log.warn("[kxj: 拉取被限流 - appid={}, host={}, 心跳已发, 入重投队列]",
                     appid, host);
             pullRetryQueue.enqueue(new RetryPull(appid, host, 0, Instant.now()));
 //            recordCost(start, appid, app.getAppName());
@@ -90,14 +90,14 @@ public class AppPullTask {
             boolean reachable = doHeavyWork(appid);
             if (!reachable) {
                 markUnreachable(app);
-                log.debug("[spring-watch: AppPullTask.run结束 - appid={}, reason=unreachable, totalCostMs={}]",
+                log.debug("[kxj: AppPullTask.run结束 - appid={}, reason=unreachable, totalCostMs={}]",
                         appid, (System.nanoTime() - start) / 1_000_000L);
                 return;
             }
-            log.debug("[spring-watch: 可达性探测通过(合并到指标拉取) - appid={}, host={}]", appid, host);
+            log.debug("[kxj: 可达性探测通过(合并到指标拉取) - appid={}, host={}]", appid, host);
             sendHeartbeat(app);
         } catch (Exception e) {
-            log.warn("[spring-watch: 拉取异常 - appid={}, app={}, error={}]", appid, app.getAppName(), e.getMessage(), e);
+            log.warn("[kxj: 拉取异常 - appid={}, app={}, error={}]", appid, app.getAppName(), e.getMessage(), e);
         } finally {
             hostThrottler.release(host);
             recordCost(start, appid, app.getAppName());
@@ -109,9 +109,9 @@ public class AppPullTask {
         pullDurationTimer.record(Duration.ofMillis(costMs));
         bucketCounters[bucketIndex(costMs)].incrementAndGet();
         if (costMs > 5_000L) {
-            log.warn("[spring-watch: 拉取耗时过长 - appid={}, app={}, costMs={}]", appid, appName, costMs);
+            log.warn("[kxj: 拉取耗时过长 - appid={}, app={}, costMs={}]", appid, appName, costMs);
         } else {
-            log.debug("[spring-watch: 拉取完成耗时 - appid={}, costMs={}]", appid, costMs);
+            log.debug("[kxj: 拉取完成耗时 - appid={}, costMs={}]", appid, costMs);
         }
     }
 
@@ -140,11 +140,11 @@ public class AppPullTask {
     public boolean doHeavyWork(Long appid) {
         MonitorApp app = monitorAppRepository.findByAppid(appid).orElse(null);
         if (app == null) {
-            log.warn("[spring-watch: 重投执行跳过 - appid={} 已删除]", appid);
+            log.warn("[kxj: 重投执行跳过 - appid={} 已删除]", appid);
             return false;
         }
         if (MonitorStatus.isPaused(app.getStatus())) {
-            log.debug("[spring-watch: 重投执行跳过 - appid={} 已暂停]", appid);
+            log.debug("[kxj: 重投执行跳过 - appid={} 已暂停]", appid);
             return false;
         }
 
@@ -153,32 +153,32 @@ public class AppPullTask {
         AgentMetricsCollector.MonitorTarget target = new AgentMetricsCollector.MonitorTarget(
                 app.getAppid(), app.getAppName(), app.getEndpoint(), metricsPort);
 
-        log.debug("[spring-watch: 拉指标 - appid={}, url=http://{}:{}/metrics",
+        log.debug("[kxj: 拉指标 - appid={}, url=http://{}:{}/metrics",
                 appid, extractHost(app), metricsPort);
         boolean reachable = agentMetricsCollector.collect(target);
         if (!reachable) {
-            log.debug("[spring-watch: 指标拉取失败, 中止后续日志/状态更新 - appid={}]", appid);
+            log.debug("[kxj: 指标拉取失败, 中止后续日志/状态更新 - appid={}]", appid);
             return false;
         }
-        log.debug("[spring-watch: 指标拉取完成 - appid={}]", appid);
+        log.debug("[kxj: 指标拉取完成 - appid={}]", appid);
 
         Instant since = app.getLastLogPullTime() != null ? app.getLastLogPullTime() : now.minusSeconds(3600);
-        log.debug("[spring-watch: 拉日志 - appid={}, since={}]", appid, since);
+        log.debug("[kxj: 拉日志 - appid={}, since={}]", appid, since);
         Instant latest = agentLogCollector.collect(app.getAppid(), app.getAppName(), app.getEndpoint(), since);
         if (latest.isAfter(since)) {
-            log.info("[spring-watch: 日志有新进展 - appid={}, since={} -> latest={}]", appid, since, latest);
+            log.info("[kxj: 日志有新进展 - appid={}, since={} -> latest={}]", appid, since, latest);
             app.setLastLogPullTime(latest);
             app.setUpdatedAt(now);
             monitorAppRepository.save(app);
         } else {
-            log.trace("[spring-watch: 日志无新进展 - appid={}, since={}]", appid, since);
+            log.trace("[kxj: 日志无新进展 - appid={}, since={}]", appid, since);
         }
 
         if (!MonitorStatus.isActive(app.getStatus()) && !MonitorStatus.isPaused(app.getStatus())) {
             app.setStatus(MonitorStatus.ACTIVE);
             app.setUpdatedAt(now);
             monitorAppRepository.save(app);
-            log.info("[spring-watch: Agent复活(重投) - appid={}, app={}, {} -> active]", appid, app.getAppName(), app.getStatus());
+            log.info("[kxj: Agent复活(重投) - appid={}, app={}, {} -> active]", appid, app.getAppName(), app.getStatus());
         }
         return true;
     }
@@ -186,17 +186,17 @@ public class AppPullTask {
     private String extractHost(MonitorApp app) {
         String endpoint = app.getEndpoint();
         if (endpoint == null || endpoint.isBlank()) {
-            log.trace("[spring-watch: endpoint为空 - appid={}, fallback=localhost]", app.getAppid());
+            log.trace("[kxj: endpoint为空 - appid={}, fallback=localhost]", app.getAppid());
             return "localhost";
         }
         try {
             URI uri = URI.create(endpoint);
             String host = uri.getHost() != null ? uri.getHost() : "localhost";
-            log.trace("[spring-watch: 解析endpoint - appid={}, endpoint={} -> host={}",
+            log.trace("[kxj: 解析endpoint - appid={}, endpoint={} -> host={}",
                     app.getAppid(), endpoint, host);
             return host;
         } catch (Exception e) {
-            log.warn("[spring-watch: 解析endpoint异常 - appid={}, endpoint={}, error={}, fallback=localhost]",
+            log.warn("[kxj: 解析endpoint异常 - appid={}, endpoint={}, error={}, fallback=localhost]",
                     app.getAppid(), endpoint, e.getMessage());
             return "localhost";
         }
@@ -213,7 +213,7 @@ public class AppPullTask {
     }
 
     private void markInactive(MonitorApp app) {
-        log.warn("[spring-watch: Agent失活 - appid={}, app={}, reason={}]",
+        log.warn("[kxj: Agent失活 - appid={}, app={}, reason={}]",
                 app.getAppid(), app.getAppName(), "agent端口不可达");
         app.setStatus(MonitorStatus.INACTIVE);
         app.setUpdatedAt(Instant.now());

@@ -87,19 +87,19 @@ public class LogAnomalyDetector {
     }
 
     public SpikingResult isErrorRateSpiking(long appid, double currentRate, double multiplier) {
-        log.debug("[spring-watch: LogAnomalyDetector isErrorRateSpiking - appid={}, current={}, multiplier={}]", appid, currentRate, multiplier);
+        log.debug("[kxj: LogAnomalyDetector isErrorRateSpiking - appid={}, current={}, multiplier={}]", appid, currentRate, multiplier);
         Double lastRate = errorRateCache.get(appid, _ -> null);
         errorRateCache.put(appid, currentRate);
         if (lastRate == null || lastRate < minBaseRate) {
-            log.debug("[spring-watch: LogAnomalyDetector 跳过突增判断 - appid={}, lastRate={}, minBaseRate={}", appid, lastRate, minBaseRate);
+            log.debug("[kxj: LogAnomalyDetector 跳过突增判断 - appid={}, lastRate={}, minBaseRate={}", appid, lastRate, minBaseRate);
             return new SpikingResult(false, lastRate);
         }
         boolean spiking = currentRate / lastRate >= multiplier;
         if (spiking) {
-            log.info("[spring-watch: LogAnomalyDetector 错误率突增 - appid={}, current={}, last={}, multiplier={}]",
+            log.info("[kxj: LogAnomalyDetector 错误率突增 - appid={}, current={}, last={}, multiplier={}]",
                     appid, currentRate, lastRate, multiplier);
         } else {
-            log.debug("[spring-watch: LogAnomalyDetector 错误率未突增 - appid={}, current={}, last={}, ratio={}",
+            log.debug("[kxj: LogAnomalyDetector 错误率未突增 - appid={}, current={}, last={}, ratio={}",
                     appid, currentRate, lastRate, currentRate / lastRate);
         }
         return new SpikingResult(spiking, lastRate);
@@ -110,16 +110,16 @@ public class LogAnomalyDetector {
 
     public boolean isNewPattern(long appid, String fingerprint) {
         if (fingerprint == null || fingerprint.isEmpty()) {
-            log.debug("[spring-watch: LogAnomalyDetector isNewPattern fingerprint为空, 跳过 - appid={}", appid);
+            log.debug("[kxj: LogAnomalyDetector isNewPattern fingerprint为空, 跳过 - appid={}", appid);
             return false;
         }
         PatternSet set = knownPatternsCache.get(appid, _ -> new PatternSet(maxPatternsPerAppid));
         boolean isNew = set.add(fingerprint);
         if (isNew) {
             newPatternCounter.increment();
-            log.info("[spring-watch: LogAnomalyDetector 新模式 - appid={}, fingerprint={}]", appid, fingerprint);
+            log.info("[kxj: LogAnomalyDetector 新模式 - appid={}, fingerprint={}]", appid, fingerprint);
         } else {
-            log.debug("[spring-watch: LogAnomalyDetector 模式已存在 - appid={}, fingerprint={}", appid, fingerprint);
+            log.debug("[kxj: LogAnomalyDetector 模式已存在 - appid={}, fingerprint={}", appid, fingerprint);
         }
         return isNew;
     }

@@ -111,11 +111,11 @@ public class KafkaBrokerJmxMonitor {
                 .register(meterRegistry);
 
         if (!enabled) {
-            log.info("[spring-watch: KafkaBrokerJmxMonitor 禁用]");
+            log.info("[kxj: KafkaBrokerJmxMonitor 禁用]");
             return;
         }
         if (jmxUrl == null || jmxUrl.isBlank()) {
-            log.info("[spring-watch: KafkaBrokerJmxMonitor 未配置 jmx.url,跳过(设置 spring-watch.kafka.broker-jmx.url 启用)]");
+            log.info("[kxj: KafkaBrokerJmxMonitor 未配置 jmx.url,跳过(设置 spring-watch.kafka.broker-jmx.url 启用)]");
             return;
         }
 
@@ -123,7 +123,7 @@ public class KafkaBrokerJmxMonitor {
         this.scheduler = Executors.newSingleThreadScheduledExecutor(tf);
         // 第一次连接失败也别 panic,让 scheduler 周期重试
         scheduler.scheduleWithFixedDelay(this::pollOnce, 5L, pollIntervalSec, TimeUnit.SECONDS);
-        log.info("[spring-watch: KafkaBrokerJmxMonitor 启动 - url={}, interval={}s", jmxUrl, pollIntervalSec);
+        log.info("[kxj: KafkaBrokerJmxMonitor 启动 - url={}, interval={}s", jmxUrl, pollIntervalSec);
     }
 
     @PreDestroy
@@ -200,7 +200,7 @@ public class KafkaBrokerJmxMonitor {
             if (t instanceof IOException || t.getCause() instanceof IOException) {
                 closeQuietly();
             } else {
-                log.warn("[spring-watch: Kafka broker JMX 采集失败 - error={}]", t.getMessage());
+                log.warn("[kxj: Kafka broker JMX 采集失败 - error={}]", t.getMessage());
             }
         }
     }
@@ -298,12 +298,12 @@ public class KafkaBrokerJmxMonitor {
             this.connRef.set(conn);
             this.lastConnectEpochMs.set(System.currentTimeMillis());
             connectOkCounter.increment();
-            log.info("[spring-watch: Kafka broker JMX 已连接 - url={}", jmxUrl);
+            log.info("[kxj: Kafka broker JMX 已连接 - url={}", jmxUrl);
         } catch (Throwable t) {
             connectFailCounter.increment();
             lastError = "connect:" + t.getClass().getSimpleName() + ":" + t.getMessage();
             // 不刷 warn,启动期 broker 还没起来会很吵
-            log.debug("[spring-watch: Kafka broker JMX 连接失败 - url={}, error={}]", jmxUrl, t.getMessage());
+            log.debug("[kxj: Kafka broker JMX 连接失败 - url={}, error={}]", jmxUrl, t.getMessage());
         }
     }
 

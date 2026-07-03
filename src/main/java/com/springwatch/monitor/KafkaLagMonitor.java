@@ -87,7 +87,7 @@ public class KafkaLagMonitor {
         // 配置体检:每个 topic 必须显式指定 group(否则 lag 会显示"累计消息数"而不是真实堆积)
         for (String topic : TOPICS) {
             if (!TOPIC_GROUPS.containsKey(topic)) {
-                log.warn("[spring-watch: KafkaLagMonitor] topic '{}' 没在 TOPIC_GROUPS 里指定 consumer group,"
+                log.warn("[kxj: KafkaLagMonitor] topic '{}' 没在 TOPIC_GROUPS 里指定 consumer group,"
                                 + " 默认会用 '{}' 查 committed offset。"
                                 + " 如果该 topic 的实际消费者不在这个 group,lag 数字会等于 log end offset(累计消息数),不是真实堆积",
                         topic, DEFAULT_GROUP_ID);
@@ -95,7 +95,7 @@ public class KafkaLagMonitor {
         }
 
         if (!props.isEnabled()) {
-            log.info("[spring-watch: KafkaLagMonitor 禁用]");
+            log.info("[kxj: KafkaLagMonitor 禁用]");
             return;
         }
         Properties adminProps = new Properties();
@@ -108,7 +108,7 @@ public class KafkaLagMonitor {
         ThreadFactory tf = Thread.ofVirtual().name("kafka-lag-monitor-", 0).factory();
         this.scheduler = Executors.newSingleThreadScheduledExecutor(tf);
         scheduler.scheduleWithFixedDelay(this::poll, 10L, props.getPollIntervalSec(), TimeUnit.SECONDS);
-        log.info("[spring-watch: KafkaLagMonitor 启动 - interval={}s, topics={}, groupId={}, topicGroups={}",
+        log.info("[kxj: KafkaLagMonitor 启动 - interval={}s, topics={}, groupId={}, topicGroups={}",
                 props.getPollIntervalSec(), String.join(",", TOPICS),
                 DEFAULT_GROUP_ID, TOPIC_GROUPS);
     }
@@ -221,7 +221,7 @@ public class KafkaLagMonitor {
         } catch (Throwable t) {
             pollFailCounter.increment();
             lastError = t.getClass().getSimpleName() + ":" + t.getMessage();
-            log.warn("[spring-watch: Kafka lag 采集失败 - error={}]", t.getMessage());
+            log.warn("[kxj: Kafka lag 采集失败 - error={}]", t.getMessage());
         }
     }
 

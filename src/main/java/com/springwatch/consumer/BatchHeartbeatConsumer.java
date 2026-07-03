@@ -49,19 +49,19 @@ public class BatchHeartbeatConsumer {
                         (old, neu) -> event.getTimestamp().isAfter(old.timestamp) ? neu : old);
             } catch (Exception e) {
                 failed++;
-                log.warn("[spring-watch: BatchHeartbeatConsumer 反序列化失败 - error={}, payload={}",
+                log.warn("[kxj: BatchHeartbeatConsumer 反序列化失败 - error={}, payload={}",
                         e.getMessage(), message);
             }
         }
         if (latestPerAppid.isEmpty()) {
-            log.info("[spring-watch: BatchHeartbeatConsumer 批次无可用心跳 - total={}, failed={}",
+            log.info("[kxj: BatchHeartbeatConsumer 批次无可用心跳 - total={}, failed={}",
                     messages.size(), failed);
             return;
         }
         Set<Long> appids = latestPerAppid.keySet();
         List<MonitorApp> apps = monitorAppRepository.findAllByAppidIn(appids);
         if (apps.isEmpty()) {
-            log.warn("[spring-watch: BatchHeartbeatConsumer 全部appid在DB中不存在 - appids={}", appids);
+            log.warn("[kxj: BatchHeartbeatConsumer 全部appid在DB中不存在 - appids={}", appids);
             return;
         }
         Instant now = Instant.now();
@@ -74,7 +74,7 @@ public class BatchHeartbeatConsumer {
             app.setStatus("active");
         }
         monitorAppRepository.saveAll(apps);
-        log.info("[spring-watch: BatchHeartbeatConsumer 更新心跳 - total={}, matched={}, failed={}, notInDb={}",
+        log.info("[kxj: BatchHeartbeatConsumer 更新心跳 - total={}, matched={}, failed={}, notInDb={}",
                 messages.size(), matched.size(), failed, appids.size() - matched.size());
     }
 
