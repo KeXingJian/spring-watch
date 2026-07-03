@@ -1,7 +1,4 @@
 package com.springwatch.collector.schedule;
-
-import io.micrometer.core.instrument.MeterRegistry;
-import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -16,77 +13,59 @@ import java.util.concurrent.TimeUnit;
 public class CollectorThrottler {
 
     private final AppScheduleProperties properties;
-    private final MeterRegistry meterRegistry;
-
-    private final Semaphore globalSemaphore = new Semaphore(0, true);
     private final ConcurrentHashMap<String, Semaphore> hostSemaphores = new ConcurrentHashMap<>();
-    private volatile int globalPermits;
-    private volatile int perHostPermits;
-
-    @PostConstruct
-    void init() {
-        this.globalPermits = properties.getGlobalConcurrent();
-        this.perHostPermits = properties.getPerHostConcurrent();
-        globalSemaphore.release(globalPermits);
-        log.info("[kxj: CollectorThrottler 初始化 - globalPermits={}, perHostPermits={}, fair=true, 两级限流]",
-                globalPermits, perHostPermits);
-        meterRegistry.gauge("spring.watch.collector.throttler.global.available",
-                this, c -> c.globalSemaphore.availablePermits());
-        meterRegistry.gauge("spring.watch.collector.throttler.host.active",
-                this, c -> c.hostSemaphores.size());
-    }
 
     public boolean tryAcquire(String host, long timeoutMs) {
-        boolean globalOk;
-        try {
-            globalOk = globalSemaphore.tryAcquire(timeoutMs, TimeUnit.MILLISECONDS);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return false;
-        }
-        if (!globalOk) {
-            log.debug("[kxj: 全局限流拒绝 - host={}, globalAvailable={}/{}]",
-                    host, globalSemaphore.availablePermits(), globalPermits);
-            return false;
-        }
-
-        Semaphore hostSem = hostSemaphores.computeIfAbsent(host, _ -> {
-            Semaphore created = new Semaphore(perHostPermits, true);
-            log.info("[kxj: 主机限流器创建 - host={}, permits={}]", host, perHostPermits);
+        Semaphore sem = hostSemaphores.computeIfAbsent(host, _ -> {
+            Semaphore created = new Semaphore(properties.getPerHostConcurrent());
+            log.info("[spring-watch: 主机限流器创建 - host={}, permits={}]", host, properties.getPerHostConcurrent());
             return created;
         });
-        if (!hostSem.tryAcquire()) {
-            globalSemaphore.release();
-            log.debug("[kxj: 主机限流拒绝 - host={}, hostAvailable={}/{}]",
-                    host, hostSem.availablePermits(), perHostPermits);
+        int before = sem.availablePermits();
+        try {
+            boolean acquired = sem.tryAcquire(timeoutMs, TimeUnit.MILLISECONDS);
+            if (acquired) {
+                log.debug("[spring-watch: 主机限流获取成功 - host={}, 剩余={}->{}]", host, before, sem.availablePermits());
+            } else {
+                log.warn("[spring-watch: 主机限流获取超时 - host={}, 剩余={}, timeoutMs={}]", host, before, timeoutMs);
+            }
+            return acquired;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.warn("[spring-watch: 主机限流获取中断 - host={}]", host);
             return false;
         }
-        return true;
     }
 
     public void release(String host) {
-        Semaphore hostSem = hostSemaphores.get(host);
-        if (hostSem != null) {
-            hostSem.release();
+        Semaphore sem = hostSemaphores.get(host);
+        if (sem != null) {
+            int before = sem.availablePermits();
+            sem.release();
+            log.debug("[spring-watch: 主机限流释放 - host={}, 剩余={}->{}]", host, before, sem.availablePermits());
         } else {
-            log.warn("[kxj: 主机限流器不存在 - host={}]", host);
+            log.warn("[spring-watch: 主机限流释放失败 - host={}, 限流器不存在]", host);
         }
-        globalSemaphore.release();
     }
 
+    /**
+     * P1-5: 删除应用时彻底清理该 host 的限流器 entry，
+     * 避免 hostSemaphores 在长生命周期中持续累积导致内存泄漏。
+     * 仅在所有 permit 都已归还且无等待线程时移除。
+     */
     public void cleanup(String host) {
         Semaphore sem = hostSemaphores.get(host);
         if (sem == null) {
             return;
         }
-        if (sem.availablePermits() != perHostPermits || sem.getQueueLength() != 0) {
-            log.warn("[kxj: 主机限流器清理失败 - host={}, available={}, waiting={}, max={}",
-                    host, sem.availablePermits(), sem.getQueueLength(), perHostPermits);
+        if (sem.availablePermits() != properties.getPerHostConcurrent() || sem.getQueueLength() != 0) {
+            log.warn("[spring-watch: 主机限流器清理失败 - host={}, available={}, waiting={}, max={}",
+                    host, sem.availablePermits(), sem.getQueueLength(), properties.getPerHostConcurrent());
             return;
         }
         Semaphore removed = hostSemaphores.remove(host);
         if (removed != null) {
-            log.info("[kxj: 主机限流器清理 - host={}, activeHosts={}]", host, hostSemaphores.size());
+            log.info("[spring-watch: 主机限流器清理 - host={}, activeHosts={}]", host, hostSemaphores.size());
         }
     }
 

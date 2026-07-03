@@ -105,7 +105,7 @@ public class PullRetryQueue {
     public boolean enqueue(RetryPull pull) {
         if (!inFlight.add(pull.appid())) {
             dedupedCounter.increment();
-            log.debug("[kxj: 重投去重 - appid={} 已在重投中, 丢弃新重投, host={}, attempt={}]",
+            log.warn("[kxj: 重投去重 - appid={} 已在重投中, 丢弃新重投, host={}, attempt={}]",
                     pull.appid(), pull.host(), pull.attempt());
             return false;
         }
@@ -128,9 +128,6 @@ public class PullRetryQueue {
         return false;
     }
 
-    public int pending() {
-        return queueSize.get();
-    }
 
     private RetryPull pollHead() {
         RetryPull p = queue.poll();
@@ -176,6 +173,8 @@ public class PullRetryQueue {
             return;
         }
         String host = extractHost(app);
+        RetryPull next = pull.withIncrementedAttempt();
+        long backoff = next.backoffMs();
 
         if (!throttler.tryAcquire(host, 0)) {
             int max = properties.getRetry().getMaxAttempts();
@@ -184,8 +183,7 @@ public class PullRetryQueue {
                         drainerName, pull.appid(), host, pull.attempt() + 1);
                 return;
             }
-            RetryPull next = pull.withIncrementedAttempt();
-            long backoff = next.backoffMs();
+
             log.info("[kxj: 重投仍被限流 - drainer={}, appid={}, host={}, attempt={}->{}, backoffMs={}, enqueueAt~={}]",
                     drainerName, pull.appid(), host, pull.attempt(), next.attempt(), backoff, Instant.now().plusMillis(backoff));
             scheduler.schedule(() -> enqueue(next), backoff, TimeUnit.MILLISECONDS);
@@ -197,10 +195,11 @@ public class PullRetryQueue {
             log.info("[kxj: 重投执行 - drainer={}, appid={}, host={}, attempt={}, path=retry]",
                     drainerName, pull.appid(), host, pull.attempt());
             boolean reachable = appPullTask.doHeavyWork(pull.appid());
-            if (!reachable) {
-                appPullTask.markUnreachable(app);
-            }else {
+            if (reachable) {
+                appPullTask.sendHeartbeat(app);
                 appPullTask.recordCost(retryStart, pull.appid(), "retry:" + pull.appid());
+            }else {
+                scheduler.schedule(() -> enqueue(next), backoff, TimeUnit.MILLISECONDS);
             }
 
         } catch (Throwable t) {
@@ -221,5 +220,9 @@ public class PullRetryQueue {
         } catch (Exception e) {
             return "localhost";
         }
+    }
+
+    public boolean hasInQueue(Long appId) {
+        return inFlight.contains(appId);
     }
 }

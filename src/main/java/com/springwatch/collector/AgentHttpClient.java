@@ -190,10 +190,6 @@ public class AgentHttpClient {
         }
     }
 
-    public boolean reachable(String url, int readTimeoutMs) {
-        HeadResult r = head(url, readTimeoutMs);
-        return r.isOk() && r.status() == 200;
-    }
 
 
     /**

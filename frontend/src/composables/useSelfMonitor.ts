@@ -46,13 +46,23 @@ function everyForRange() {
 const rangeStartTs = computed(() => Date.now() - rangeMs())
 const rangeEndTs = computed(() => Date.now())
 
+/**
+ * kxj: fetchSeries 每次都按"现在"算时间窗,不能用上面的 computed -
+ * Vue 的 computed 没有响应式依赖时只算一次(Date.now() 不被追踪),
+ * 会导致轮询时 from/to 一直是页面打开瞬间的固定值,新数据永远查不到,必须重启。
+ */
+function nowRange() {
+  return { from: new Date(Date.now() - rangeMs()).toISOString(), to: new Date().toISOString() }
+}
+
 /** 拉单个 metric 的时序,失败 / 无数据时返回空数组,前端走 EmptyState。 */
 async function fetchSeries(opts: FetchOpts): Promise<Point[]> {
+  const { from, to } = nowRange()
   const params: Record<string, unknown> = {
     category: opts.category,
     metric: opts.metric,
-    from: new Date(rangeStartTs.value).toISOString(),
-    to: new Date(rangeEndTs.value).toISOString(),
+    from,
+    to,
     agg: opts.agg,
     every: opts.every ?? everyForRange()
   }
@@ -73,11 +83,12 @@ async function fetchSeries(opts: FetchOpts): Promise<Point[]> {
 }
 
 async function fetchSeriesMulti(opts: FetchOpts): Promise<LineSeriesItem[]> {
+  const { from, to } = nowRange()
   const params: Record<string, unknown> = {
     category: opts.category,
     metric: opts.metric,
-    from: new Date(rangeStartTs.value).toISOString(),
-    to: new Date(rangeEndTs.value).toISOString(),
+    from,
+    to,
     agg: opts.agg,
     every: opts.every ?? everyForRange()
   }

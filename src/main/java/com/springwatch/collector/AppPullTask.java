@@ -74,24 +74,26 @@ public class AppPullTask {
             return;
         }
 
+        if (pullRetryQueue.hasInQueue(appid)) {
+            log.debug("[kxj: AppPullTask.run跳过 - appid={}, 重试队列以存在]", appid);
+            return;
+        }
+
         String host = extractHost(app);
         log.info("[kxj: AppPullTask开始拉取 - appid={}, app={}, host={}, endpoint={}, metricsPort={}, currentStatus={}]",
                 appid, app.getAppName(), host, app.getEndpoint(), app.getMetricsPort(), app.getStatus());
 
         if (!hostThrottler.tryAcquire(host, 0L)) {
-            log.warn("[kxj: 拉取被限流 - appid={}, host={}, 心跳已发, 入重投队列]",
+            log.warn("[kxj: 拉取被限流 - appid={}, host={}, 入重投队列]",
                     appid, host);
-            pullRetryQueue.enqueue(new RetryPull(appid, host, 0, Instant.now()));
-//            recordCost(start, appid, app.getAppName());
+            pullRetryQueue.enqueue(new RetryPull(appid, host, 1, Instant.now()));
             return;
         }
 
         try {
             boolean reachable = doHeavyWork(appid);
             if (!reachable) {
-                markUnreachable(app);
-                log.debug("[kxj: AppPullTask.run结束 - appid={}, reason=unreachable, totalCostMs={}]",
-                        appid, (System.nanoTime() - start) / 1_000_000L);
+                pullRetryQueue.enqueue(new RetryPull(appid, host, 1, Instant.now()));
                 return;
             }
             log.debug("[kxj: 可达性探测通过(合并到指标拉取) - appid={}, host={}]", appid, host);
@@ -129,13 +131,6 @@ public class AppPullTask {
         return 10;
     }
 
-    public void markUnreachable(MonitorApp app) {
-        if (app == null) return;
-        unreachableCounter.increment();
-        if (!MonitorStatus.isPaused(app.getStatus())) {
-            markInactive(app);
-        }
-    }
 
     public boolean doHeavyWork(Long appid) {
         MonitorApp app = monitorAppRepository.findByAppid(appid).orElse(null);
@@ -153,20 +148,17 @@ public class AppPullTask {
         AgentMetricsCollector.MonitorTarget target = new AgentMetricsCollector.MonitorTarget(
                 app.getAppid(), app.getAppName(), app.getEndpoint(), metricsPort);
 
-        log.debug("[kxj: 拉指标 - appid={}, url=http://{}:{}/metrics",
-                appid, extractHost(app), metricsPort);
         boolean reachable = agentMetricsCollector.collect(target);
         if (!reachable) {
             log.debug("[kxj: 指标拉取失败, 中止后续日志/状态更新 - appid={}]", appid);
             return false;
         }
-        log.debug("[kxj: 指标拉取完成 - appid={}]", appid);
+
 
         Instant since = app.getLastLogPullTime() != null ? app.getLastLogPullTime() : now.minusSeconds(3600);
-        log.debug("[kxj: 拉日志 - appid={}, since={}]", appid, since);
+
         Instant latest = agentLogCollector.collect(app.getAppid(), app.getAppName(), app.getEndpoint(), since);
         if (latest.isAfter(since)) {
-            log.info("[kxj: 日志有新进展 - appid={}, since={} -> latest={}]", appid, since, latest);
             app.setLastLogPullTime(latest);
             app.setUpdatedAt(now);
             monitorAppRepository.save(app);
@@ -174,12 +166,6 @@ public class AppPullTask {
             log.trace("[kxj: 日志无新进展 - appid={}, since={}]", appid, since);
         }
 
-        if (!MonitorStatus.isActive(app.getStatus()) && !MonitorStatus.isPaused(app.getStatus())) {
-            app.setStatus(MonitorStatus.ACTIVE);
-            app.setUpdatedAt(now);
-            monitorAppRepository.save(app);
-            log.info("[kxj: Agent复活(重投) - appid={}, app={}, {} -> active]", appid, app.getAppName(), app.getStatus());
-        }
         return true;
     }
 
@@ -202,7 +188,7 @@ public class AppPullTask {
         }
     }
 
-    private void sendHeartbeat(MonitorApp app) {
+    public void sendHeartbeat(MonitorApp app) {
         HeartbeatEvent heartbeat = HeartbeatEvent.builder()
                 .appid(app.getAppid())
                 .ip(extractHost(app))
@@ -212,25 +198,8 @@ public class AppPullTask {
         kafkaProducerBridge.sendHeartbeat(heartbeat);
     }
 
-    private void markInactive(MonitorApp app) {
-        log.warn("[kxj: Agent失活 - appid={}, app={}, reason={}]",
-                app.getAppid(), app.getAppName(), "agent端口不可达");
-        app.setStatus(MonitorStatus.INACTIVE);
-        app.setUpdatedAt(Instant.now());
-        monitorAppRepository.save(app);
-    }
 
-    /**
-     * 采集耗时直方图当前快照 - 给自监控视图一次性拉取。
-     * 12 个分桶: 1s / 2s / ... / 10s / >10s(11s 档,含所有超过 10s 的样本) / 不可达(12s 档)。
-     * count 是各桶的"增量"计数(非 Prometheus 累积语义),前端直接画柱图即可。
-     *
-     * kxj: 之前用 pullDurationTimer.takeSnapshot().histogramCounts() 拿桶,
-     *      SimpleMeterRegistry 下 SimpleTimer 内部对 SLO 不生成 bucket(histogramCounts() 返回空),
-     *      原代码 prev=0、overflow=total-0=total,所有样本被算进 >10s 桶。
-     *      实际多数拉取 1-3s,故 5_000ms 阈值的 warn 从来不出现 → "采集统计不符合"现象。
-     *      改为 AtomicLong 自维护分桶,不依赖 registry 实现。
-     */
+
     public Map<String, Object> snapshotPullHistogram() {
         Map<String, Object> result = new LinkedHashMap<>();
         if (pullDurationTimer == null) {

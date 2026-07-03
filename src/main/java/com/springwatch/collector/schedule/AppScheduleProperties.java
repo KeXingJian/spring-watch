@@ -11,8 +11,6 @@ public class AppScheduleProperties {
 
     private int poolSize = 32;
 
-    private int globalConcurrent = 50;
-
     private int perHostConcurrent = 4;
 
     private int jitterPercent = 10;

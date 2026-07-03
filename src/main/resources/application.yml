@@ -3,13 +3,12 @@ server:
 spring-watch:
   collector:
     pool-size: 100 # 配置大于global-concurrent自动反压
-    global-concurrent: 50 # collector 全局最大并发数(两级限流的全局层,保护 collector 自身)
-    per-host-concurrent: 50 # 同一目标主机的最大并发数(两级限流的主机层,保护目标主机)
+    per-host-concurrent: 1000 # 同一目标主机的最大并发数(两级限流的主机层,保护目标主机)
     jitter-percent: 20 # 采集时间抖动百分比（避免雪崩）
     first-delay-spread-multiplier: 1 # 启动防雷鸣群羊窗口倍数(实际窗口 = intervalMs × 倍数,默认 2x,500 app 均匀分摊 30s)
     http:
       connect-timeout-ms: 3000 # HTTP 连接超时（毫秒）
-      read-timeout-ms: 10000 # HTTP 读取超时（毫秒）
+      read-timeout-ms: 2500 # HTTP 读取超时（毫秒）
       max-body-bytes: 4194304 # Agent HTTP 响应体大小上限（字节，P0-2，默认 4MB）
     retry:
       drainer-count: 2 # 重试排空线程数
