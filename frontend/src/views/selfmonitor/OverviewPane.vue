@@ -201,14 +201,15 @@ watch(refreshKey, () => {
       <div class="metric-card"><div class="title">线程数</div><div><span class="value">{{ cardThreads != null ? fmtNum(cardThreads) : '-' }}</span></div><div class="sub">{{ threadsSub }}</div></div>
     </div>
 
+    <div class="chart-row">
+      <div class="chart-panel"><div class="panel-head">抓取结果分布<span class="tag">req/s</span></div><div class="panel-body has-chart"><Chart v-if="httpOutcomeChart.length" type="line" :series="httpOutcomeChart" :area="true" y-axis-name="req/s" /><EmptyState v-else inline>暂无数据</EmptyState></div></div>
+      <div class="chart-panel"><div class="panel-head">抓取调用速率<span class="tag">calls/s</span></div><div class="panel-body has-chart"><Chart v-if="httpLatChart.length" type="line" :series="httpLatChart" y-axis-name="calls/s" /><EmptyState v-else inline>暂无数据</EmptyState></div></div>
+    </div>
     <div class="section-title">查询服务与主动抓取<span v-if="loading" class="tag">加载中…</span><span v-if="lastError" class="tag" style="color: oklch(var(--er))">异常: {{ lastError }}</span></div>
     <div class="chart-row">
       <div class="chart-panel"><div class="panel-head">指标查询 QPS<span class="tag">最近 {{ range }}</span></div><div class="panel-body has-chart"><Chart v-if="metricQBar.categories.length" type="bar" :categories="metricQBar.categories" :series="metricQBar.series" :horizontal="true" y-axis-name="req/s" /><EmptyState v-else inline>暂无数据</EmptyState></div></div>
       <div class="chart-panel"><div class="panel-head">日志查询 QPS<span class="tag">最近 {{ range }}</span></div><div class="panel-body has-chart"><Chart v-if="logQBar.categories.length" type="bar" :categories="logQBar.categories" :series="logQBar.series" :horizontal="true" y-axis-name="req/s" /><EmptyState v-else inline>暂无数据</EmptyState></div></div>
     </div>
-    <div class="chart-row">
-      <div class="chart-panel"><div class="panel-head">抓取结果分布<span class="tag">req/s</span></div><div class="panel-body has-chart"><Chart v-if="httpOutcomeChart.length" type="line" :series="httpOutcomeChart" :area="true" y-axis-name="req/s" /><EmptyState v-else inline>暂无数据</EmptyState></div></div>
-      <div class="chart-panel"><div class="panel-head">抓取调用速率<span class="tag">calls/s</span></div><div class="panel-body has-chart"><Chart v-if="httpLatChart.length" type="line" :series="httpLatChart" y-axis-name="calls/s" /><EmptyState v-else inline>暂无数据</EmptyState></div></div>
-    </div>
+
   </div>
 </template>

@@ -18,23 +18,23 @@ public class AgentMetricsCollector {
     private final KafkaProducerBridge kafkaProducerBridge;
     private final AgentHttpClient agentHttpClient;
 
-    public void collect(MonitorTarget target) {
+    public boolean collect(MonitorTarget target) {
         String metricsUrl = buildMetricsUrl(target);
 
         AgentHttpClient.Result result = agentHttpClient.get(metricsUrl);
         if (!result.isOk()) {
             log.warn("[spring-watch: Agent拉取失败 - appid={}, app={}, url={}, error={}]",
                     target.appid(), target.appName(), metricsUrl, result.error());
-            return;
+            return false;
         }
         if (result.status() != 200) {
             log.warn("[spring-watch: Agent拉取非200 - appid={}, app={}, url={}, status={}]",
                     target.appid(), target.appName(), metricsUrl, result.status());
-            return;
+            return false;
         }
         InputStream body = result.body();
         if (body == null) {
-            return;
+            return false;
         }
         final long[] metricCount = {0};
         try {
@@ -55,12 +55,13 @@ public class AgentMetricsCollector {
         } catch (Exception e) {
             log.warn("[spring-watch: Agent指标解析失败 - appid={}, app={}, error={}]",
                     target.appid(), target.appName(), e.getMessage());
-            return;
+            return false;
         } finally {
             try { body.close(); } catch (Exception ignore) { }
         }
         log.trace("[spring-watch: Agent拉取成功 - appid={}, app={}, url={}, metrics={}]",
                 target.appid(), target.appName(), metricsUrl, metricCount[0]);
+        return true;
     }
 
     private String buildMetricsUrl(MonitorTarget target) {

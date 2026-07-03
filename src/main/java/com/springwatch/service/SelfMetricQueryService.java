@@ -429,7 +429,9 @@ public class SelfMetricQueryService {
                     ViewSpec.of   ("keep",          "meter", "spring.watch.ingest.log.dedup.keep",          "rate"),
                     ViewSpec.of   ("drop",          "meter", "spring.watch.ingest.log.dedup.drop",          "rate"),
                     ViewSpec.of   ("flush",         "meter", "spring.watch.ingest.log.dedup.flush",         "rate"),
-                    ViewSpec.of   ("flush_fail",    "meter", "spring.watch.ingest.log.dedup.flush_fail",    "rate")
+                    ViewSpec.of   ("flush_fail",    "meter", "spring.watch.ingest.log.dedup.flush_fail",    "rate"),
+                    ViewSpec.timer("pull_duration", "meter", "spring.watch.collector.pull.duration",        "rate"),
+                    ViewSpec.of   ("pull_unreachable","meter","spring.watch.collector.pull.unreachable",     "rate")
             ),
             "jvm", List.of(
                     ViewSpec.of("jvm_heap",        "jvm", "heap.used",       "last"),

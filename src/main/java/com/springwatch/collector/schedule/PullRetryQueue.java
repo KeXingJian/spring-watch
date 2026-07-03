@@ -176,9 +176,14 @@ public class PullRetryQueue {
         }
 
         try {
+            long retryStart = System.nanoTime();
             log.info("[spring-watch: 重投执行 - drainer={}, appid={}, host={}, attempt={}, path=retry]",
                     drainerName, pull.appid(), host, pull.attempt());
-            appPullTask.doHeavyWork(pull.appid());
+            boolean reachable = appPullTask.doHeavyWork(pull.appid());
+            if (!reachable) {
+                appPullTask.markUnreachable(app);
+            }
+            appPullTask.recordCost(retryStart, pull.appid(), "retry:" + pull.appid());
         } catch (Throwable t) {
             log.warn("[spring-watch: 重投执行异常 - drainer={}, appid={}, error={}]", drainerName, pull.appid(), t.getMessage(), t);
         } finally {

@@ -1,5 +1,6 @@
 package com.springwatch.web;
 
+import com.springwatch.collector.AppPullTask;
 import com.springwatch.monitor.SelfMonitorCollector;
 import com.springwatch.service.SelfMetricQueryService;
 import lombok.RequiredArgsConstructor;
@@ -22,6 +23,7 @@ public class SelfMonitorController {
 
     private final SelfMonitorCollector collector;
     private final SelfMetricQueryService selfMetricQueryService;
+    private final AppPullTask appPullTask;
 
     /**
      * 内存 ring 里的最新一帧采样 - 5s 轮询的快速缓存，
@@ -126,5 +128,14 @@ public class SelfMonitorController {
         Instant fromInstant = (from == null) ? Instant.now().minusSeconds(3600) : from;
         Instant toInstant = (to == null) ? Instant.now() : to;
         return selfMetricQueryService.queryView(view, fromInstant, toInstant, every);
+    }
+
+    /**
+     * 采集耗时直方图当前快照(12 桶: 1s-10s + >10s + 不可达)。
+     * 给自监控"采集"tab 一次性拉取,前端画柱图,不走 InfluxDB。
+     */
+    @GetMapping("/pull/histogram")
+    public Map<String, Object> pullHistogram() {
+        return appPullTask.snapshotPullHistogram();
     }
 }
