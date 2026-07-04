@@ -18,23 +18,23 @@ public class AgentMetricsCollector {
     private final KafkaProducerBridge kafkaProducerBridge;
     private final AgentHttpClient agentHttpClient;
 
-    public boolean collect(MonitorTarget target) {
+    public Result collect(MonitorTarget target, int readTimeoutMs) {
         String metricsUrl = buildMetricsUrl(target);
 
-        AgentHttpClient.Result result = agentHttpClient.get(metricsUrl);
+        AgentHttpClient.Result result = agentHttpClient.get(metricsUrl, readTimeoutMs);
         if (!result.isOk()) {
-            log.warn("[kxj: Agent拉取失败 - appid={}, app={}, url={}, error={}]",
-                    target.appid(), target.appName(), metricsUrl, result.error());
-            return false;
+            log.warn("[kxj: Agent拉取失败 - appid={}, app={}, url={}, error={}, latencyMs={}]",
+                    target.appid(), target.appName(), metricsUrl, result.error(), result.latencyMs());
+            return Result.from(result, false);
         }
         if (result.status() != 200) {
-            log.warn("[kxj: Agent拉取非200 - appid={}, app={}, url={}, status={}]",
-                    target.appid(), target.appName(), metricsUrl, result.status());
-            return false;
+            log.warn("[kxj: Agent拉取非200 - appid={}, app={}, url={}, status={}, latencyMs={}]",
+                    target.appid(), target.appName(), metricsUrl, result.status(), result.latencyMs());
+            return Result.from(result, false);
         }
         InputStream body = result.body();
         if (body == null) {
-            return false;
+            return Result.from(result, false);
         }
         final long[] metricCount = {0};
         try {
@@ -55,13 +55,19 @@ public class AgentMetricsCollector {
         } catch (Exception e) {
             log.warn("[kxj: Agent指标解析失败 - appid={}, app={}, error={}]",
                     target.appid(), target.appName(), e.getMessage());
-            return false;
+            return Result.from(result, false);
         } finally {
             try { body.close(); } catch (Exception ignore) { }
         }
-        log.trace("[kxj: Agent拉取成功 - appid={}, app={}, url={}, metrics={}]",
-                target.appid(), target.appName(), metricsUrl, metricCount[0]);
-        return true;
+        log.trace("[kxj: Agent拉取成功 - appid={}, app={}, url={}, metrics={}, latencyMs={}]",
+                target.appid(), target.appName(), metricsUrl, metricCount[0], result.latencyMs());
+        return new Result(true, result.status(), result.latencyMs(), result.error());
+    }
+
+    public record Result(boolean ok, int status, long latencyMs, String error) {
+        public static Result from(AgentHttpClient.Result r, boolean ok) {
+            return new Result(ok, r.status(), r.latencyMs(), r.error());
+        }
     }
 
     private String buildMetricsUrl(MonitorTarget target) {

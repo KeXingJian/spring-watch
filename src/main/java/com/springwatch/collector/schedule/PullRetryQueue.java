@@ -30,10 +30,11 @@ import java.util.concurrent.atomic.AtomicInteger;
 @Component
 public class PullRetryQueue {
 
-    private final CollectorThrottler throttler;
     private final AppPullTask appPullTask;
     private final MonitorAppRepository repository;
     private final AppScheduleProperties properties;
+    private final HostCircuitBreaker hostCircuitBreaker;
+    private final HostLatencyTracker hostLatencyTracker;
 
     private final PriorityBlockingQueue<RetryPull> queue = new PriorityBlockingQueue<>(
             64, Comparator.comparing(RetryPull::enqueueTime));
@@ -50,15 +51,18 @@ public class PullRetryQueue {
     private final Counter droppedCounter;
     private final Counter dedupedCounter;
 
-    public PullRetryQueue(CollectorThrottler throttler,
+    public PullRetryQueue(
                           @Lazy AppPullTask appPullTask,
                           MonitorAppRepository repository,
                           AppScheduleProperties properties,
+                          HostCircuitBreaker hostCircuitBreaker,
+                          HostLatencyTracker hostLatencyTracker,
                           MeterRegistry meterRegistry) {
-        this.throttler = throttler;
         this.appPullTask = appPullTask;
         this.repository = repository;
         this.properties = properties;
+        this.hostCircuitBreaker = hostCircuitBreaker;
+        this.hostLatencyTracker = hostLatencyTracker;
         this.maxQueueSize = properties.getRetry().getMaxQueueSize();
         this.enqueuedCounter = Counter.builder("spring.watch.collector.retry.enqueued")
                 .description("拉取重投入队次数")
@@ -176,36 +180,35 @@ public class PullRetryQueue {
         RetryPull next = pull.withIncrementedAttempt();
         long backoff = next.backoffMs();
 
-        if (!throttler.tryAcquire(host, 0)) {
+        if (!hostCircuitBreaker.tryAcquire(host)) {
             int max = properties.getRetry().getMaxAttempts();
             if (pull.attempt() >= max) {
-                log.warn("[kxj: 重投耗尽 - drainer={}, appid={}, host={}, attempts={}, 放弃, 等下个周期]",
+                log.warn("[kxj: 重投耗尽(熔断) - drainer={}, appid={}, host={}, attempts={}, 放弃, 等下个周期]",
                         drainerName, pull.appid(), host, pull.attempt() + 1);
                 return;
             }
-
-            log.info("[kxj: 重投仍被限流 - drainer={}, appid={}, host={}, attempt={}->{}, backoffMs={}, enqueueAt~={}]",
-                    drainerName, pull.appid(), host, pull.attempt(), next.attempt(), backoff, Instant.now().plusMillis(backoff));
+            log.info("[kxj: 重投遇熔断 - drainer={}, appid={}, host={}, state={}, attempt={}->{}, backoffMs={}, enqueueAt~={}]",
+                    drainerName, pull.appid(), host, hostCircuitBreaker.stateOf(host),
+                    pull.attempt(), next.attempt(), backoff, Instant.now().plusMillis(backoff));
             scheduler.schedule(() -> enqueue(next), backoff, TimeUnit.MILLISECONDS);
             return;
         }
 
+        int timeoutMs = hostLatencyTracker.adaptiveTimeoutMs(host);
         try {
             long retryStart = System.nanoTime();
-            log.info("[kxj: 重投执行 - drainer={}, appid={}, host={}, attempt={}, path=retry]",
-                    drainerName, pull.appid(), host, pull.attempt());
-            boolean reachable = appPullTask.doHeavyWork(pull.appid());
-            if (reachable) {
+            log.info("[kxj: 重投执行 - drainer={}, appid={}, host={}, attempt={}, path=retry, timeoutMs={}]",
+                    drainerName, pull.appid(), host, pull.attempt(), timeoutMs);
+            HostCircuitBreaker.Outcome outcome = appPullTask.doHeavyWork(pull.appid(), timeoutMs);
+            if (outcome == HostCircuitBreaker.Outcome.SUCCESS) {
                 appPullTask.sendHeartbeat(app);
                 appPullTask.recordCost(retryStart, pull.appid(), "retry:" + pull.appid());
-            }else {
+            } else {
                 scheduler.schedule(() -> enqueue(next), backoff, TimeUnit.MILLISECONDS);
             }
 
         } catch (Throwable t) {
             log.warn("[kxj: 重投执行异常 - drainer={}, appid={}, error={}]", drainerName, pull.appid(), t.getMessage(), t);
-        } finally {
-            throttler.release(host);
         }
     }
 

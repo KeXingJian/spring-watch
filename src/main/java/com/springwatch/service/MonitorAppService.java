@@ -2,7 +2,6 @@ package com.springwatch.service;
 
 import com.springwatch.collector.OtelConfigGenerator;
 import com.springwatch.collector.schedule.CollectScheduleRegistry;
-import com.springwatch.collector.schedule.CollectorThrottler;
 import com.springwatch.model.dto.AppRegisterRequest;
 import com.springwatch.model.entity.MonitorApp;
 import com.springwatch.repository.MonitorAppRepository;
@@ -14,7 +13,6 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.net.URI;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -27,7 +25,7 @@ public class MonitorAppService {
     private final MonitorAppRepository monitorAppRepository;
     private final CollectScheduleRegistry collectScheduleRegistry;
     private final OtelConfigGenerator otelConfigGenerator;
-    private final CollectorThrottler hostThrottler;
+
 
     public Page<MonitorApp> listAll(Pageable pageable) {
         return monitorAppRepository.findAll(pageable);
@@ -107,16 +105,7 @@ public class MonitorAppService {
         } catch (Exception e) {
             log.warn("[kxj: 调度注销失败 - appid={}, error={}]", app.getAppid(), e.getMessage());
         }
-        // P1-5: 释放 CollectorThrottler 中该 host 的限流器，避免 hostSemaphores 缓慢泄漏
-        String host = parseHost(app.getEndpoint());
-        if (host != null) {
-            try {
-                hostThrottler.cleanup(host);
-            } catch (Exception e) {
-                log.warn("[kxj: 主机限流器清理失败 - appid={}, host={}, error={}]",
-                        app.getAppid(), host, e.getMessage());
-            }
-        }
+
         monitorAppRepository.deleteById(id);
     }
 
@@ -163,14 +152,5 @@ public class MonitorAppService {
         return out;
     }
 
-    private static String parseHost(String endpoint) {
-        if (endpoint == null || endpoint.isEmpty()) {
-            return null;
-        }
-        try {
-            return URI.create(endpoint).getHost();
-        } catch (Exception e) {
-            return null;
-        }
-    }
+
 }

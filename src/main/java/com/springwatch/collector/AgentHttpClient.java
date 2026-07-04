@@ -13,12 +13,10 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.net.http.HttpTimeoutException;
 import java.time.Duration;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.Semaphore;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -34,27 +32,20 @@ public class AgentHttpClient {
 
     private final HttpClient httpClient;
     private final int defaultReadTimeoutMs;
-    private final int maxConnPerHost;
     private final ExecutorService executor;
-    private final ConcurrentHashMap<String, Semaphore> hostConnPermits = new ConcurrentHashMap<>();
 
     private final Timer requestTimer;
     private final Counter successCounter;
     private final Counter failureCounter;
     private final Counter timeoutCounter;
     private final Counter non2xxCounter;
-    private final Counter connPoolExhaustedCounter;
-    private final Counter headSuccessCounter;
-    private final Counter headFailureCounter;
     private final AtomicLong activeRequests = new AtomicLong(0);
 
     public AgentHttpClient(MeterRegistry registry,
                            @Value("${spring-watch.collector.http.connect-timeout-ms:3000}") int connectTimeoutMs,
                            @Value("${spring-watch.collector.http.read-timeout-ms:10000}") int readTimeoutMs,
-                           @Value("${spring-watch.collector.per-host-concurrent:80}") int maxConnPerHost,
                            @Value("${spring-watch.collector.http.max-body-bytes:4194304}") int maxBodyBytes) {
         this.defaultReadTimeoutMs = readTimeoutMs;
-        this.maxConnPerHost = maxConnPerHost;
         this.executor = Executors.newVirtualThreadPerTaskExecutor();
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofMillis(connectTimeoutMs))
@@ -77,18 +68,9 @@ public class AgentHttpClient {
         this.non2xxCounter = Counter.builder("spring.watch.collector.http.non2xx")
                 .description("Agent HTTP 非 2xx 次数")
                 .register(registry);
-        this.connPoolExhaustedCounter = Counter.builder("spring.watch.collector.http.conn_pool_exhausted")
-                .description("Agent HTTP 单 host 连接池耗尽次数")
-                .register(registry);
-        this.headSuccessCounter = Counter.builder("spring.watch.collector.http.head.success")
-                .description("Agent HTTP HEAD 2xx 次数")
-                .register(registry);
-        this.headFailureCounter = Counter.builder("spring.watch.collector.http.head.failure")
-                .description("Agent HTTP HEAD 异常次数")
-                .register(registry);
         registry.gauge("spring.watch.collector.http.active", activeRequests);
-        log.info("[kxj: AgentHttpClient 初始化 - connectTimeout={}ms, readTimeout={}ms, maxConnPerHost={}, maxBodyBytes={}, pool=virtualThread-per-task]",
-                connectTimeoutMs, readTimeoutMs, maxConnPerHost, maxBodyBytes);
+        log.info("[kxj: AgentHttpClient 初始化 - connectTimeout={}ms, readTimeout={}ms,  maxBodyBytes={}, pool=virtualThread-per-task]",
+                connectTimeoutMs, readTimeoutMs, maxBodyBytes);
     }
 
     public Result get(String url) {
@@ -101,11 +83,7 @@ public class AgentHttpClient {
      */
     public Result get(String url, int readTimeoutMs) {
         long start = System.nanoTime();
-        String host = extractHost(url);
-        Semaphore sem = acquirePermit(host, readTimeoutMs);
-        if (sem == null) {
-            return Result.failed("conn_pool_exhausted");
-        }
+
         activeRequests.incrementAndGet();
         try {
             HttpRequest req = HttpRequest.newBuilder(URI.create(url))
@@ -118,143 +96,64 @@ public class AgentHttpClient {
             int code = resp.statusCode();
             if (code >= 200 && code < 300) {
                 successCounter.increment();
-                return Result.okStream(code, resp.body());
+                return Result.okStream(code, resp.body(), costMs);
             } else {
                 non2xxCounter.increment();
                 InputStream body = resp.body();
                 if (body != null) {
                     try { body.close(); } catch (Exception ignore) { }
                 }
-                return Result.okStream(code, null);
+                return Result.non2xx(code, costMs);
             }
-        } catch (java.net.http.HttpTimeoutException e) {
+        } catch (HttpTimeoutException e) {
             timeoutCounter.increment();
             failureCounter.increment();
             long costMs = (System.nanoTime() - start) / 1_000_000L;
             requestTimer.record(java.time.Duration.ofMillis(costMs));
             log.debug("[kxj: AgentHttp 超时 - url={}, cost={}ms]", url, costMs);
-            return Result.failed("timeout");
+            return Result.failed("timeout", costMs);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             failureCounter.increment();
-            return Result.failed("interrupted");
+            return Result.failed("interrupted", 0L);
         } catch (Exception e) {
             failureCounter.increment();
             long costMs = (System.nanoTime() - start) / 1_000_000L;
             requestTimer.record(java.time.Duration.ofMillis(costMs));
             log.debug("[kxj: AgentHttp 异常 - url={}, cost={}ms, error={}]",
                     url, costMs, e.getMessage());
-            return Result.failed(e.getClass().getSimpleName() + ":" + e.getMessage());
+            return Result.failed(e.getClass().getSimpleName() + ":" + e.getMessage(), costMs);
         } finally {
             activeRequests.decrementAndGet();
-            sem.release();
-        }
-    }
-
-    /**
-     * P0-3: 可达性探测改 HTTP HEAD,不取 body,延迟从 3 RTT 降至 2 RTT
-     * 借鉴 HertzBeat:连接 + 状态码检测合一的思路
-     */
-    public HeadResult head(String url, int readTimeoutMs) {
-        long start = System.nanoTime();
-        String host = extractHost(url);
-        Semaphore sem = acquirePermit(host, readTimeoutMs);
-        if (sem == null) {
-            headFailureCounter.increment();
-            return HeadResult.failed("conn_pool_exhausted");
-        }
-        try {
-            HttpRequest req = HttpRequest.newBuilder(URI.create(url))
-                    .timeout(Duration.ofMillis(readTimeoutMs))
-                    .method("HEAD", HttpRequest.BodyPublishers.noBody())
-                    .build();
-            HttpResponse<Void> resp = httpClient.send(req, HttpResponse.BodyHandlers.discarding());
-            long costMs = (System.nanoTime() - start) / 1_000_000L;
-            requestTimer.record(java.time.Duration.ofMillis(costMs));
-            int code = resp.statusCode();
-            if (code >= 200 && code < 300) {
-                headSuccessCounter.increment();
-                return HeadResult.ok(code);
-            } else {
-                non2xxCounter.increment();
-                return HeadResult.ok(code);
-            }
-        } catch (Exception e) {
-            headFailureCounter.increment();
-            long costMs = (System.nanoTime() - start) / 1_000_000L;
-            log.debug("[kxj: AgentHttp HEAD 异常 - url={}, cost={}ms, error={}]",
-                    url, costMs, e.getMessage());
-            return HeadResult.failed(e.getClass().getSimpleName() + ":" + e.getMessage());
-        } finally {
-            sem.release();
         }
     }
 
 
 
-    /**
-     * P0-4: per-host 连接数 Semaphore,默认 80(借鉴 HertzBeat maxPerRoute=80)
-     * 连接池满时 tryAcquire 等待 readTimeoutMs,失败返回 null 触发 fail-fast
-     */
-    private Semaphore acquirePermit(String host, int readTimeoutMs) {
-        Semaphore sem = hostConnPermits.computeIfAbsent(host, _ -> {
-            log.info("[kxj: 主机连接池创建 - host={}, maxConn={}]", host, maxConnPerHost);
-            return new Semaphore(maxConnPerHost);
-        });
-        try {
-            if (!sem.tryAcquire(readTimeoutMs, TimeUnit.MILLISECONDS)) {
-                connPoolExhaustedCounter.increment();
-                log.warn("[kxj: 主机连接池耗尽 - host={}, available={}, timeoutMs={}]",
-                        host, sem.availablePermits(), readTimeoutMs);
-                return null;
-            }
-            return sem;
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            connPoolExhaustedCounter.increment();
-            return null;
-        }
-    }
 
-    private String extractHost(String url) {
-        try {
-            URI uri = URI.create(url);
-            String host = uri.getHost();
-            return host == null ? "unknown" : host;
-        } catch (Exception e) {
-            return "unknown";
-        }
-    }
+
 
     @PreDestroy
     void shutdown() {
-        log.info("[kxj: AgentHttpClient 关闭 - active={}, hosts={}]", activeRequests.get(), hostConnPermits.size());
+        log.info("[kxj: AgentHttpClient 关闭 - active={}]", activeRequests.get());
         if (executor != null) {
             executor.shutdown();
         }
     }
 
-    public record Result(int status, InputStream body, String error) {
-        public static Result okStream(int status, InputStream body) {
-            return new Result(status, body, null);
+    public record Result(int status, InputStream body, String error, long latencyMs) {
+        public static Result okStream(int status, InputStream body, long latencyMs) {
+            return new Result(status, body, null, latencyMs);
         }
-        public static Result failed(String error) {
-            return new Result(-1, null, error);
+        public static Result non2xx(int status, long latencyMs) {
+            return new Result(status, null, "non2xx:" + status, latencyMs);
+        }
+        public static Result failed(String error, long latencyMs) {
+            return new Result(-1, null, error, latencyMs);
         }
         public boolean isOk() {
             return error == null;
         }
     }
 
-    public record HeadResult(int status, String error) {
-        public static HeadResult ok(int status) {
-            return new HeadResult(status, null);
-        }
-        public static HeadResult failed(String error) {
-            return new HeadResult(-1, error);
-        }
-        public boolean isOk() {
-            return error == null;
-        }
-    }
 }

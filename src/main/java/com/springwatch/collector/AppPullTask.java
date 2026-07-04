@@ -1,6 +1,9 @@
 package com.springwatch.collector;
 
-import com.springwatch.collector.schedule.CollectorThrottler;
+import com.springwatch.collector.schedule.AppScheduleProperties;
+import com.springwatch.collector.schedule.GlobalHealthMonitor;
+import com.springwatch.collector.schedule.HostCircuitBreaker;
+import com.springwatch.collector.schedule.HostLatencyTracker;
 import com.springwatch.collector.schedule.PullRetryQueue;
 import com.springwatch.collector.schedule.RetryPull;
 import com.springwatch.model.entity.MonitorApp;
@@ -33,8 +36,11 @@ public class AppPullTask {
     private final AgentMetricsCollector agentMetricsCollector;
     private final AgentLogCollector agentLogCollector;
     private final KafkaProducerBridge kafkaProducerBridge;
-    private final CollectorThrottler hostThrottler;
     private final PullRetryQueue pullRetryQueue;
+    private final HostCircuitBreaker hostCircuitBreaker;
+    private final HostLatencyTracker hostLatencyTracker;
+    private final GlobalHealthMonitor globalHealthMonitor;
+    private final AppScheduleProperties properties;
     private final MeterRegistry meterRegistry;
 
     private Timer pullDurationTimer;
@@ -63,6 +69,7 @@ public class AppPullTask {
 
     public void run(Long appid) {
         long start = System.nanoTime();
+        boolean success = false;
 
         MonitorApp app = monitorAppRepository.findByAppid(appid).orElse(null);
         if (app == null) {
@@ -83,26 +90,33 @@ public class AppPullTask {
         log.info("[kxj: AppPullTask开始拉取 - appid={}, app={}, host={}, endpoint={}, metricsPort={}, currentStatus={}]",
                 appid, app.getAppName(), host, app.getEndpoint(), app.getMetricsPort(), app.getStatus());
 
-        if (!hostThrottler.tryAcquire(host, 0L)) {
-            log.warn("[kxj: 拉取被限流 - appid={}, host={}, 入重投队列]",
-                    appid, host);
+        if (!hostCircuitBreaker.tryAcquire(host)) {
+            HostCircuitBreaker.State st = hostCircuitBreaker.stateOf(host);
+            log.warn("[kxj: 熔断器快速失败 - appid={}, host={}, state={}, coolDownMs={}, 入重投队列, 不消耗限流permit]",
+                    appid, host, st, hostCircuitBreaker.coolDownMsOf(host));
             pullRetryQueue.enqueue(new RetryPull(appid, host, 1, Instant.now()));
             return;
         }
 
+        int timeoutMs = hostLatencyTracker.adaptiveTimeoutMs(host);
         try {
-            boolean reachable = doHeavyWork(appid);
-            if (!reachable) {
+            HostCircuitBreaker.Outcome outcome = doHeavyWork(appid, timeoutMs);
+            if (outcome == HostCircuitBreaker.Outcome.TIMEOUT || outcome == HostCircuitBreaker.Outcome.ERROR) {
                 pullRetryQueue.enqueue(new RetryPull(appid, host, 1, Instant.now()));
                 return;
             }
+            if (outcome == HostCircuitBreaker.Outcome.SLOW) {
+                log.debug("[kxj: 拉取SLOW但成功(已计入熔断器滑窗) - appid={}, host={}]", appid, host);
+            }
             log.debug("[kxj: 可达性探测通过(合并到指标拉取) - appid={}, host={}]", appid, host);
             sendHeartbeat(app);
+            success = true;
         } catch (Exception e) {
             log.warn("[kxj: 拉取异常 - appid={}, app={}, error={}]", appid, app.getAppName(), e.getMessage(), e);
         } finally {
-            hostThrottler.release(host);
+            long costMs = (System.nanoTime() - start) / 1_000_000L;
             recordCost(start, appid, app.getAppName());
+            globalHealthMonitor.recordPull(costMs, success);
         }
     }
 
@@ -132,28 +146,33 @@ public class AppPullTask {
     }
 
 
-    public boolean doHeavyWork(Long appid) {
+    public HostCircuitBreaker.Outcome doHeavyWork(Long appid, int timeoutMs) {
         MonitorApp app = monitorAppRepository.findByAppid(appid).orElse(null);
         if (app == null) {
             log.warn("[kxj: 重投执行跳过 - appid={} 已删除]", appid);
-            return false;
+            return HostCircuitBreaker.Outcome.ERROR;
         }
         if (MonitorStatus.isPaused(app.getStatus())) {
             log.debug("[kxj: 重投执行跳过 - appid={} 已暂停]", appid);
-            return false;
+            return HostCircuitBreaker.Outcome.ERROR;
         }
 
+        String host = extractHost(app);
         Instant now = Instant.now();
         Integer metricsPort = app.getMetricsPort() != null ? app.getMetricsPort() : 9464;
         AgentMetricsCollector.MonitorTarget target = new AgentMetricsCollector.MonitorTarget(
                 app.getAppid(), app.getAppName(), app.getEndpoint(), metricsPort);
 
-        boolean reachable = agentMetricsCollector.collect(target);
-        if (!reachable) {
-            log.debug("[kxj: 指标拉取失败, 中止后续日志/状态更新 - appid={}]", appid);
-            return false;
-        }
+        AgentMetricsCollector.Result m = agentMetricsCollector.collect(target, timeoutMs);
+        HostCircuitBreaker.Outcome outcome = classifyOutcome(m);
+        hostLatencyTracker.record(host, m.latencyMs());
+        hostCircuitBreaker.recordOutcome(host, outcome, m.latencyMs());
 
+        if (!m.ok()) {
+            log.debug("[kxj: 指标拉取失败, 中止后续日志/状态更新 - appid={}, outcome={}, latencyMs={}]",
+                    appid, outcome, m.latencyMs());
+            return outcome;
+        }
 
         Instant since = app.getLastLogPullTime() != null ? app.getLastLogPullTime() : now.minusSeconds(3600);
 
@@ -166,7 +185,18 @@ public class AppPullTask {
             log.trace("[kxj: 日志无新进展 - appid={}, since={}]", appid, since);
         }
 
-        return true;
+        return outcome;
+    }
+
+    private HostCircuitBreaker.Outcome classifyOutcome(AgentMetricsCollector.Result m) {
+        if (m.ok()) {
+            long slowThreshold = properties.getCircuitBreaker().getSlowThresholdMs();
+            return m.latencyMs() > slowThreshold ? HostCircuitBreaker.Outcome.SLOW : HostCircuitBreaker.Outcome.SUCCESS;
+        }
+        if (m.error() != null && m.error().startsWith("timeout")) {
+            return HostCircuitBreaker.Outcome.TIMEOUT;
+        }
+        return HostCircuitBreaker.Outcome.ERROR;
     }
 
     private String extractHost(MonitorApp app) {

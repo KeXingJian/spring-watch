@@ -3,17 +3,36 @@ server:
 spring-watch:
   collector:
     pool-size: 100 # 配置大于global-concurrent自动反压
-    per-host-concurrent: 1000 # 同一目标主机的最大并发数(两级限流的主机层,保护目标主机)
     jitter-percent: 20 # 采集时间抖动百分比（避免雪崩）
     first-delay-spread-multiplier: 1 # 启动防雷鸣群羊窗口倍数(实际窗口 = intervalMs × 倍数,默认 2x,500 app 均匀分摊 30s)
     http:
       connect-timeout-ms: 3000 # HTTP 连接超时（毫秒）
-      read-timeout-ms: 2500 # HTTP 读取超时（毫秒）
+      read-timeout-ms: 2500 # HTTP 默认读取超时（毫秒，无历史数据时使用）
+      min-read-timeout-ms: 300 # HTTP 自适应超时下界(快主机收到此下界)
+      max-read-timeout-ms: 2500 # HTTP 自适应超时上界(慢主机收到此上界,防止单点拖死)
       max-body-bytes: 4194304 # Agent HTTP 响应体大小上限（字节，P0-2，默认 4MB）
     retry:
       drainer-count: 2 # 重试排空线程数
       max-attempts: 5 # 单次请求最大重试次数
       max-queue-size: 1000 # 重试队列最大容量
+    circuit-breaker: # P1: 熔断器,比 2.5s 超时更智能的快速失败方案
+      window-size: 20 # 滑动窗口大小(最近 N 次请求)
+      slow-threshold-ms: 1500 # 单次请求 latency > 此值记为 SLOW(喂熔断器)
+      failure-rate-percent: 50 # 窗口内失败率(TIMEOUT+ERROR)>= 此值触发 OPEN
+      slow-rate-percent: 60 # 窗口内失败+SLOW占比 >= 此值触发 OPEN
+      consecutive-timeouts-to-open: 3 # 连续 N 次 TIMEOUT 立即触发 OPEN(独立于窗口)
+      initial-cool-down-ms: 10000 # OPEN 初始冷却时间(微秒级快速失败)
+      max-cool-down-ms: 60000 # 连续 OPEN 指数退避上限
+    schedule: # P2: 全局动态调度周期(AIMD 风格背压, 推断式)
+      slow-factor-min: 0.5 # 恢复后最快 0.5x(基线周期 × 0.5,调度器 1 秒变 2 倍频)
+      slow-factor-max: 5.0 # 退避后最慢 5x(基线周期 × 5,调度器 1 秒变 1/5 频)
+      degrade-multiplier: 1.5 # 退避倍数(每次慢多少倍,对应乘法减)
+      recover-multiplier: 0.9 # 恢复倍数(每次恢复多少,对应加法增的温和版)
+      p95-degrade-ms: 3000 # 全局 p95 > 此值触发退避
+      p95-recover-ms: 1000 # 全局 p95 < 此值且错误率低时触发恢复
+      error-rate-degrade-percent: 10 # 错误率 > 10% 触发退避
+      error-rate-recover-percent: 1 # 错误率 < 1% 且 p95 健康时触发恢复
+      health-tick-ms: 5000 # 健康度采样间隔(每 5s 重算 slowFactor)
   agent:
     prometheus-host: 0.0.0.0 # Prometheus Agent 监听地址
   alert:

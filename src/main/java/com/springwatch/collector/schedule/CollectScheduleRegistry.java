@@ -34,6 +34,7 @@ public class CollectScheduleRegistry implements ApplicationRunner {
     private final MonitorAppRepository repository;
     private final AppPullTask appPullTask;
     private final AppScheduleProperties properties;
+    private final GlobalHealthMonitor globalHealthMonitor;
     private final MeterRegistry meterRegistry;
 
     private ScheduledExecutorService scheduler;
@@ -50,8 +51,8 @@ public class CollectScheduleRegistry implements ApplicationRunner {
                 .publishPercentiles(0.5, 0.95, 0.99)
                 .register(meterRegistry);
         meterRegistry.gauge("spring.watch.collector.startup.jobs", jobs, ConcurrentHashMap::size);
-        log.info("[kxj: 调度器初始化 - poolSize={}, perHostConcurrent={}, jitterPercent={}, threadFactory=virtualThread, antiHerd=appidHash+interval分散]",
-                properties.getPoolSize(), properties.getPerHostConcurrent(), properties.getJitterPercent());
+        log.info("[kxj: 调度器初始化 - poolSize={}, jitterPercent={}, threadFactory=virtualThread, antiHerd=appidHash+interval分散]",
+                properties.getPoolSize(), properties.getJitterPercent());
     }
 
     @PreDestroy
@@ -125,14 +126,13 @@ public class CollectScheduleRegistry implements ApplicationRunner {
             log.info("[kxj: 注册CRON任务 - appid={}, app={}, status={}, initialDelayMs={}, cron={}]",
                     app.getAppid(), app.getAppName(), app.getStatus(), initialDelay, app.getCronExpression());
         } else {
-            future = scheduler.scheduleWithFixedDelay(
-                    () -> safeRun(app.getAppid()),
+            future = scheduler.schedule(
+                    () -> intervalLoop(app.getAppid()),
                     initialDelay,
-                    schedule.baseIntervalMs(),
                     TimeUnit.MILLISECONDS);
-            log.info("[kxj: 注册INTERVAL任务(防雷鸣群羊) - appid={}, app={}, status={}, initialDelayMs={}/{}ms, periodMs={}, jitterPercent={}%, hash桶分散]",
+            log.info("[kxj: 注册INTERVAL任务(动态周期) - appid={}, app={}, status={}, initialDelayMs={}, baseIntervalMs={}, slowFactor={}, jitterPercent={}%, hash桶分散]",
                     app.getAppid(), app.getAppName(), app.getStatus(), initialDelay,
-                    schedule.baseIntervalMs(), schedule.baseIntervalMs(),
+                    schedule.baseIntervalMs(), globalHealthMonitor.getSlowFactor(),
                     properties.getJitterPercent());
         }
         jobs.put(app.getAppid(), future);
@@ -196,6 +196,31 @@ public class CollectScheduleRegistry implements ApplicationRunner {
             prev.cancel(false);
         }
         log.debug("[kxj: cronLoop排下一次 - appid={}, nextDelayMs={}]", appid, nextDelay);
+    }
+
+    private void intervalLoop(Long appid) {
+        safeRun(appid);
+
+        AppSchedule schedule = activeSchedules.get(appid);
+        if (schedule == null || schedule.type() == AppScheduleType.CRON) {
+            log.info("[kxj: intervalLoop终止 - appid={}, 已移除或切换为CRON]", appid);
+            return;
+        }
+
+        long baseMs = schedule.baseIntervalMs();
+        long nextDelay = globalHealthMonitor.currentIntervalMs(baseMs);
+        ScheduledFuture<?> next = scheduler.schedule(
+                () -> intervalLoop(appid),
+                nextDelay,
+                TimeUnit.MILLISECONDS);
+        ScheduledFuture<?> prev = jobs.put(appid, next);
+        if (prev != null && !prev.isDone()) {
+            prev.cancel(false);
+        }
+        if (nextDelay != baseMs) {
+            log.debug("[kxj: intervalLoop排下一次 - appid={}, baseMs={}, slowFactor={}, nextDelayMs={}]",
+                    appid, baseMs, globalHealthMonitor.getSlowFactor(), nextDelay);
+        }
     }
 
     private void safeRun(Long appid) {
