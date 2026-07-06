@@ -15,7 +15,9 @@ import java.time.Instant;
 /**
  * 拉取 Agent 日志并入 Kafka。
  * P0-2: 改用 InputStream 替代 ofByteArray,避免全 body 入堆
- * P1-2: 内部 JsonParser 逐条流式解析(原 v1.6 已优化)
+ * P1-2: 内部 JsonParser 逐条流式解析
+ * P2-1: 返回 Result(ok + latestTimestamp + latencyMs + error),失败/成功可区分
+ *       与 AgentMetricsCollector 对齐,让 doHeavyWork 合并 outcome + total latency
  */
 @Slf4j
 @Component
@@ -26,32 +28,36 @@ public class AgentLogCollector {
     private final ObjectMapper objectMapper;
     private final AgentHttpClient agentHttpClient;
 
-    public Instant collect(Long appid, String appName, String endpoint, Instant since) {
+    public Result collect(Long appid, String appName, String endpoint, Instant since, int readTimeoutMs) {
+        long start = System.nanoTime();
         String url = buildUrl(endpoint, since);
         String remoteHost = parseHost(endpoint);
+        long latencyMs = 0;
 
-        AgentHttpClient.Result result = agentHttpClient.get(url);
-        if (!result.isOk()) {
-            log.warn("[kxj: Agent日志拉取失败 - appid={}, app={}, url={}, error={}]",
-                    appid, appName, url, result.error());
-            return since;
+        AgentHttpClient.Result httpResult = agentHttpClient.get(url, readTimeoutMs);
+
+
+        if (!httpResult.isOk()) {
+            log.warn("[kxj: Agent日志拉取失败 - appid={}, app={}, url={}, error={}, latencyMs={}]",
+                    appid, appName, url, httpResult.error(), latencyMs);
+            return Result.failed(httpResult.error(), latencyMs);
         }
-        if (result.status() != 200) {
-            log.warn("[kxj: Agent日志拉取非200 - appid={}, app={}, url={}, status={}]",
-                    appid, appName, url, result.status());
-            return since;
+        if (httpResult.status() != 200) {
+            log.warn("[kxj: Agent日志拉取非200 - appid={}, app={}, url={}, status={}, latencyMs={}]",
+                    appid, appName, url, httpResult.status(), latencyMs);
+            return Result.failed("non2xx:" + httpResult.status(), latencyMs);
         }
-        InputStream body = result.body();
+        InputStream body = httpResult.body();
         if (body == null) {
-            return since;
+            return Result.failed("empty_body", latencyMs);
         }
 
         Instant latest = since;
-        int sent = 0;
         try (InputStream in = body; JsonParser p = objectMapper.createParser(in)) {
             if (p.nextToken() != JsonToken.START_ARRAY) {
-                log.warn("[kxj: Agent日志响应非数组 - appid={}, app={}]", appid, appName);
-                return since;
+                log.warn("[kxj: Agent日志响应非数组 - appid={}, app={}, latencyMs={}]",
+                        appid, appName, latencyMs);
+                return Result.failed("not_array", latencyMs);
             }
             while (p.nextToken() != JsonToken.END_ARRAY) {
                 if (p.currentToken() != JsonToken.START_OBJECT) {
@@ -71,19 +77,27 @@ public class AgentLogCollector {
                     event.setHost(remoteHost);
                 }
                 kafkaProducerBridge.sendLog(event);
-                sent++;
                 if (event.getTimestamp().isAfter(latest)) {
                     latest = event.getTimestamp();
                 }
             }
+            latencyMs = (System.nanoTime() - start) / 1_000_000L;
         } catch (Exception e) {
-            log.warn("[kxj: Agent日志解析失败 - appid={}, app={}, error={}]",
-                    appid, appName, e.getMessage());
-            return latest.isAfter(since) ? latest : since;
+            log.warn("[kxj: Agent日志解析失败 - appid={}, app={}, error={}, latencyMs={}]",
+                    appid, appName, e.getMessage(), latencyMs);
+            return Result.failed("parse:" + e.getClass().getSimpleName(), latencyMs);
         }
-        log.info("[kxj: Agent日志拉取 - appid={}, app={}, since={}, count={}, latest={}]",
-                appid, appName, since, sent, latest);
-        return latest;
+
+        return Result.ok(latest, latencyMs);
+    }
+
+    public record Result(boolean ok, Instant latestTimestamp, long latencyMs, String error) {
+        public static Result ok(Instant latest, long latencyMs) {
+            return new Result(true, latest, latencyMs, null);
+        }
+        public static Result failed(String error, long latencyMs) {
+            return new Result(false, null, latencyMs, error);
+        }
     }
 
     private String buildUrl(String endpoint, Instant since) {

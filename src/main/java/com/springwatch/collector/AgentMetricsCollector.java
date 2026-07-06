@@ -19,6 +19,8 @@ public class AgentMetricsCollector {
     private final AgentHttpClient agentHttpClient;
 
     public Result collect(MonitorTarget target, int readTimeoutMs) {
+
+
         String metricsUrl = buildMetricsUrl(target);
 
         AgentHttpClient.Result result = agentHttpClient.get(metricsUrl, readTimeoutMs);

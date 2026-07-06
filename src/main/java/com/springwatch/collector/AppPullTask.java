@@ -105,10 +105,6 @@ public class AppPullTask {
                 pullRetryQueue.enqueue(new RetryPull(appid, host, 1, Instant.now()));
                 return;
             }
-            if (outcome == HostCircuitBreaker.Outcome.SLOW) {
-                log.debug("[kxj: 拉取SLOW但成功(已计入熔断器滑窗) - appid={}, host={}]", appid, host);
-            }
-            log.debug("[kxj: 可达性探测通过(合并到指标拉取) - appid={}, host={}]", appid, host);
             sendHeartbeat(app);
             success = true;
         } catch (Exception e) {
@@ -147,6 +143,7 @@ public class AppPullTask {
 
 
     public HostCircuitBreaker.Outcome doHeavyWork(Long appid, int timeoutMs) {
+        long start = System.nanoTime();
         MonitorApp app = monitorAppRepository.findByAppid(appid).orElse(null);
         if (app == null) {
             log.warn("[kxj: 重投执行跳过 - appid={} 已删除]", appid);
@@ -164,25 +161,40 @@ public class AppPullTask {
                 app.getAppid(), app.getAppName(), app.getEndpoint(), metricsPort);
 
         AgentMetricsCollector.Result m = agentMetricsCollector.collect(target, timeoutMs);
-        HostCircuitBreaker.Outcome outcome = classifyOutcome(m);
-        hostLatencyTracker.record(host, m.latencyMs());
-        hostCircuitBreaker.recordOutcome(host, outcome, m.latencyMs());
+        HostCircuitBreaker.Outcome metricsOutcome = (m != null) ? classifyOutcome(m) : null;
 
-        if (!m.ok()) {
-            log.debug("[kxj: 指标拉取失败, 中止后续日志/状态更新 - appid={}, outcome={}, latencyMs={}]",
-                    appid, outcome, m.latencyMs());
-            return outcome;
+        AgentLogCollector.Result l = null;
+        if (m == null || m.ok()) {
+            Instant since = app.getLastLogPullTime() != null ? app.getLastLogPullTime() : now.minusSeconds(3600);
+            l = agentLogCollector.collect(app.getAppid(), app.getAppName(), app.getEndpoint(), since, timeoutMs);
+            if (l.ok() && l.latestTimestamp() != null && l.latestTimestamp().isAfter(since)) {
+                app.setLastLogPullTime(l.latestTimestamp());
+                app.setUpdatedAt(now);
+                monitorAppRepository.save(app);
+            } else if (!l.ok()) {
+                log.error("[kxj: 日志拉取失败 - appid={}, error={}]",
+                        appid, l.error());
+            } else {
+                log.warn("[kxj: 日志无新进展 - appid={}, since={}]", appid, since);
+            }
         }
+        long totalLatency = (System.nanoTime() - start) / 1_000_000L;
 
-        Instant since = app.getLastLogPullTime() != null ? app.getLastLogPullTime() : now.minusSeconds(3600);
+        HostCircuitBreaker.Outcome combined = combineOutcome(metricsOutcome, l);
+        long slowThreshold = properties.getCircuitBreaker().getSlowThresholdMs();
+        HostCircuitBreaker.Outcome outcome = (combined == HostCircuitBreaker.Outcome.SUCCESS && totalLatency > slowThreshold)
+                ? HostCircuitBreaker.Outcome.SLOW
+                : combined;
 
-        Instant latest = agentLogCollector.collect(app.getAppid(), app.getAppName(), app.getEndpoint(), since);
-        if (latest.isAfter(since)) {
-            app.setLastLogPullTime(latest);
-            app.setUpdatedAt(now);
-            monitorAppRepository.save(app);
-        } else {
-            log.trace("[kxj: 日志无新进展 - appid={}, since={}]", appid, since);
+        hostLatencyTracker.record(host, totalLatency);
+        hostCircuitBreaker.recordOutcome(host, outcome, totalLatency);
+
+        if (outcome == HostCircuitBreaker.Outcome.TIMEOUT || outcome == HostCircuitBreaker.Outcome.ERROR) {
+            log.warn("[kxj: 拉取失败 - appid={}, outcome={},  total={}ms]",
+                    appid, outcome,totalLatency);
+        } else if (outcome == HostCircuitBreaker.Outcome.SLOW) {
+            log.warn("[kxj: 拉取SLOW - appid={}, host={}, total={}ms, 已计入熔断器滑窗]",
+                    appid, host, totalLatency);
         }
 
         return outcome;
@@ -190,13 +202,26 @@ public class AppPullTask {
 
     private HostCircuitBreaker.Outcome classifyOutcome(AgentMetricsCollector.Result m) {
         if (m.ok()) {
-            long slowThreshold = properties.getCircuitBreaker().getSlowThresholdMs();
-            return m.latencyMs() > slowThreshold ? HostCircuitBreaker.Outcome.SLOW : HostCircuitBreaker.Outcome.SUCCESS;
+            return HostCircuitBreaker.Outcome.SUCCESS;
         }
         if (m.error() != null && m.error().startsWith("timeout")) {
             return HostCircuitBreaker.Outcome.TIMEOUT;
         }
         return HostCircuitBreaker.Outcome.ERROR;
+    }
+
+    private HostCircuitBreaker.Outcome combineOutcome(HostCircuitBreaker.Outcome metrics,
+                                                     AgentLogCollector.Result log) {
+        if (log != null && !log.ok()) {
+            if (log.error() != null && log.error().startsWith("timeout")) {
+                return HostCircuitBreaker.Outcome.TIMEOUT;
+            }
+            return HostCircuitBreaker.Outcome.ERROR;
+        }
+        if (metrics == HostCircuitBreaker.Outcome.TIMEOUT || metrics == HostCircuitBreaker.Outcome.ERROR) {
+            return metrics;
+        }
+        return HostCircuitBreaker.Outcome.SUCCESS;
     }
 
     private String extractHost(MonitorApp app) {
@@ -227,8 +252,6 @@ public class AppPullTask {
                 .build();
         kafkaProducerBridge.sendHeartbeat(heartbeat);
     }
-
-
 
     public Map<String, Object> snapshotPullHistogram() {
         Map<String, Object> result = new LinkedHashMap<>();

@@ -125,8 +125,12 @@ public class HostCircuitBreaker {
         if (current == State.CLOSED) {
             int slot = s.window.nextSlot();
             s.window.slots[slot] = outcome;
-            s.window.count++;
-            if (s.window.count >= s.window.slots.length) {
+            int newCount = s.window.count.incrementAndGet();
+            if (newCount == 1 || newCount % 20 == 0) {
+                log.debug("[kxj: 熔断器累计 - host={}, outcome={}, latencyMs={}, count={}/{}]",
+                        host, outcome, latencyMs, newCount, s.window.slots.length);
+            }
+            if (newCount >= s.window.slots.length) {
                 evaluateAndMaybeOpen(host, s);
             }
         }
@@ -138,7 +142,7 @@ public class HostCircuitBreaker {
         int slow = 0;
         int consecutiveTimeouts = 0;
         int currentStreak = 0;
-        int cursor = (s.window.cursor - 1 + s.window.slots.length) % s.window.slots.length;
+        int cursor = (s.window.cursor.get() - 1 + s.window.slots.length) % s.window.slots.length;
         for (int i = 0; i < total; i++) {
             int idx = (cursor - i + s.window.slots.length) % s.window.slots.length;
             Outcome o = s.window.slots[idx];
@@ -208,22 +212,26 @@ public class HostCircuitBreaker {
 
     private static final class Window {
         final Outcome[] slots;
-        int count = 0;
-        int cursor = 0;
+        final AtomicInteger count = new AtomicInteger(0);
+        final AtomicInteger cursor = new AtomicInteger(0);
 
         Window(int size) {
             this.slots = new Outcome[size];
         }
 
         int nextSlot() {
-            int idx = cursor;
-            cursor = (cursor + 1) % slots.length;
+            int idx = cursor.get();
+            cursor.set((idx + 1) % slots.length);
             return idx;
         }
 
+        int count() {
+            return count.get();
+        }
+
         void clear() {
-            count = 0;
-            cursor = 0;
+            count.set(0);
+            cursor.set(0);
             Arrays.fill(slots, null);
         }
     }

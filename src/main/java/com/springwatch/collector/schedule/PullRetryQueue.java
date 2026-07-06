@@ -203,7 +203,7 @@ public class PullRetryQueue {
             if (outcome == HostCircuitBreaker.Outcome.SUCCESS) {
                 appPullTask.sendHeartbeat(app);
                 appPullTask.recordCost(retryStart, pull.appid(), "retry:" + pull.appid());
-            } else {
+            } else if (outcome == HostCircuitBreaker.Outcome.ERROR || outcome == HostCircuitBreaker.Outcome.TIMEOUT){
                 scheduler.schedule(() -> enqueue(next), backoff, TimeUnit.MILLISECONDS);
             }
 
