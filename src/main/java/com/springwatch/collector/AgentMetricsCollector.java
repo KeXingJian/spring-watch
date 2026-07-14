@@ -1,6 +1,7 @@
 package com.springwatch.collector;
 
 import com.springwatch.collector.parse.OnlinePrometheusParser;
+import com.springwatch.inflight.InflightProducerBridge;
 import com.springwatch.model.event.MetricEvent;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -15,7 +16,7 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class AgentMetricsCollector {
 
-    private final KafkaProducerBridge kafkaProducerBridge;
+    private final InflightProducerBridge inflightProducerBridge;
     private final AgentHttpClient agentHttpClient;
 
     public Result collect(MonitorTarget target, int readTimeoutMs) {
@@ -51,7 +52,7 @@ public class AgentMetricsCollector {
                         .timestamp(Instant.now())
                         .tags(tags == null || tags.isEmpty() ? null : tags)
                         .build();
-                kafkaProducerBridge.sendMetric(event);
+                inflightProducerBridge.sendMetric(event);
                 metricCount[0]++;
             });
         } catch (Exception e) {

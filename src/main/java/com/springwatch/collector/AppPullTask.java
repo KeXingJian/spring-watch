@@ -6,6 +6,7 @@ import com.springwatch.collector.schedule.HostCircuitBreaker;
 import com.springwatch.collector.schedule.HostLatencyTracker;
 import com.springwatch.collector.schedule.PullRetryQueue;
 import com.springwatch.collector.schedule.RetryPull;
+import com.springwatch.inflight.InflightProducerBridge;
 import com.springwatch.model.entity.MonitorApp;
 import com.springwatch.model.entity.MonitorStatus;
 import com.springwatch.model.event.HeartbeatEvent;
@@ -35,7 +36,7 @@ public class AppPullTask {
     private final MonitorAppRepository monitorAppRepository;
     private final AgentMetricsCollector agentMetricsCollector;
     private final AgentLogCollector agentLogCollector;
-    private final KafkaProducerBridge kafkaProducerBridge;
+    private final InflightProducerBridge inflightProducerBridge;
     private final PullRetryQueue pullRetryQueue;
     private final HostCircuitBreaker hostCircuitBreaker;
     private final HostLatencyTracker hostLatencyTracker;
@@ -250,7 +251,7 @@ public class AppPullTask {
                 .agentVersion("java-agent")
                 .timestamp(Instant.now())
                 .build();
-        kafkaProducerBridge.sendHeartbeat(heartbeat);
+        inflightProducerBridge.sendHeartbeat(heartbeat);
     }
 
     public Map<String, Object> snapshotPullHistogram() {

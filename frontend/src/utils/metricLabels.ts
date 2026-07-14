@@ -4,8 +4,9 @@
  *
  * 维护原则:
  * - spring.watch.* 走 SPRING_WATCH_LABELS,跟 SelfMonitorView 的 groupOf 保持同源。
- * - InfluxDB / Kafka exporter 出来的内建指标(go_、tsm1_、storage、write 等前缀)走 INFRA_LABELS,
+ * - InfluxDB 自身 / InflightQueue exporter 出来的内建指标(go_、tsm1_、storage、write、inflight.* 等前缀)走 INFRA_LABELS,
  *   命名约定参看 InfluxData 官方文档(URL: docs.influxdata.com influxdb v2 reference internals metrics)。
+ * - v2.0:InflightQueue 替代 Kafka,InflightQueue 9 个核心指标走 INFRA_LABELS。
  */
 
 export const SPRING_WATCH_LABELS: Record<string, string> = {
@@ -86,12 +87,16 @@ export const SPRING_WATCH_LABELS: Record<string, string> = {
   'spring.watch.collector.retry.dropped': '丢弃条数',
   'spring.watch.collector.retry.rejected': '拒绝入队',
 
-  // Kafka 兜底
-  'spring.watch.collector.kafka.fallback.size': '兜底队列长度',
-  'spring.watch.kafka.fallback.queue.size': '兜底队列长度',
-  'spring.watch.kafka.fallback.rejected': '兜底被拒',
-  'spring.watch.kafka.fallback.stale_dropped': '过期丢弃',
-  'spring.watch.kafka.fallback.truncated': '截断丢弃',
+  // InflightQueue(v2.0 替代 Kafka)
+  'spring.watch.inflight.producer.sent':        '投递条数',
+  'spring.watch.inflight.producer.drained':     '消费条数',
+  'spring.watch.inflight.producer.rejected':    '拒绝入队',
+  'spring.watch.inflight.queue.pending':        '当前滞留',
+  'spring.watch.inflight.queue.capacity':       '容量上限',
+  'spring.watch.inflight.wal.append.fail':      'WAL 落盘失败',
+  'spring.watch.inflight.consumer.batch.size':  '消费批大小',
+  'spring.watch.inflight.wal.segments':         'WAL 段数',
+  'spring.watch.inflight.rebalance.migrate':   'Rebalancer 迁移次数',
 
   // 主机限流
   'spring.watch.collector.host_throttler.active': '已注册主机',
@@ -114,11 +119,6 @@ export const SPRING_WATCH_LABELS: Record<string, string> = {
   'spring.watch.infra.poll.fail': '采集失败',
   'spring.watch.infra.last_poll_epoch_ms': '上次采集时间',
   'spring.watch.infra.last_success_epoch_ms': '上次成功时间',
-
-  // Kafka lag
-  'spring.watch.kafka.lag.poll.ok': 'Lag 采集成功',
-  'spring.watch.kafka.lag.poll.fail': 'Lag 采集失败',
-  'spring.watch.kafka.lag.last_success_epoch_ms': 'Lag 上次成功',
 
   // 自监控
   'spring.watch.self.metric.query.latest': '自身指标最新值查询',
@@ -208,7 +208,6 @@ const FALLBACK_PREFIX_LABELS: Record<string, string> = {
   'spring.watch.jvm.g1.oldgen': 'G1 老年代',
   'spring.watch.jvm.g1.survivor': 'G1 Survivor 区',
   'spring.watch.jvm': 'JVM',
-  'spring.watch.kafka': 'Kafka',
   'spring.watch.alert': '告警',
   'spring.watch.collector': '采集器',
   'spring.watch.consumer': '消费',
@@ -218,9 +217,9 @@ const FALLBACK_PREFIX_LABELS: Record<string, string> = {
   'spring.watch.metric': '指标',
   'spring.watch.log': '日志',
   'spring.watch.influxdb': 'InfluxDB',
+  'spring.watch.inflight': 'InflightQueue',
   'spring.watch.infra': '基础设施',
   'spring.watch.self': '自身',
-  'kafka': 'Kafka',
   'producer': 'Producer',
   'broker': 'Broker',
   'go_memstats': 'Go 内存',

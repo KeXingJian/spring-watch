@@ -3,21 +3,21 @@ import { ref, computed, onMounted, onBeforeUnmount, provide, watch } from 'vue'
 import { useSelfMonitor } from '@/composables/useSelfMonitor'
 import { formatPercent } from '@/utils/format'
 import InfluxDbPane from '@/views/selfmonitor/InfluxDbPane.vue'
-import KafkaPane from '@/views/selfmonitor/KafkaPane.vue'
+import InflightPane from '@/views/selfmonitor/InflightPane.vue'
 import OverviewPane from '@/views/selfmonitor/OverviewPane.vue'
 import CollectPane from '@/views/selfmonitor/CollectPane.vue'
 import JvmPane from '@/views/selfmonitor/JvmPane.vue'
 import ProcessPane from '@/views/selfmonitor/ProcessPane.vue'
 import MetersPane from '@/views/selfmonitor/MetersPane.vue'
 
-type Tab = 'overview' | 'collect' | 'jvm' | 'process' | 'meters' | 'influxdb' | 'kafka'
+type Tab = 'overview' | 'collect' | 'jvm' | 'process' | 'meters' | 'influxdb' | 'inflight'
 const tabs: { key: Tab; label: string }[] = [
   { key: 'overview', label: '总览' },
   { key: 'collect',  label: '采集' },
   { key: 'jvm',      label: 'JVM' },
   { key: 'process',  label: '进程' },
   { key: 'influxdb', label: 'InfluxDB' },
-  { key: 'kafka',    label: 'Kafka' },
+  { key: 'inflight', label: 'InflightQueue' },
   { key: 'meters',   label: '指标库' }
 ]
 const activeTab = ref<Tab>('overview')
@@ -115,9 +115,9 @@ watch(pollSec, () => startRealtimePolling())
       <div class="section-title">InfluxDB · {{ meta }}</div>
       <InfluxDbPane />
     </template>
-    <template v-else-if="activeTab === 'kafka'">
-      <div class="section-title">Kafka · {{ meta }}</div>
-      <KafkaPane />
+    <template v-else-if="activeTab === 'inflight'">
+      <div class="section-title">InflightQueue · {{ meta }}</div>
+      <InflightPane />
     </template>
   </div>
 </template>

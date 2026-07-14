@@ -1,0 +1,16 @@
+spring-watch:
+  log:
+    env: dev # 当前环境标识（影响链路关联等行为）
+    dedup:
+      window-seconds: 60 # 去重窗口（秒），Caffeine expireAfterWrite 主约束
+      max-entries: 200000 # 严格有界：硬上限 entry 数，LRU(W-TinyLFU) 淘汰；超 0 evict_size 需扩
+      flush-interval-ms: 30000 # 计数刷新间隔（毫秒）
+    anomaly:
+      rate-ttl-seconds: 600 # 异常率窗口 TTL（秒），Caffeine expireAfterWrite
+      pattern-ttl-hours: 168 # 异常模式 TTL（小时），Caffeine expireAfterWrite
+      min-base-rate: 0.01 # 触发异常的最小基准率
+      max-appids: 200 # 严格有界：lastRate/knownPatterns 外层缓存硬上限 entry 数（按 appid 维度）
+      max-patterns-per-appid: 5000 # 严格有界：单 appid 已知模式 LRU 上限
+    alert:
+      error-rate-window-seconds: 60 # 错误率计算窗口（秒）
+      error-rate-interval-ms: 60000 # 错误率计算间隔（毫秒）

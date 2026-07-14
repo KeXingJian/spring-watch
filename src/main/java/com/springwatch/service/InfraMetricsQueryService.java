@@ -28,7 +28,7 @@ public class InfraMetricsQueryService {
     private String infraBucket;
 
     public List<String> listComponents() {
-        return List.of("influxdb", "kafka");
+        return List.of("influxdb");
     }
 
     public List<String> listMetrics(String component) {

@@ -4,7 +4,6 @@ import com.influxdb.client.WriteApi;
 import com.influxdb.client.domain.WritePrecision;
 import com.influxdb.client.write.Point;
 import com.influxdb.client.write.WriteParameters;
-import com.springwatch.collector.KafkaFallbackQueue;
 import com.sun.management.OperatingSystemMXBean;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Gauge;
@@ -73,9 +72,8 @@ public class SelfMonitorCollector {
     private static final Set<String> METER_WHITELIST_PREFIXES = Set.of(
             "spring.watch.http.",
             "spring.watch.collector.http.",
-            "spring.watch.collector.kafka.",
+            "spring.watch.inflight.",
             "spring.watch.consumer.",
-            "spring.watch.kafka.",
             "spring.watch.jvm.",
             "spring.watch.influxdb.",
             "spring.watch.system.",
@@ -87,7 +85,6 @@ public class SelfMonitorCollector {
     );
 
     private final MeterRegistry meterRegistry;
-    private final KafkaFallbackQueue kafkaFallbackQueue;
     @Qualifier("selfMetricsWriteApi")
     private final WriteApi writeApi;
     private final WriteParameters selfMetricsWriteParameters;
@@ -119,9 +116,6 @@ public class SelfMonitorCollector {
                 .register(meterRegistry);
         this.persistFailCounter = Counter.builder("spring.watch.self.monitor.persist.fail")
                 .description("自监控指标写入 InfluxDB 失败次数")
-                .register(meterRegistry);
-        Gauge.builder("spring.watch.collector.kafka.fallback.size", kafkaFallbackQueue, KafkaFallbackQueue::size)
-                .description("Kafka 兜底队列当前堆积")
                 .register(meterRegistry);
 
         Gauge.builder("spring.watch.self.monitor.ring.size", this, s -> (double) s.size())
@@ -181,8 +175,8 @@ public class SelfMonitorCollector {
      * 此时:
      *   - Flyway 全部迁移已跑完,alert_history / alert_rule 等表已存在
      *   - InfluxDBBucketInitializer / InfraMetricsBucketInitializer 已建好 self_metrics / infra_metrics bucket
-     *   - KafkaTopicConfig 已通过 NewTopic Bean 创建 monitor-* topic
-     *   - Kafka producer / consumer 已启动
+     *   - InflightQueue 已启动 K×3 个 partition,InflightMetrics 7 个指标已注册
+     *   - InflightConsumer N 个虚拟线程已启动消费
      */
     @EventListener(ApplicationReadyEvent.class)
     public void onApplicationReady() {
@@ -217,7 +211,7 @@ public class SelfMonitorCollector {
 
     /**
      * 把一次 sample 扁平化后批量写入 InfluxDB self_metrics 桶。
-     * 与 BatchMetricConsumer 走同一个 WriteApi（共享写缓冲/重试/限速），失败仅打点不抛。
+     * 与 InflightConsumer → MetricEventWriter 走同一个 WriteApi（共享写缓冲/重试/限速），失败仅打点不抛。
      */
     private void persist(Sample s) {
         List<Point> points;

@@ -1,0 +1,81 @@
+spring-watch:
+  alert:
+    enabled: true # 是否开启告警
+    mail:
+      from: 2787901285@qq.com # 发件人邮箱
+    state-store:
+      ttl-hours: 24 # 告警状态存储 TTL（小时），Caffeine per-entry Expiry
+      max-entries: 50000 # 严格有界：硬上限 entry 数，LRU(W-TinyLFU) 淘汰；超 0 evict_size 需扩
+      scan-max-entries: 200 # scanPending 单次返回上限
+    rule-cache:
+      refresh-interval-ms: 30000 # 告警规则缓存刷新间隔（毫秒）
+    executor:
+      pool-size: 8 # 告警执行线程池大小（虚拟线程并发上限）
+    scan:
+      interval-ms: 5000 # 扫描间隔（毫秒）
+      batch-size: 200 # 每批扫描条数
+    history:
+      retention-days: 90 # 告警历史保留天数（P0-5）
+  infra-alerts:
+    enabled: true
+    appid: -1 # 基础设施告警复用的 MonitorApp.appid（负数为 sentinel, CollectScheduleRegistry 会跳过）
+    app-name: infra-self
+    poll-interval-ms: 60000
+    rules:
+      - name: influxdb_tsm_cache_high
+        component: influxdb
+        metric: tsm1_engine.cacheSizeBytes
+        op: ">"
+        threshold: 200000000
+        level: warning
+        cooldown-seconds: 300
+      - name: jvm_old_gen_high_pct
+        component: springwatch
+        metric: jvm.g1.oldgen.pct
+        op: ">"
+        threshold: 85
+        level: critical
+        cooldown-seconds: 300
+      - name: influxdb_heap_high
+        component: influxdb
+        metric: go_memstats.heapInuseBytes
+        op: ">"
+        threshold: 800000000
+        level: warning
+        cooldown-seconds: 300
+      - name: influxdb_write_queue_high
+        component: springwatch
+        metric: spring.watch.influxdb.write.queue.size
+        op: ">"
+        threshold: 15000
+        level: warning
+        cooldown-seconds: 300
+      # v2.0:InfllightQueue 替代 Kafka,新增 4 个 InflightQueue 相关告警
+      - name: inflight_pending_high
+        component: springwatch
+        metric: spring.watch.inflight.queue.pending
+        op: ">"
+        threshold: 40000 # buffer 容量 50000 × 80%
+        level: warning
+        cooldown-seconds: 300
+      - name: inflight_producer_rejected
+        component: springwatch
+        metric: spring.watch.inflight.producer.rejected
+        op: ">"
+        threshold: 0
+        level: warning
+        cooldown-seconds: 300
+      - name: inflight_wal_append_fail
+        component: springwatch
+        metric: spring.watch.inflight.wal.append.fail
+        op: ">"
+        threshold: 0
+        level: critical
+        cooldown-seconds: 300
+      - name: inflight_consumer_batch_small
+        component: springwatch
+        metric: spring.watch.inflight.consumer.batch.size
+        op: "<"
+        threshold: 10 # 单批 < 10 条说明 consumer 等批太久或上游数据少
+        level: info
+        cooldown-seconds: 600

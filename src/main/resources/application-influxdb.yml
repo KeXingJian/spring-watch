@@ -1,0 +1,27 @@
+influxdb:
+  url: http://localhost:8086 # InfluxDB 地址
+  token: sw-token-2024 # 访问令牌
+  org: spring-watch # 组织名
+  metrics-bucket: metrics # 原始指标桶
+  log-bucket: logs # 原始日志桶
+  self-metrics-bucket: self_metrics # 自监控指标桶（与自监控 24h 展示对齐）
+  metrics-downsample-bucket: metrics_5m # 5 分钟降采样指标桶
+  log-downsample-bucket: logs_5m # 5 分钟降采样日志桶
+  infra-bucket: infra_metrics # 基础设施指标桶（InfluxDB _internal + Kafka lag 等）
+  retention:
+    metrics-seconds: 604800 # 原始指标保留时长（秒，7 天）
+    log-seconds: 259200 # 原始日志保留时长（秒，3 天）
+    self-metrics-seconds: 21600 # 自监控指标保留时长（秒，6h：自监控面板只显示 24h 留 1h 够用）
+    downsample-seconds: 2592000 # 降采样数据保留时长（秒，30 天）
+    infra-seconds: 604800 # 基础设施指标保留时长（秒，7 天）
+  downsample:
+    enabled: true # 是否开启降采样
+    every: 5m # 降采样执行频率
+    window: 5m # 降采样窗口大小
+    task-every: 1h # 任务调度频率
+  write:
+    retry-interval-ms: 1000 # 写入失败重试间隔（毫秒）
+    max-retries: 3 # 最大重试次数
+    max-retry-delay-ms: 5000 # 单次重试最大延迟（毫秒）
+    max-retry-time-ms: 60000 # 整体重试最大耗时（毫秒）
+    jitter-interval-ms: 200 # 重试抖动（毫秒）

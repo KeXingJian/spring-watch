@@ -1,0 +1,7 @@
+spring-watch:
+  infra-metrics:
+    enabled: true # 启用基础设施指标采集（InfluxDB /metrics 端点）
+    poll-interval-sec: 30 # 采集周期（秒）
+    request-timeout-ms: 5000 # HTTP 请求超时
+  influxdb:
+    admin-token: sw-token-2024 # 调 InfluxDB /metrics 端点用的 token（需含读权限）

@@ -1,0 +1,29 @@
+spring-watch:
+  inflight:                                  # v2.1: 自研 InflightQueue(纯内存,无 WAL)
+    enabled: true
+    partitions:                               # per-topic partition 数(高频多,低频少)
+      monitor-metrics:        3               # 指标高频(15s/次 × 100 目标)
+      monitor-logs:           3               # 日志高频(实时流)
+      monitor-heartbeat:      1               # 心跳低频(15s/次)
+      monitor-metrics.dlq:    1               # DLQ 专用 - 指标失败
+      monitor-logs.dlq:       1               # DLQ 专用 - 日志失败
+      monitor-heartbeat.dlq:  1               # DLQ 专用 - 心跳失败
+    buffer-capacity: 50000                   # 每 partition 内存配额
+    routing:
+      strategy: power_of_two_choices
+      rebalance:
+        enabled: true
+        interval-seconds: 60
+        pending-threshold-ratio: 1.5
+        underloaded-threshold-ratio: 0.5
+        migrate-top-n: 3
+    consumer:                                 # per-topic 虚拟线程数
+      poll-max-batch: 200
+      poll-wait-ms: 100
+      concurrency:
+        monitor-metrics:        2
+        monitor-logs:           2
+        monitor-heartbeat:      1
+        monitor-metrics.dlq:    1
+        monitor-logs.dlq:       1
+        monitor-heartbeat.dlq:  1

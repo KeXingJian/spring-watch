@@ -1,5 +1,6 @@
 package com.springwatch.collector;
 
+import com.springwatch.inflight.InflightProducerBridge;
 import com.springwatch.model.event.LogEvent;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -13,18 +14,17 @@ import java.net.URI;
 import java.time.Instant;
 
 /**
- * 拉取 Agent 日志并入 Kafka。
+ * 拉取 Agent 日志并入 InflightQueue(自研,替代 Kafka)。
  * P0-2: 改用 InputStream 替代 ofByteArray,避免全 body 入堆
  * P1-2: 内部 JsonParser 逐条流式解析
  * P2-1: 返回 Result(ok + latestTimestamp + latencyMs + error),失败/成功可区分
- *       与 AgentMetricsCollector 对齐,让 doHeavyWork 合并 outcome + total latency
  */
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class AgentLogCollector {
 
-    private final KafkaProducerBridge kafkaProducerBridge;
+    private final InflightProducerBridge inflightProducerBridge;
     private final ObjectMapper objectMapper;
     private final AgentHttpClient agentHttpClient;
 
@@ -76,7 +76,7 @@ public class AgentLogCollector {
                 if (event.getHost() == null && remoteHost != null) {
                     event.setHost(remoteHost);
                 }
-                kafkaProducerBridge.sendLog(event);
+                inflightProducerBridge.sendLog(event);
                 if (event.getTimestamp().isAfter(latest)) {
                     latest = event.getTimestamp();
                 }

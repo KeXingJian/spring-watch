@@ -7,8 +7,9 @@ type Range = '5m' | '15m' | '1h' | '6h' | '24h'
 type Point = [number, number | null]
 
 /**
- * 基础设施单一组件(InfluxDB / Kafka)的数据获取与轮询。
+ * 基础设施单一组件(InfluxDB)的数据获取与轮询。
  * 每个调用方传一个 component 名,内部独立维护状态,30s 自动刷新。
+ * v2.0:InflightQueue 改用 InflightPane.vue(走 self_metrics 路径),不再走此 composable。
  */
 export function useInfraComponent(component: string) {
   const status = ref<any>(null)
