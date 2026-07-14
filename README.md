@@ -126,7 +126,7 @@ npm run build
 - [x] 可视化（Vite + Vue 3 + TS + Pinia SPA，7 大自监控模块 + 4 大应用详情模块 + 告警 / 日志 / 应用 / 邮件配置）
 - [x] 自监控（Micrometer + InfluxDB `self_metrics` / `infra_metrics` 双桶 + Kafka 集群健康 + 4 个 WriteApi 内部状态面板）
 - [x] REST API（应用注册 / 指标查询 / 日志检索 / 告警 CRUD / 基础设施指标 / 自监控）
-- [x] **Kafka partition 收敛**（v1.5 实测后 `monitor-metrics=12→3` / `monitor-logs=6→3` / `monitor-heartbeat=3→1` / `*.DLQ=3→1`，详见[白皮书 §0.5 调研结论](白皮书.md#05-部署形态全部单实例故意不集群化)）
+- [x] **Kafka partition 收敛**（v1.5 实测后 `monitor-metrics=12→3` / `monitor-logs=6→3` / `monitor-heartbeat=3→1` / `*.DLQ=3→1`，详见[白皮书 0.5 调研结论](白皮书.md#05-部署形态全部单实例故意不集群化)）
 - [x] **WriteApi 4 桶分桶**（v1.4 `M-WriteApiSplit` 落地，`metricsWriteApi` / `logsWriteApi` / `selfMetricsWriteApi` / `infraWriteApi` 独立 buffer，单批体积 5x）
 - [x] **多个启动时序坑修复**（V12.1 普通 `CREATE INDEX` 治本 / `SelfMonitorCollector` 拆 `registerMeters` + `onApplicationReady` / `lombok.config` 全局 `@Qualifier` 传递 / `influxdb.conf` 移除走 2.x 默认配置）
 

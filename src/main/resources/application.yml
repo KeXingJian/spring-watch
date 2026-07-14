@@ -293,7 +293,7 @@ spring:
       concurrency: 3 # 消费者并发数
       poll-timeout: 200 # poll 超时（毫秒）
     topics:
-      metrics-partitions: 3 # 指标 topic 分区数(v1.5 收敛: 12→3,白皮书 §0.5 实测后保持收敛)
+      metrics-partitions: 3 # 指标 topic 分区数(v1.5 收敛: 12→3,白皮书 0.5 实测后保持收敛)
       logs-partitions: 3 # 日志 topic 分区数(v1.5 收敛: 6→3)
       heartbeat-partitions: 1 # 心跳 topic 分区数(v1.5 收敛: 3→1,心跳低频)
       dlq-partitions: 1 # 死信队列分区数(v1.5 收敛: 3→1,死信极低频)

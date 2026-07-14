@@ -74,7 +74,7 @@ public class InfluxDBConfig {
 
     // ============================================================
     //  M-WriteApiSplit: 拆 4 个独立 WriteApi Bean,各桶独立 batch/flush/buffer
-    //  原因(白皮书 §0.5):原 1 个共享 WriteApi,3 个 topic 互相抢 buffer,
+    //  原因(白皮书 0.5):原 1 个共享 WriteApi,3 个 topic 互相抢 buffer,
     //  metrics flush 卡住时 logs 也跟着卡。拆分后互不干扰。
     //
     //  4 个桶独立调参:

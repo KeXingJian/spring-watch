@@ -4,7 +4,7 @@
 -- 历史(M-WriteApiSplit 期间事故 2026-06-29):
 --   原版用 [non-transactional] + CREATE INDEX CONCURRENTLY,在 PG 上把 HikariCP connection
 --   占了 4 分多钟,导致 Flyway 后续 V12.2 / V13 拿不到连接卡死,ApplicationReadyEvent 不触发,
---   InfluxDB bucket 不建。事故见白皮书 §0.5 时序问题。
+--   InfluxDB bucket 不建。事故见白皮书 0.5 时序问题。
 --
 -- 现改成普通事务 + 普通 CREATE INDEX:
 --   - alert_history / monitor_app 是小表(几行~几千行),锁表几毫秒可接受

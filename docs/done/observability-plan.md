@@ -251,7 +251,7 @@ monitor-heartbeat.DLQ 3 partition
 
 #### C.6 Partition 利用率(2026-06-29 新增,M-PartitionUtil 调研项)
 
-**目的**:白皮书 §0.5 提出"单机下 Kafka 多分区没收益"的判断,需 1~2 周实测数据支撑/反驳当前 `monitor-metrics=12 / logs=6 / heartbeat=3` 是否冗余。
+**目的**:白皮书 0.5 提出"单机下 Kafka 多分区没收益"的判断,需 1~2 周实测数据支撑/反驳当前 `monitor-metrics=12 / logs=6 / heartbeat=3` 是否冗余。
 
 **数据源**:`KafkaPartitionUtilizationGauge.java`,纯 AdminClient 采样,**不依赖 JMX**。
 
@@ -275,7 +275,7 @@ monitor-heartbeat.DLQ 3 partition
 | **produce vs consume 速率对比**(按 topic) | Stacked time series | `SELECT mean(produced_rate) AS produced, mean(consumed_rate) AS consumed FROM ... GROUP BY topic, time(1m)` | topic 整体健康度(produce ≈ consume = 健康;produce >> consume = 积压) |
 | **总 lag**(按 topic) | Time series | `SELECT sum(lag) FROM ... GROUP BY topic, time(1m)` | 已有 KafkaLagMonitor 复盘对比 |
 
-**判断规则**(白皮书 §0.5 决策表,跑 1~2 周后回看):
+**判断规则**(白皮书 0.5 决策表,跑 1~2 周后回看):
 
 | 观察到的现象 | 结论 | 建议动作 |
 |---|---|---|

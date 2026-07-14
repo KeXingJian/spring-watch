@@ -145,7 +145,7 @@ flowchart TB
 ```
 
 **关键设计点**:
-- **拉模型**:平台主动 HTTP GET 目标,目标永不推送(`白皮书 §0.5 约束 1`)
+- **拉模型**:平台主动 HTTP GET 目标,目标永不推送(`白皮书 0.5 约束 1`)
 - **5 桶分桶 + 4 WriteApi**:`metrics` / `logs` / `self_metrics` / `metrics_5m` / `infra_metrics`,各走独立 buffer
 - **Kafka 单 broker + Caffeine 替代 Redis**:v1.5/1.6 收敛,零外置状态依赖
 - **三栈可观测**:spring-watch 自身 + InfluxDB + Kafka 全部经 30s 周期拉取进 `infra_metrics` 桶
@@ -249,7 +249,7 @@ flowchart TB
     end
 ```
 
-**WriteApi 分桶原因**(`白皮书 §0.5 M-WriteApiSplit`):
+**WriteApi 分桶原因**(`白皮书 0.5 M-WriteApiSplit`):
 - 各 WriteApi 独立 buffer / batch / flush 节奏
 - 业务 metric 写爆不会拖死 self_metrics 写入
 - 单批体积 5x,减少 InfluxDB HTTP 握手次数
@@ -371,7 +371,7 @@ flowchart LR
     I4 --> C4
 ```
 
-**v1.6 收敛原因**(`白皮书 §0.6.3`):单实例部署下 Redis 是多余依赖,Caffeine 单机性能优于 Redis 网络往返。
+**v1.6 收敛原因**(`白皮书 0.6.3`):单实例部署下 Redis 是多余依赖,Caffeine 单机性能优于 Redis 网络往返。
 
 ---
 
@@ -402,7 +402,7 @@ flowchart TB
     C1 -->|HTTP GET 15s| TN
 ```
 
-**资源基线**(`白皮书 §0.4`):
+**资源基线**(`白皮书 0.4`):
 | 组件 | CPU | 内存 |
 |---|---|---|
 | spring-watch JVM | 2~4 核 | 3~4 GB heap |
@@ -417,10 +417,10 @@ flowchart TB
 
 | 决策 | 选择 | 备选 | 理由 |
 |---|---|---|---|
-| 拉 vs 推 | 拉 | 推(OTLP) | `白皮书 §0.5 约束 1` 不可违反 |
+| 拉 vs 推 | 拉 | 推(OTLP) | `白皮书 0.5 约束 1` 不可违反 |
 | 存储 | InfluxDB 2.7 | Prometheus + Loki | 单技术栈,运维成本低 |
 | 本地缓存 | Caffeine | Redis | 单实例下 Redis 是冗余依赖 |
-| Kafka 分区 | 3/3/1/1 | 12/6/3/3 | `白皮书 §0.5` 实测多分区无收益 |
+| Kafka 分区 | 3/3/1/1 | 12/6/3/3 | `白皮书 0.5` 实测多分区无收益 |
 | WriteApi | 4 桶分桶 | 1 个共享 | 单批体积 5x,故障隔离 |
 | 告警表达式 | JEXL | 自研 DSL | 复用开源,表达式灵活 |
 | 字节码 | OTel v1 / 自研 v2 | Spring AOP | 必须 Agent 拦截,AOP 失效 |
