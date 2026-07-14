@@ -18,7 +18,6 @@ public class BackpressureException extends RuntimeException {
     public Reason getReason() { return reason; }
 
     public enum Reason {
-        IN_FLIGHT_FULL,
-        WAL_APPEND_FAIL
+        IN_FLIGHT_FULL
     }
 }

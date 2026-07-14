@@ -27,7 +27,15 @@ let pollTimer: number | null = null
 
 function gaugeVal(realtime: any, name: string): number | null {
   if (!realtime || !realtime.meters) return null
-  return (realtime.meters.gauges || {})[name] ?? null
+  const entry = (realtime.meters.gauges || {})[name]
+  if (entry == null) return null
+  if (typeof entry === 'number') return entry
+  if (Array.isArray(entry)) {
+    const vals = entry.map((e: any) => e?.value).filter((v: any) => v != null) as number[]
+    if (!vals.length) return null
+    return vals.reduce((a, b) => a + b, 0)
+  }
+  return entry.value ?? null
 }
 
 async function loadRetention() {

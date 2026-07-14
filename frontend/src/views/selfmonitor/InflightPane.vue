@@ -13,15 +13,16 @@ const TOPICS = ['monitor-metrics', 'monitor-logs', 'monitor-heartbeat'] as const
 
 const { range, rangeStartTs, rangeEndTs, rangeMs, everyForRange } = useSelfMonitor()
 
-// v2.0:InflightQueue 7 个核心指标(对应 InflightMetrics 7 个 meter 名)
-const SUMMARY_METRICS: { key: string; label: string; agg: 'rate' | 'last' | 'mean'; meterType?: 'counter' | 'gauge' }[] = [
+// v2.0:InflightQueue 核心指标(对应 InflightMetrics meter 名);
+// 消费批大小是 DistributionSummary,SelfMonitorCollector 已把 p50/p95/p99 展开成带 quantile tag 的 Point,
+// 1 张卡片里同图展示 3 条曲线,右侧最新值固定显示 p50(中位批大小)
+const SUMMARY_METRICS: { key: string; label: string; agg: 'rate' | 'last' | 'mean'; meterType?: 'counter' | 'gauge' | 'summary'; quantiles?: string[] }[] = [
   { key: 'spring.watch.inflight.producer.sent',        label: '投递速率(producer.sent /s)',         agg: 'rate',  meterType: 'counter' },
   { key: 'spring.watch.inflight.producer.drained',     label: '消费速率(producer.drained /s)',      agg: 'rate',  meterType: 'counter' },
   { key: 'spring.watch.inflight.producer.rejected',    label: '拒绝速率(producer.rejected /s)',     agg: 'rate',  meterType: 'counter' },
   { key: 'spring.watch.inflight.queue.pending',        label: '总滞留(queue.pending)',             agg: 'last',  meterType: 'gauge'   },
   { key: 'spring.watch.inflight.queue.capacity',       label: '总容量(queue.capacity)',             agg: 'last',  meterType: 'gauge'   },
-  { key: 'spring.watch.inflight.wal.append.fail',      label: 'WAL 落盘失败(/s)',                   agg: 'rate',  meterType: 'counter' },
-  { key: 'spring.watch.inflight.consumer.batch.size',  label: '消费批大小(p50)',                    agg: 'mean',  meterType: 'gauge'   }
+  { key: 'spring.watch.inflight.consumer.batch.size',  label: '消费批大小(p50/p95/p99)',           agg: 'last',  meterType: 'summary', quantiles: ['0.50', '0.95', '0.99'] }
 ]
 
 // per-partition 滞留 topic × partition 二维分布
@@ -32,7 +33,7 @@ const PARTITION_METRICS = [
 
 const perTopicPending = ref<Record<string, LineSeriesItem[]>>({})
 const perTopicCapacity = ref<Record<string, LineSeriesItem[]>>({})
-const summary = ref<{ metric: string; label: string; data: LineSeriesItem[] }[]>([])
+const summary = ref<{ metric: string; label: string; data: LineSeriesItem[]; key: string }[]>([])
 const latestValues = ref<Record<string, number | null>>({})
 const loading = ref(false)
 const lastError = ref<string | null>(null)
@@ -43,11 +44,30 @@ function partitionLabel(seriesName: string, topic: string): string {
   return p != null ? `p${p}` : 'p?'
 }
 
+// 后端 SelfMetricQueryService.parseSeries 把 series.name 拼成
+// `metric{appid=self,category=meter,meter_type=gauge,topic=...,partition=0}` 这种全量 tag 形式,
+// ECharts legend 多个 series 拼起来宽度爆炸被截断,这里剥掉系统 tag 只留业务 tag(topic/partition/pool_name/gc_name)
+const SYSTEM_TAGS = new Set(['appid', 'category', 'meter_type'])
+function shortName(rawName: string, fallback: string): string {
+  if (!rawName) return fallback
+  const m = rawName.match(/^([^{]+)(?:\{(.+)\})?$/)
+  if (!m) return rawName
+  const metric = m[1]
+  const tagPart = m[2]
+  if (!tagPart) return metric
+  const kept = tagPart.split(',').filter(t => {
+    const k = t.split('=')[0]
+    return !SYSTEM_TAGS.has(k)
+  })
+  if (!kept.length) return metric
+  return `${metric}{${kept.join(',')}}`
+}
+
 function nowRange() {
   return { from: new Date(Date.now() - rangeMs()).toISOString(), to: new Date().toISOString() }
 }
 
-async function fetchSeriesByMetric(metric: string, agg: string, meterType?: 'counter' | 'gauge'): Promise<LineSeriesItem[]> {
+async function fetchSeriesByMetric(metric: string, agg: string, meterType?: 'counter' | 'gauge' | 'summary', quantile?: string): Promise<LineSeriesItem[]> {
   const { from, to } = nowRange()
   const params: Record<string, unknown> = {
     category: 'meter',
@@ -58,11 +78,12 @@ async function fetchSeriesByMetric(metric: string, agg: string, meterType?: 'cou
     every: everyForRange()
   }
   if (meterType) params.meterType = meterType
+  if (quantile) params.quantile = quantile
   try {
     const resp: any = await api.get('/api/self/series', params)
     const series = resp?.series || []
     return series.map((s: any) => ({
-      name: s.name || metric,
+      name: shortName(s.name, metric),
       points: (s.points || []).map((p: any) => [new Date(p.t).getTime(), p.v == null ? null : Number(p.v)])
     }))
   } catch (e: any) {
@@ -70,14 +91,42 @@ async function fetchSeriesByMetric(metric: string, agg: string, meterType?: 'cou
   }
 }
 
-async function fetchLatest(metric: string, meterType?: 'counter' | 'gauge'): Promise<number | null> {
+// 1 张卡片里同图展示 N 条曲线:并发拉每个 quantile 的 series,合并返回,series.name 加 p50/p95/p99 前缀便于 legend 区分
+async function fetchSeriesByQuantiles(metric: string, meterType: 'summary' | 'counter' | 'gauge', quantiles: string[]): Promise<LineSeriesItem[]> {
+  const lists = await Promise.all(quantiles.map(q => fetchSeriesByMetric(metric, 'last', meterType, q)))
+  const out: LineSeriesItem[] = []
+  for (let i = 0; i < quantiles.length; i++) {
+    const q = quantiles[i]
+    const tag = quantileTag(q)
+    for (const s of lists[i]) {
+      out.push({ name: `${tag} ${s.name}`, points: s.points })
+    }
+  }
+  return out
+}
+
+function quantileTag(q: string): string {
+  if (q === '0.50') return 'p50'
+  if (q === '0.95') return 'p95'
+  if (q === '0.99') return 'p99'
+  return `p${Math.round(parseFloat(q) * 100)}`
+}
+
+async function fetchLatest(metric: string, meterType?: 'counter' | 'gauge' | 'summary', quantile?: string): Promise<number | null> {
   const params: Record<string, unknown> = { category: 'meter', metric, agg: 'last' }
   if (meterType) params.meterType = meterType
+  if (quantile) params.quantile = quantile
   try {
     const resp: any = await api.get('/api/self/latest', params)
     if (resp?.rows && resp.rows.length > 0) {
-      const v = resp.rows[0].value
-      return v == null ? null : Number(v)
+      // Counter(如 sent/rejected/drained)按 topic×partition 拆成多 series,这里取总和;
+      // Gauge(如 queue.pending)在 4 partition 各自一份,取最大避免重复累加;
+      // Summary(如 batch.size p50/p95/p99)在 4 partition × 3 topic 展开,取平均体现典型批大小
+      const vals = resp.rows.map((r: any) => r.value).filter((v: any) => v != null).map(Number)
+      if (!vals.length) return null
+      if (meterType === 'gauge') return Math.max(...vals)
+      if (meterType === 'summary') return vals.reduce((a: number, b: number) => a + b, 0) / vals.length
+      return vals.reduce((a: number, b: number) => a + b, 0)
     }
     return null
   } catch {
@@ -100,12 +149,13 @@ async function pollOnce() {
         to: new Date().toISOString(),
         agg: 'last',
         every: everyForRange(),
-        meterType: 'gauge'
+        meterType: 'gauge',
+        topic
       }
       try {
-        const resp: any = await api.get('/api/self/series', { ...params, topic })
+        const resp: any = await api.get('/api/self/series', params)
         const series = (resp?.series || []).map((s: any) => ({
-          name: s.name,
+          name: shortName(s.name, 'pending'),
           points: (s.points || []).map((p: any) => [new Date(p.t).getTime(), p.v == null ? null : Number(p.v)])
         })) as LineSeriesItem[]
         pendingByTopic[topic] = series
@@ -117,7 +167,7 @@ async function pollOnce() {
       try {
         const resp: any = await api.get('/api/self/series', capParams)
         const series = (resp?.series || []).map((s: any) => ({
-          name: s.name,
+          name: shortName(s.name, 'capacity'),
           points: (s.points || []).map((p: any) => [new Date(p.t).getTime(), p.v == null ? null : Number(p.v)])
         })) as LineSeriesItem[]
         capacityByTopic[topic] = series
@@ -128,13 +178,17 @@ async function pollOnce() {
     perTopicPending.value = pendingByTopic
     perTopicCapacity.value = capacityByTopic
 
-    // 2) 7 个汇总指标
-    const sumResults: { metric: string; label: string; data: LineSeriesItem[] }[] = []
+    // 2) 汇总指标(消费批大小 1 张卡片内展示 p50/p95/p99 三条曲线;latest 用 p50 体现中位批大小)
+    const sumResults: { metric: string; label: string; data: LineSeriesItem[]; key: string }[] = []
     const latest: Record<string, number | null> = {}
     for (const m of SUMMARY_METRICS) {
-      const data = await fetchSeriesByMetric(m.key, m.agg, m.meterType)
-      sumResults.push({ metric: m.key, label: m.label, data })
-      latest[m.key] = await fetchLatest(m.key, m.meterType)
+      const data = m.quantiles
+        ? await fetchSeriesByQuantiles(m.key, m.meterType || 'summary', m.quantiles)
+        : await fetchSeriesByMetric(m.key, m.agg, m.meterType)
+      sumResults.push({ metric: m.key, label: m.label, data, key: m.key })
+      latest[m.key] = m.quantiles
+        ? await fetchLatest(m.key, m.meterType, '0.50')
+        : await fetchLatest(m.key, m.meterType)
     }
     summary.value = sumResults
     latestValues.value = latest
@@ -170,10 +224,10 @@ function usagePercent(topic: string): number {
   const pendings = perTopicPending.value[topic] || []
   const capacities = perTopicCapacity.value[topic] || []
   if (!pendings.length || !capacities.length) return 0
-  const lastP = pendings[0].points[pendings[0].points.length - 1]?.[1] ?? 0
-  const lastC = capacities[0].points[capacities[0].points.length - 1]?.[1] ?? 0
-  if (!lastC) return 0
-  return (lastP as number) / (lastC as number) * 100
+  const totalP = pendings.reduce((s, x) => s + (x.points[x.points.length - 1]?.[1] ?? 0), 0)
+  const totalC = capacities.reduce((s, x) => s + (x.points[x.points.length - 1]?.[1] ?? 0), 0)
+  if (!totalC) return 0
+  return (totalP as number) / (totalC as number) * 100
 }
 
 onMounted(() => { startPolling() })
@@ -241,17 +295,17 @@ watch(() => range.value, () => pollOnce())
         <EmptyState v-else inline>暂无滞留数据</EmptyState>
       </div>
 
-      <!-- 7 个汇总指标 -->
+      <!-- 汇总指标(消费批大小 1 张卡片,p50/p95/p99 三条曲线同图) -->
       <div class="section-title">汇总指标</div>
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
-        <div v-for="it in summary" :key="it.metric" class="border border-base-300 rounded p-2">
+        <div v-for="it in summary" :key="it.key" class="border border-base-300 rounded p-2">
           <div class="flex items-center justify-between mb-1">
             <div class="min-w-0">
               <div class="text-sm font-medium truncate">{{ it.label }}</div>
-              <div class="text-xs text-muted truncate" :title="it.metric">{{ it.metric }}</div>
+              <div class="text-xs text-muted truncate" :title="it.metric">{{ labelOf(it.metric) }}</div>
             </div>
             <span class="text-sm font-mono ml-2 shrink-0">
-              {{ formatRate(latestValues[it.metric]) }}
+              {{ formatRate(latestValues[it.key]) }}
             </span>
           </div>
           <Chart

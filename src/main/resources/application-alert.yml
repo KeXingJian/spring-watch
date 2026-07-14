@@ -65,13 +65,6 @@ spring-watch:
         threshold: 0
         level: warning
         cooldown-seconds: 300
-      - name: inflight_wal_append_fail
-        component: springwatch
-        metric: spring.watch.inflight.wal.append.fail
-        op: ">"
-        threshold: 0
-        level: critical
-        cooldown-seconds: 300
       - name: inflight_consumer_batch_small
         component: springwatch
         metric: spring.watch.inflight.consumer.batch.size

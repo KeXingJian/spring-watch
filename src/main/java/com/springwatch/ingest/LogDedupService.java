@@ -45,6 +45,7 @@ public class LogDedupService {
     private Counter flushFailCounter;
     private Counter sizeEvictionCounter;
     private Counter expiredEvictionCounter;
+    private Counter consumerDedupedCounter;
 
     @PostConstruct
     void init() {
@@ -79,6 +80,9 @@ public class LogDedupService {
         this.expiredEvictionCounter = Counter.builder("spring.watch.ingest.log.dedup.evict_expired")
                 .description("日志 dedup 因窗口 TTL 到期被淘汰的次数(正常)")
                 .register(meterRegistry);
+        this.consumerDedupedCounter = Counter.builder("spring.watch.consumer.log.deduped")
+                .description("日志 consumer 端去重丢弃条数(对应旧 BatchLogConsumer 同名指标)")
+                .register(meterRegistry);
 
         Gauge.builder("spring.watch.ingest.log.dedup.cache_size", dedupCache, c -> (double) c.estimatedSize())
                 .description("日志 dedup 当前缓存 entry 数")
@@ -100,6 +104,7 @@ public class LogDedupService {
         }
         existing.increment();
         dropCounter.increment();
+        consumerDedupedCounter.increment();
         return false;
     }
 

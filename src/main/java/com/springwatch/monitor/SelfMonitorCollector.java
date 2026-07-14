@@ -6,10 +6,14 @@ import com.influxdb.client.write.Point;
 import com.influxdb.client.write.WriteParameters;
 import com.sun.management.OperatingSystemMXBean;
 import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.DistributionSummary;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.Meter;
 import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Tag;
 import io.micrometer.core.instrument.Timer;
+import io.micrometer.core.instrument.distribution.HistogramSnapshot;
+import io.micrometer.core.instrument.distribution.ValueAtPercentile;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
@@ -97,6 +101,7 @@ public class SelfMonitorCollector {
     private final Map<String, Double> lastCounterValues = new ConcurrentHashMap<>();
     private final Map<String, TimerSnap> lastTimerSnaps = new ConcurrentHashMap<>();
     private final Map<String, Double> lastGaugeValues = new ConcurrentHashMap<>();
+    private final Map<String, SummarySnap> lastSummarySnaps = new ConcurrentHashMap<>();
     private Counter filteredMeterCounter;
     private Counter capturedMeterCounter;
     private Counter persistedCounter;
@@ -324,32 +329,74 @@ public class SelfMonitorCollector {
         MeterSnap meters = s.meters;
         if (meters != null) {
             if (meters.counters() != null) {
-                for (Map.Entry<String, Double> e : meters.counters().entrySet()) {
-                    add(out, tsNs, CAT_METER, e.getKey(), e.getValue(), Map.of("meter_type", "counter"));
+                for (Map.Entry<String, List<MeterEntry>> e : meters.counters().entrySet()) {
+                    if (e.getValue() == null) continue;
+                    for (MeterEntry me : e.getValue()) {
+                        if (me == null) continue;
+                        add(out, tsNs, CAT_METER, e.getKey(), me.value(), mergeTags("counter", me.tags()));
+                    }
                 }
             }
             if (meters.gauges() != null) {
-                for (Map.Entry<String, Double> e : meters.gauges().entrySet()) {
-                    add(out, tsNs, CAT_METER, e.getKey(), e.getValue(), Map.of("meter_type", "gauge"));
+                for (Map.Entry<String, List<MeterEntry>> e : meters.gauges().entrySet()) {
+                    if (e.getValue() == null) continue;
+                    for (MeterEntry me : e.getValue()) {
+                        if (me == null) continue;
+                        add(out, tsNs, CAT_METER, e.getKey(), me.value(), mergeTags("gauge", me.tags()));
+                    }
                 }
             }
             if (meters.timers() != null) {
-                for (Map.Entry<String, TimerSnap> e : meters.timers().entrySet()) {
-                    TimerSnap t = e.getValue();
-                    if (t == null) continue;
-                    Point p = Point.measurement(MEASUREMENT)
-                            .addTag("appid", APPID_SELF)
-                            .addTag("category", CAT_METER)
-                            .addTag("meter_type", "timer")
-                            .addTag("metric", e.getKey())
-                            .addField("count", t.count())
-                            .addField("total_ms", t.totalMs())
-                            .addField("max_ms", t.maxMs())
-                            .addField("value", t.totalMs())
-                            .time(tsNs, WritePrecision.NS);
-                    out.add(p);
+                for (Map.Entry<String, List<TimerMeterEntry>> e : meters.timers().entrySet()) {
+                    if (e.getValue() == null) continue;
+                    for (TimerMeterEntry te : e.getValue()) {
+                        if (te == null || te.snap() == null) continue;
+                        TimerSnap t = te.snap();
+                        Point p = Point.measurement(MEASUREMENT)
+                                .addTag("appid", APPID_SELF)
+                                .addTag("category", CAT_METER)
+                                .addTag("meter_type", "timer")
+                                .addTag("metric", e.getKey());
+                        for (Map.Entry<String, String> tag : mergeTags(null, te.tags()).entrySet()) {
+                            p.addTag(tag.getKey(), tag.getValue() == null ? "" : tag.getValue());
+                        }
+                        p.addField("count", t.count())
+                                .addField("total_ms", t.totalMs())
+                                .addField("max_ms", t.maxMs())
+                                .addField("value", t.totalMs())
+                                .time(tsNs, WritePrecision.NS);
+                        out.add(p);
+                    }
                 }
             }
+            if (meters.summaries() != null) {
+                for (Map.Entry<String, List<SummaryMeterEntry>> e : meters.summaries().entrySet()) {
+                    if (e.getValue() == null) continue;
+                    for (SummaryMeterEntry se : e.getValue()) {
+                        if (se == null || se.snap() == null) continue;
+                        SummarySnap ss = se.snap();
+                        // mean 走 field=value,带 meter_type=summary,无 quantile
+                        addSummary(out, tsNs, e.getKey(), se.tags(), null, ss.mean());
+                        // 展开 p50 / p95 / p99,带 quantile=0.5/0.95/0.99 tag 区分
+                        for (Map.Entry<String, Double> p : ss.percentiles().entrySet()) {
+                            addSummary(out, tsNs, e.getKey(), se.tags(), p.getKey(), p.getValue());
+                        }
+                    }
+                }
+            }
+        }
+        return out;
+    }
+
+    /** 把 meter_type 与 meter 自带 tag 合并,空 tag 自动跳过。 */
+    private static Map<String, String> mergeTags(String meterType, Map<String, String> meterTags) {
+        Map<String, String> out = new LinkedHashMap<>();
+        if (meterType != null) out.put("meter_type", meterType);
+        if (meterTags == null) return out;
+        for (Map.Entry<String, String> e : meterTags.entrySet()) {
+            if (e.getKey() == null || e.getKey().isBlank()) continue;
+            if ("appid".equals(e.getKey())) continue;
+            out.put(e.getKey(), e.getValue() == null ? "" : e.getValue());
         }
         return out;
     }
@@ -375,6 +422,29 @@ public class SelfMonitorCollector {
         for (Map.Entry<String, String> e : extraTags.entrySet()) {
             p.addTag(e.getKey(), e.getValue() == null ? "" : e.getValue());
         }
+        out.add(p);
+    }
+
+    /**
+     * DistributionSummary 写点:固定 meter_type=summary,field=value。
+     * quantile 非空时额外带 quantile tag,与 Prometheus 风格一致,前端按 quantile 过滤拿 p50/p95/p99。
+     */
+    private static void addSummary(List<Point> out, long tsNs, String metric,
+                                   Map<String, String> meterTags, String quantile, double value) {
+        if (Double.isNaN(value) || Double.isInfinite(value)) return;
+        Point p = Point.measurement(MEASUREMENT)
+                .addTag("appid", APPID_SELF)
+                .addTag("category", CAT_METER)
+                .addTag("meter_type", "summary")
+                .addTag("metric", metric);
+        for (Map.Entry<String, String> tag : mergeTags(null, meterTags).entrySet()) {
+            p.addTag(tag.getKey(), tag.getValue() == null ? "" : tag.getValue());
+        }
+        if (quantile != null && !quantile.isBlank()) {
+            p.addTag("quantile", quantile);
+        }
+        p.addField("value", value)
+                .time(tsNs, WritePrecision.NS);
         out.add(p);
     }
 
@@ -531,9 +601,10 @@ public class SelfMonitorCollector {
     }
 
     private MeterSnap captureMeters() {
-        Map<String, Double> counters = new LinkedHashMap<>();
-        Map<String, TimerSnap> timers = new LinkedHashMap<>();
-        Map<String, Double> gauges = new LinkedHashMap<>();
+        Map<String, List<MeterEntry>> counters = new LinkedHashMap<>();
+        Map<String, List<TimerMeterEntry>> timers = new LinkedHashMap<>();
+        Map<String, List<MeterEntry>> gauges = new LinkedHashMap<>();
+        Map<String, List<SummaryMeterEntry>> summaries = new LinkedHashMap<>();
         int captured = 0;
         int filtered = 0;
         for (Meter m : meterRegistry.getMeters()) {
@@ -543,23 +614,42 @@ public class SelfMonitorCollector {
                 continue;
             }
             captured++;
+            Map<String, String> tags = new LinkedHashMap<>();
+            for (Tag t : m.getId().getTags()) {
+                tags.put(t.getKey(), t.getValue());
+            }
             switch (m) {
                 case Counter c -> {
                     double v = c.count();
-                    counters.put(name, v);
+                    counters.computeIfAbsent(name, _ -> new ArrayList<>()).add(new MeterEntry(v, tags));
                     lastCounterValues.put(name, v);
                 }
                 case Timer t -> {
                     TimerSnap snap = new TimerSnap(t.count(), t.totalTime(TimeUnit.MILLISECONDS), -1.0, t.max(TimeUnit.MILLISECONDS));
-                    timers.put(name, snap);
+                    timers.computeIfAbsent(name, _ -> new ArrayList<>()).add(new TimerMeterEntry(snap, tags));
                     lastTimerSnaps.put(name, snap);
                 }
                 case Gauge g -> {
                     double v = g.value();
                     if (!Double.isNaN(v) && !Double.isInfinite(v)) {
-                        gauges.put(name, v);
+                        gauges.computeIfAbsent(name, _ -> new ArrayList<>()).add(new MeterEntry(v, tags));
                         lastGaugeValues.put(name, v);
                     }
+                }
+                case DistributionSummary ds -> {
+                    // publishPercentiles 配过的 percentile 由 takeSnapshot 拿到;
+                    // 同时把 mean 也算出来,前端想看平均值时直接走无 quantile 那个 Point。
+                    HistogramSnapshot snap = ds.takeSnapshot();
+                    double count = snap.count();
+                    double total = snap.total();
+                    double mean = count > 0 ? total / count : 0d;
+                    Map<String, Double> percentiles = new LinkedHashMap<>();
+                    for (ValueAtPercentile vap : snap.percentileValues()) {
+                        percentiles.put(formatQuantile(vap.percentile()), vap.value());
+                    }
+                    SummarySnap ss = new SummarySnap(count, total, mean, percentiles);
+                    summaries.computeIfAbsent(name, _ -> new ArrayList<>()).add(new SummaryMeterEntry(ss, tags));
+                    lastSummarySnaps.put(name, ss);
                 }
                 default -> {
                 }
@@ -567,7 +657,15 @@ public class SelfMonitorCollector {
         }
         if (filtered > 0) filteredMeterCounter.increment(filtered);
         if (captured > 0) capturedMeterCounter.increment(captured);
-        return new MeterSnap(counters, timers, gauges);
+        return new MeterSnap(counters, timers, gauges, summaries);
+    }
+
+    /**
+     * Micrometer 的 percentile 是 0~1 小数,InfluxDB tag 用字符串存,统一保留两位小数
+     * (0.5 / 0.95 / 0.99 等),前端过滤时直接传 "0.5" 即可命中。
+     */
+    private static String formatQuantile(double q) {
+        return String.format(java.util.Locale.ROOT, "%.2f", q);
     }
 
     private static boolean isWhitelisted(String meterName) {
@@ -702,5 +800,17 @@ public class SelfMonitorCollector {
 
     public record TimerSnap(long count, double totalMs, double meanMs, double maxMs) {}
 
-    public record MeterSnap(Map<String, Double> counters, Map<String, TimerSnap> timers, Map<String, Double> gauges) {}
+    public record MeterSnap(Map<String, List<MeterEntry>> counters, Map<String, List<TimerMeterEntry>> timers, Map<String, List<MeterEntry>> gauges, Map<String, List<SummaryMeterEntry>> summaries) {}
+
+    public record MeterEntry(double value, Map<String, String> tags) {}
+
+    public record TimerMeterEntry(TimerSnap snap, Map<String, String> tags) {}
+
+    /**
+     * DistributionSummary 快照:count/total/mean + 展开后的 percentile 映射(quantile 字符串 → 值)。
+     * 注意 percentile 是按 publishPercentiles 注册顺序写入,key 形如 "0.50" / "0.95" / "0.99"。
+     */
+    public record SummarySnap(double count, double total, double mean, Map<String, Double> percentiles) {}
+
+    public record SummaryMeterEntry(SummarySnap snap, Map<String, String> tags) {}
 }

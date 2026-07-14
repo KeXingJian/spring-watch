@@ -93,7 +93,6 @@ export const SPRING_WATCH_LABELS: Record<string, string> = {
   'spring.watch.inflight.producer.rejected':    '拒绝入队',
   'spring.watch.inflight.queue.pending':        '当前滞留',
   'spring.watch.inflight.queue.capacity':       '容量上限',
-  'spring.watch.inflight.wal.append.fail':      'WAL 落盘失败',
   'spring.watch.inflight.consumer.batch.size':  '消费批大小',
   'spring.watch.inflight.wal.segments':         'WAL 段数',
   'spring.watch.inflight.rebalance.migrate':   'Rebalancer 迁移次数',

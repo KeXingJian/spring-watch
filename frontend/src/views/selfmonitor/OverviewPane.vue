@@ -23,11 +23,27 @@ const httpLatChart = ref<LineSeriesItem[]>([])
 
 function gaugeVal(name: string) {
   if (!realtime.value || !realtime.value.meters) return null
-  return (realtime.value.meters.gauges || {})[name]
+  const entry = (realtime.value.meters.gauges || {})[name]
+  if (entry == null) return null
+  if (typeof entry === 'number') return entry
+  if (Array.isArray(entry)) {
+    const vals = entry.map((e: any) => e?.value).filter((v: any) => v != null) as number[]
+    if (!vals.length) return null
+    return vals.reduce((a, b) => a + b, 0)
+  }
+  return entry.value ?? null
 }
 function counterVal(name: string) {
   if (!realtime.value || !realtime.value.meters) return null
-  return (realtime.value.meters.counters || {})[name]
+  const entry = (realtime.value.meters.counters || {})[name]
+  if (entry == null) return null
+  if (typeof entry === 'number') return entry
+  if (Array.isArray(entry)) {
+    const vals = entry.map((e: any) => e?.value).filter((v: any) => v != null) as number[]
+    if (!vals.length) return null
+    return vals.reduce((a, b) => a + b, 0)
+  }
+  return entry.value ?? null
 }
 
 const cardHeap = computed(() => {

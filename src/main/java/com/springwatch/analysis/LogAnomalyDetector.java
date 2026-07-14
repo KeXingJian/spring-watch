@@ -43,6 +43,7 @@ public class LogAnomalyDetector {
     private Counter rateEvictSizeCounter;
     private Counter patternEvictSizeCounter;
     private Counter newPatternCounter;
+    private Counter alertCandidateCounter;
 
     @PostConstruct
     void init() {
@@ -77,6 +78,9 @@ public class LogAnomalyDetector {
         this.newPatternCounter = Counter.builder("spring.watch.ingest.log.anomaly.new_pattern")
                 .description("新模式命中次数")
                 .register(meterRegistry);
+        this.alertCandidateCounter = Counter.builder("spring.watch.consumer.log.alert_candidate")
+                .description("异常检测产生的告警候选次数(错误率突增或新模式)")
+                .register(meterRegistry);
 
         Gauge.builder("spring.watch.ingest.log.anomaly.rate_cache_size", errorRateCache, c -> (double) c.estimatedSize())
                 .description("异常检测 lastRate 缓存当前 entry 数")
@@ -96,6 +100,7 @@ public class LogAnomalyDetector {
         }
         boolean spiking = currentRate / lastRate >= multiplier;
         if (spiking) {
+            alertCandidateCounter.increment();
             log.info("[kxj: LogAnomalyDetector 错误率突增 - appid={}, current={}, last={}, multiplier={}]",
                     appid, currentRate, lastRate, multiplier);
         } else {
@@ -117,6 +122,7 @@ public class LogAnomalyDetector {
         boolean isNew = set.add(fingerprint);
         if (isNew) {
             newPatternCounter.increment();
+            alertCandidateCounter.increment();
             log.info("[kxj: LogAnomalyDetector 新模式 - appid={}, fingerprint={}]", appid, fingerprint);
         } else {
             log.debug("[kxj: LogAnomalyDetector 模式已存在 - appid={}, fingerprint={}", appid, fingerprint);

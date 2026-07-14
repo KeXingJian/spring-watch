@@ -33,12 +33,30 @@ const rows = computed<any[]>(() => {
   const timers = realtime.value.meters.timers || {}
   const gauges = realtime.value.meters.gauges || {}
   const out: any[] = []
-  for (const k of Object.keys(counters).sort()) out.push({ name: k, type: 'Counter', val: counters[k], count: null, total: null, max: null, group: groupOf(k) })
-  for (const k of Object.keys(timers).sort()) {
-    const t = timers[k]
-    out.push({ name: k, type: 'Timer', val: null, count: t.count, total: t.totalMs, max: t.maxMs, group: groupOf(k) })
+  const sumEntries = (entry: any): number => {
+    if (entry == null) return 0
+    if (typeof entry === 'number') return entry
+    if (Array.isArray(entry)) return entry.reduce((s: number, x: any) => s + (x?.value ?? 0), 0)
+    return entry.value ?? 0
   }
-  for (const k of Object.keys(gauges).sort()) out.push({ name: k, type: 'Gauge', val: gauges[k], count: null, total: null, max: null, group: groupOf(k) })
+  const firstSnap = (entry: any): any => {
+    if (entry == null) return null
+    if (Array.isArray(entry)) return entry[0]?.snap ?? null
+    return entry.snap ?? null
+  }
+  for (const k of Object.keys(counters).sort()) {
+    const e = counters[k]
+    out.push({ name: k, type: 'Counter', val: sumEntries(e), count: null, total: null, max: null, group: groupOf(k) })
+  }
+  for (const k of Object.keys(timers).sort()) {
+    const e = timers[k]
+    const t = firstSnap(e)
+    out.push({ name: k, type: 'Timer', val: null, count: t?.count, total: t?.totalMs, max: t?.maxMs, group: groupOf(k) })
+  }
+  for (const k of Object.keys(gauges).sort()) {
+    const e = gauges[k]
+    out.push({ name: k, type: 'Gauge', val: sumEntries(e), count: null, total: null, max: null, group: groupOf(k) })
+  }
   const order = groupOrder()
   out.sort((a, b) => {
     const ga = order.indexOf(a.group), gb = order.indexOf(b.group)

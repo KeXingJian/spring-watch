@@ -89,12 +89,20 @@ public class SelfMonitorController {
                                        @RequestParam(required = false) String every,
                                        @RequestParam(required = false) String meterType,
                                        @RequestParam(required = false) String gcName,
+                                       @RequestParam(required = false) String topic,
+                                       @RequestParam(required = false) String partition,
+                                       @RequestParam(required = false) String poolName,
+                                       @RequestParam(required = false) String quantile,
                                        @RequestParam(required = false, defaultValue = "value") String field) {
         Instant fromInstant = (from == null) ? Instant.now().minusSeconds(3600) : from;
         Instant toInstant = (to == null) ? Instant.now() : to;
         Map<String, String> tagFilters = new LinkedHashMap<>();
         if (meterType != null && !meterType.isBlank()) tagFilters.put("meter_type", meterType);
         if (gcName != null && !gcName.isBlank()) tagFilters.put("gc_name", gcName);
+        if (topic != null && !topic.isBlank()) tagFilters.put("topic", topic);
+        if (partition != null && !partition.isBlank()) tagFilters.put("partition", partition);
+        if (poolName != null && !poolName.isBlank()) tagFilters.put("pool_name", poolName);
+        if (quantile != null && !quantile.isBlank()) tagFilters.put("quantile", quantile);
         String everyResolved = (every == null || every.isBlank())
                 ? SelfMetricQueryService.defaultEveryForFrontend(fromInstant, toInstant)
                 : every;

@@ -3,6 +3,9 @@ package com.springwatch.collector;
 import com.springwatch.collector.parse.OnlinePrometheusParser;
 import com.springwatch.inflight.InflightProducerBridge;
 import com.springwatch.model.event.MetricEvent;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -18,6 +21,16 @@ public class AgentMetricsCollector {
 
     private final InflightProducerBridge inflightProducerBridge;
     private final AgentHttpClient agentHttpClient;
+    private final MeterRegistry meterRegistry;
+
+    private Counter bodyRejectedCounter;
+
+    @PostConstruct
+    void init() {
+        this.bodyRejectedCounter = Counter.builder("spring.watch.collector.http.body.rejected")
+                .description("Agent 指标响应体解析失败/异常次数(对应旧 BatchMetricConsumer 同名指标)")
+                .register(meterRegistry);
+    }
 
     public Result collect(MonitorTarget target, int readTimeoutMs) {
 
@@ -56,6 +69,7 @@ public class AgentMetricsCollector {
                 metricCount[0]++;
             });
         } catch (Exception e) {
+            bodyRejectedCounter.increment();
             log.warn("[kxj: Agent指标解析失败 - appid={}, app={}, error={}]",
                     target.appid(), target.appName(), e.getMessage());
             return Result.from(result, false);
