@@ -3,17 +3,17 @@ engine-path = "/var/lib/influxdb2/engine"
 reporting-disabled = true
 log-level = "info"
 
-storage-cache-max-memory-size = 268435456
-storage-cache-snapshot-memory-size = 26214400
+storage-cache-max-memory-size = 134217728
+storage-cache-snapshot-memory-size = 16777216
 storage-cache-snapshot-write-cold-duration = "10m"
-storage-compact-full-write-cold-duration = "4h"
+storage-compact-full-write-cold-duration = "1h"
 storage-max-concurrent-compactions = 1
 storage-max-index-log-file-size = 1048576
 
-query-concurrency = 50
-query-memory-bytes = 536870912
-query-initial-memory-bytes = 2097152
-query-max-memory-bytes = 268435456
+query-concurrency = 10
+query-memory-bytes = 134217728
+query-initial-memory-bytes = 1048576
+query-max-memory-bytes = 67108864
 
 influxql-max-select-point = 5000000
 influxql-max-select-series = 1000

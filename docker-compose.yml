@@ -29,9 +29,15 @@ services:
       DOCKER_INFLUXDB_INIT_BUCKET: metrics
       DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: sw-token-2024
       INFLUXD_CONFIG_PATH: /etc/influxdb2/influxdb.toml
+      GOMEMLIMIT: 900MiB
+      GOGC: 50
     volumes:
       - .data/influxdb_data:/var/lib/influxdb2
       - ./influxdb.toml:/etc/influxdb2/influxdb.toml
+    deploy:
+      resources:
+        limits:
+          memory: 2G
     healthcheck:
       test: ["CMD", "influx", "ping"]
       interval: 10s
