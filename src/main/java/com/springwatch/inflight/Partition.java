@@ -11,6 +11,10 @@ public record Partition(String topic, int partitionId, InflightBuffer buffer) {
         return buffer.offer(payload);
     }
 
+    public int offerBatch(List<Object> payloads) {
+        return buffer.offerBatch(payloads);
+    }
+
     public List<Object> drain(int max) {
         return buffer.drain(max);
     }

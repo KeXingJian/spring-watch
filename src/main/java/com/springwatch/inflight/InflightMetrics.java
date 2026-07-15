@@ -78,9 +78,19 @@ public class InflightMetrics {
         if (c != null) c.increment();
     }
 
+    public void sent(String topic, int partitionId, int n) {
+        Counter c = sentCounters.get(keyOf(topic, partitionId));
+        if (c != null) c.increment(n);
+    }
+
     public void rejected(String topic, int partitionId) {
         Counter c = rejectedCounters.get(keyOf(topic, partitionId));
         if (c != null) c.increment();
+    }
+
+    public void rejected(String topic, int partitionId, int n) {
+        Counter c = rejectedCounters.get(keyOf(topic, partitionId));
+        if (c != null) c.increment(n);
     }
 
     public void drained(String topic, int partitionId, int n) {

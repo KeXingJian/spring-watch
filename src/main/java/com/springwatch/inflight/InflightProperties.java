@@ -68,7 +68,7 @@ public class InflightProperties {
 
     @Data
     public static class Consumer {
-        private int pollMaxBatch = 200;
+        private int pollMaxBatch = 500;
         private long pollWaitMs = 100;
 
         private Map<String, Integer> concurrency = new HashMap<>(Map.of(

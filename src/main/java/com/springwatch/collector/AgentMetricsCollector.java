@@ -12,6 +12,8 @@ import org.springframework.stereotype.Component;
 
 import java.io.InputStream;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 @Slf4j
@@ -40,44 +42,49 @@ public class AgentMetricsCollector {
         AgentHttpClient.Result result = agentHttpClient.get(metricsUrl, readTimeoutMs);
         if (!result.isOk()) {
             log.warn("[kxj: Agent拉取失败 - appid={}, app={}, url={}, error={}, latencyMs={}]",
-                    target.appid(), target.appName(), metricsUrl, result.error(), result.latencyMs());
+                target.appid(), target.appName(), metricsUrl, result.error(), result.latencyMs());
             return Result.from(result, false);
         }
         if (result.status() != 200) {
             log.warn("[kxj: Agent拉取非200 - appid={}, app={}, url={}, status={}, latencyMs={}]",
-                    target.appid(), target.appName(), metricsUrl, result.status(), result.latencyMs());
+                target.appid(), target.appName(), metricsUrl, result.status(), result.latencyMs());
             return Result.from(result, false);
         }
         InputStream body = result.body();
         if (body == null) {
             return Result.from(result, false);
         }
-        final long[] metricCount = {0};
+        List<MetricEvent> events = new ArrayList<>(256);
         try {
             OnlinePrometheusParser.parse(body, (name, tags, value) -> {
                 if (isOtelInfoMetric(name)) {
                     return;
                 }
-                MetricEvent event = MetricEvent.builder()
+                events.add(MetricEvent.builder()
                         .appid(target.appid())
                         .metricName(name)
                         .value(value)
                         .timestamp(Instant.now())
                         .tags(tags == null || tags.isEmpty() ? null : tags)
-                        .build();
-                inflightProducerBridge.sendMetric(event);
-                metricCount[0]++;
+                        .build());
             });
         } catch (Exception e) {
             bodyRejectedCounter.increment();
             log.warn("[kxj: Agent指标解析失败 - appid={}, app={}, error={}]",
-                    target.appid(), target.appName(), e.getMessage());
+                target.appid(), target.appName(), e.getMessage());
             return Result.from(result, false);
         } finally {
             try { body.close(); } catch (Exception ignore) { }
         }
+        if (!events.isEmpty()) {
+            int accepted = inflightProducerBridge.sendMetricBatch(events);
+            if (accepted < events.size()) {
+                log.warn("[kxj: 批量入队部分/全部被拒 - appid={}, size={}, accepted={}]",
+                    target.appid(), events.size(), accepted);
+            }
+        }
         log.trace("[kxj: Agent拉取成功 - appid={}, app={}, url={}, metrics={}, latencyMs={}]",
-                target.appid(), target.appName(), metricsUrl, metricCount[0], result.latencyMs());
+            target.appid(), target.appName(), metricsUrl, events.size(), result.latencyMs());
         return new Result(true, result.status(), result.latencyMs(), result.error());
     }
 

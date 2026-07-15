@@ -2,11 +2,10 @@ package com.springwatch.inflight;
 
 import lombok.extern.slf4j.Slf4j;
 
-import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.Semaphore;
-import java.util.concurrent.locks.ReentrantLock;
 
 @Slf4j
 public class InflightBuffer {
@@ -14,8 +13,7 @@ public class InflightBuffer {
     private final String topic;
     private final int partitionId;
     private final int capacity;
-    private final ArrayDeque<Object> ring = new ArrayDeque<>();
-    private final ReentrantLock mutex = new ReentrantLock();
+    private final ArrayBlockingQueue<Object> ring;
     private final Semaphore slots;
     private final InflightMetrics metrics;
 
@@ -26,11 +24,15 @@ public class InflightBuffer {
         this.topic = topic;
         this.partitionId = partitionId;
         this.capacity = capacity;
+        this.ring = new ArrayBlockingQueue<>(capacity);
         this.slots = new Semaphore(capacity);
         this.metrics = metrics;
     }
 
-    /** Producer 写入。容量满 → false(背压) */
+    /**
+     * Producer 写入。容量满 → false(背压)。
+     * Semaphore.tryAcquire 做 O(1) 无锁快失败;ring.offer 内部加锁写入。
+     */
     public boolean offer(Object payload) {
         if (payload == null) {
             throw new IllegalArgumentException("payload must not be null");
@@ -39,54 +41,69 @@ public class InflightBuffer {
             metrics.rejected(topic, partitionId);
             return false;
         }
-        mutex.lock();
-        try {
-            ring.offerLast(payload);
+        boolean ok = ring.offer(payload);
+        if (ok) {
             metrics.updatePending(topic, partitionId, ring.size());
-            return true;
-        } finally {
-            mutex.unlock();
+        } else {
+            slots.release();
         }
+        return ok;
+    }
+
+    /**
+     * 批量 offer。all-or-nothing:容量不够整批 reject,绝不部分写入。
+     * 一次 tryAcquire(n) 把 n 个 permit 原子预占;环形数组此时必然有 n 个空位,
+     * 逐个 ring.offer 不会失败(否则异常分支 release 全部 permit 回滚)。
+     */
+    public int offerBatch(List<Object> payloads) {
+        if (payloads == null || payloads.isEmpty()) return 0;
+        int n = payloads.size();
+        if (!slots.tryAcquire(n)) {
+            metrics.rejected(topic, partitionId, n);
+            return 0;
+        }
+        int written = 0;
+        try {
+            for (Object p : payloads) {
+                if (p == null) {
+                    throw new IllegalArgumentException("payload must not be null");
+                }
+                if (!ring.offer(p)) {
+                    throw new IllegalStateException(
+                        "ring full after tryAcquire(n), invariant broken");
+                }
+                written++;
+            }
+        } catch (RuntimeException re) {
+            slots.release(n - written);
+            metrics.rejected(topic, partitionId, n - written);
+            throw re;
+        }
+        metrics.updatePending(topic, partitionId, ring.size());
+        return n;
     }
 
     /**
      * Consumer 拿走 + 移除(纯内存,无 WAL 竞争)。
-     * 返回的 List 是 ring 的副本(已 pollFirst 完),调用方处理完即可丢弃。
+     * ring.drainTo 内部加锁批量取出;一次 slots.release(n) 归还 n 个 permit。
      */
     public List<Object> drain(int max) {
         if (max <= 0) return List.of();
-        mutex.lock();
-        try {
-            int n = Math.min(max, ring.size());
-            List<Object> out = new ArrayList<>(n);
-            for (int i = 0; i < n; i++) {
-                Object o = ring.pollFirst();
-                if (o != null) {
-                    out.add(o);
-                    slots.release();
-                }
-            }
+        List<Object> out = new ArrayList<>(max);
+        int n = ring.drainTo(out, max);
+        if (n > 0) {
+            slots.release(n);
             metrics.updatePending(topic, partitionId, ring.size());
-            return out;
-        } finally {
-            mutex.unlock();
         }
+        return out;
     }
 
     public int size() {
-        mutex.lock();
-        try {
-            return ring.size();
-        } finally {
-            mutex.unlock();
-        }
+        return ring.size();
     }
 
     public int capacity() {
         return capacity;
     }
 
-    public int availablePermits() {
-        return slots.availablePermits();
-    }
 }

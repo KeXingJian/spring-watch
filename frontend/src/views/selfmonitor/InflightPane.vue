@@ -39,28 +39,40 @@ const loading = ref(false)
 const lastError = ref<string | null>(null)
 let pollingTimer: number | null = null
 
-function partitionLabel(seriesName: string, topic: string): string {
-  const p = seriesName.match(/partition=(\d+)/)?.[1]
-  return p != null ? `p${p}` : 'p?'
+// 后端 SelfMetricQueryService.parseSeries 把 series.name 拼成
+// `metric{tag1=v1}{tag2=v2}...` 形式(每个 tag 一个独立 {} 块,不是逗号分隔的单个 {}),
+// 这里拆出 (metric, tags) 给 seriesLabel 用
+function parseTags(rawName: string): { metric: string; tags: Record<string, string> } {
+  const i = rawName.indexOf('{')
+  if (i < 0) return { metric: rawName, tags: {} }
+  const metric = rawName.slice(0, i)
+  const tags: Record<string, string> = {}
+  const re = /(\w+)=([^}]+)/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(rawName)) !== null) {
+    tags[m[1]] = m[2]
+  }
+  return { metric, tags }
 }
 
-// 后端 SelfMetricQueryService.parseSeries 把 series.name 拼成
-// `metric{appid=self,category=meter,meter_type=gauge,topic=...,partition=0}` 这种全量 tag 形式,
-// ECharts legend 多个 series 拼起来宽度爆炸被截断,这里剥掉系统 tag 只留业务 tag(topic/partition/pool_name/gc_name)
-const SYSTEM_TAGS = new Set(['appid', 'category', 'meter_type'])
-function shortName(rawName: string, fallback: string): string {
-  if (!rawName) return fallback
-  const m = rawName.match(/^([^{]+)(?:\{(.+)\})?$/)
-  if (!m) return rawName
-  const metric = m[1]
-  const tagPart = m[2]
-  if (!tagPart) return metric
-  const kept = tagPart.split(',').filter(t => {
-    const k = t.split('=')[0]
-    return !SYSTEM_TAGS.has(k)
-  })
-  if (!kept.length) return metric
-  return `${metric}{${kept.join(',')}}`
+// 业务 tag 短名:monitor-metrics → metrics;其他原样返回
+function shortTopicOf(topic: string): string {
+  return topic.startsWith('monitor-') ? topic.slice('monitor-'.length) : topic
+}
+
+// 友好 series 名:
+// - per-topic 上下文(scopeTopic 已知):只显示 pN
+// - 汇总上下文:显示 shortTopic/pN(否则 6 个 topic × 3 partition 名字全撞)
+function seriesLabel(rawName: string, scopeTopic?: string): string {
+  const { tags } = parseTags(rawName)
+  const p = tags.partition
+  if (scopeTopic) {
+    return p != null ? `p${p}` : 'p?'
+  }
+  const t = tags.topic
+  if (t && p != null) return `${shortTopicOf(t)}/p${p}`
+  if (p != null) return `p${p}`
+  return rawName
 }
 
 function nowRange() {
@@ -83,7 +95,7 @@ async function fetchSeriesByMetric(metric: string, agg: string, meterType?: 'cou
     const resp: any = await api.get('/api/self/series', params)
     const series = resp?.series || []
     return series.map((s: any) => ({
-      name: shortName(s.name, metric),
+      name: seriesLabel(s.name),
       points: (s.points || []).map((p: any) => [new Date(p.t).getTime(), p.v == null ? null : Number(p.v)])
     }))
   } catch (e: any) {
@@ -155,7 +167,7 @@ async function pollOnce() {
       try {
         const resp: any = await api.get('/api/self/series', params)
         const series = (resp?.series || []).map((s: any) => ({
-          name: shortName(s.name, 'pending'),
+          name: seriesLabel(s.name, topic),
           points: (s.points || []).map((p: any) => [new Date(p.t).getTime(), p.v == null ? null : Number(p.v)])
         })) as LineSeriesItem[]
         pendingByTopic[topic] = series
@@ -167,7 +179,7 @@ async function pollOnce() {
       try {
         const resp: any = await api.get('/api/self/series', capParams)
         const series = (resp?.series || []).map((s: any) => ({
-          name: shortName(s.name, 'capacity'),
+          name: seriesLabel(s.name, topic),
           points: (s.points || []).map((p: any) => [new Date(p.t).getTime(), p.v == null ? null : Number(p.v)])
         })) as LineSeriesItem[]
         capacityByTopic[topic] = series
@@ -289,7 +301,7 @@ watch(() => range.value, () => pollOnce())
         <Chart
           v-if="(perTopicPending[topic] || []).length > 0"
           type="line"
-          :series="(perTopicPending[topic] || []).map((s) => ({ name: partitionLabel(s.name, topic), points: s.points, area: true }))"
+          :series="(perTopicPending[topic] || []).map((s) => ({ name: s.name, points: s.points, area: true }))"
           :height="'180px'"
         />
         <EmptyState v-else inline>暂无滞留数据</EmptyState>

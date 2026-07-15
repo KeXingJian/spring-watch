@@ -12,6 +12,8 @@ import tools.jackson.databind.ObjectMapper;
 import java.io.InputStream;
 import java.net.URI;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * 拉取 Agent 日志并入 InflightQueue(自研,替代 Kafka)。
@@ -53,6 +55,7 @@ public class AgentLogCollector {
         }
 
         Instant latest = since;
+        List<LogEvent> events = new ArrayList<>(256);
         try (InputStream in = body; JsonParser p = objectMapper.createParser(in)) {
             if (p.nextToken() != JsonToken.START_ARRAY) {
                 log.warn("[kxj: Agent日志响应非数组 - appid={}, app={}, latencyMs={}]",
@@ -76,7 +79,7 @@ public class AgentLogCollector {
                 if (event.getHost() == null && remoteHost != null) {
                     event.setHost(remoteHost);
                 }
-                inflightProducerBridge.sendLog(event);
+                events.add(event);
                 if (event.getTimestamp().isAfter(latest)) {
                     latest = event.getTimestamp();
                 }
@@ -86,6 +89,13 @@ public class AgentLogCollector {
             log.warn("[kxj: Agent日志解析失败 - appid={}, app={}, error={}, latencyMs={}]",
                     appid, appName, e.getMessage(), latencyMs);
             return Result.failed("parse:" + e.getClass().getSimpleName(), latencyMs);
+        }
+        if (!events.isEmpty()) {
+            int accepted = inflightProducerBridge.sendLogBatch(events);
+            if (accepted < events.size()) {
+                log.warn("[kxj: 批量入队部分/全部被拒 - appid={}, size={}, accepted={}]",
+                    appid, events.size(), accepted);
+            }
         }
 
         return Result.ok(latest, latencyMs);

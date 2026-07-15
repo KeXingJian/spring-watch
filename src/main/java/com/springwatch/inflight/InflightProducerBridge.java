@@ -8,6 +8,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
+import java.util.List;
+
 @Slf4j
 @Component
 @ConditionalOnProperty(name = "spring-watch.inflight.enabled", havingValue = "true", matchIfMissing = true)
@@ -21,16 +23,47 @@ public class InflightProducerBridge {
     private final InflightQueue inflightQueue;
     private final BackpressureHandler backpressureHandler;
 
-    public void sendMetric(MetricEvent event) {
-        send(TOPIC_METRICS, event);
-    }
 
-    public void sendLog(LogEvent event) {
-        send(TOPIC_LOGS, event);
-    }
 
     public void sendHeartbeat(HeartbeatEvent event) {
         send(TOPIC_HEARTBEAT, event);
+    }
+
+    /**
+     * 批量入队 metrics。每批只做一次 P2C 路由,整批落同一 partition。
+     * offerBatch 是 all-or-nothing:容量不够整批 reject。
+     * 返回成功入队的条数(等于 events.size() 或 0)。
+     */
+    public int sendMetricBatch(List<MetricEvent> events) {
+        return sendBatch(TOPIC_METRICS, events);
+    }
+
+    public int sendLogBatch(List<LogEvent> events) {
+        return sendBatch(TOPIC_LOGS, events);
+    }
+
+    private <T> int sendBatch(String topic, List<T> events) {
+        if (events == null || events.isEmpty()) return 0;
+        String key = extractKey(events.get(0));
+        int partitionId = inflightQueue.route(topic, key);
+        Partition p = inflightQueue.getPartition(topic, partitionId);
+        int n = events.size();
+        try {
+            int accepted = p.offerBatch((List<Object>) (List<?>) events);
+            if (accepted == n) {
+                inflightQueue.metrics().sent(topic, partitionId, accepted);
+            } else {
+                inflightQueue.metrics().rejected(topic, partitionId, n);
+                log.warn("[kxj: 批量入队被拒 - topic={}, partitionId={}, size={}, pending={}/{}]",
+                    topic, partitionId, n, p.pending(), p.capacity());
+            }
+            return accepted;
+        } catch (Exception ex) {
+            log.error("[kxj: 批量入队异常 - topic={}, partitionId={}, size={}, error={}]",
+                topic, partitionId, n, ex.getMessage(), ex);
+            inflightQueue.metrics().rejected(topic, partitionId, n);
+            return 0;
+        }
     }
 
     private void send(String topic, Object event) {
