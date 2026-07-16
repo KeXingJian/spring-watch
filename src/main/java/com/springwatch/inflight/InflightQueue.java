@@ -75,14 +75,7 @@ public class InflightQueue {
         return arr[partitionId];
     }
 
-    public int partitionCount(String topic) {
-        Partition[] arr = topicPartitions.get(topic);
-        return arr == null ? 0 : arr.length;
-    }
 
-    public List<String> activeTopics() {
-        return new ArrayList<>(topicPartitions.keySet());
-    }
 
     /**
      * 简单的两选一路由(基础版,PartitionRouter 在 M1.5 引入)。

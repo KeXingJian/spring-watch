@@ -11,7 +11,6 @@ public class AppScheduleProperties {
 
     private int poolSize = 32;
 
-
     private int jitterPercent = 10;
 
     private int firstDelaySpreadMultiplier = 2;
