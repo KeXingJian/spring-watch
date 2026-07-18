@@ -23,7 +23,7 @@ spring-watch:
       max-cool-down-ms: 60000 # 连续 OPEN 指数退避上限
     schedule: # P2: 全局动态调度周期(AIMD 风格背压, 推断式)
       slow-factor-min: 0.5 # 恢复后最快 0.5x(基线周期 × 0.5,调度器 1 秒变 2 倍频)
-      slow-factor-max: 5.0 # 退避后最慢 5x(基线周期 × 5,调度器 1 秒变 1/5 频)
+      slow-factor-max: 3.0 # 退避后最慢 5x(基线周期 × 5,调度器 1 秒变 1/5 频)
       degrade-multiplier: 1.5 # 退避倍数(每次慢多少倍,对应乘法减)
       recover-multiplier: 0.9 # 恢复倍数(每次恢复多少,对应加法增的温和版)
       p95-degrade-ms: 3000 # 全局 p95 > 此值触发退避

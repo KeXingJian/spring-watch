@@ -1,10 +1,10 @@
 package com.springwatch.inflight;
 
 import lombok.extern.slf4j.Slf4j;
+import org.jctools.queues.MpmcArrayQueue;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.Semaphore;
 
 @Slf4j
@@ -13,7 +13,8 @@ public class InflightBuffer {
     private final String topic;
     private final int partitionId;
     private final int capacity;
-    private final ArrayBlockingQueue<Object> ring;
+    private final int queueCapacity;
+    private final MpmcArrayQueue<Object> ring;
     private final Semaphore slots;
     private final InflightMetrics metrics;
 
@@ -24,15 +25,16 @@ public class InflightBuffer {
         this.topic = topic;
         this.partitionId = partitionId;
         this.capacity = capacity;
-        this.ring = new ArrayBlockingQueue<>(capacity);
+        this.queueCapacity = nextPowerOfTwo(capacity + 1);
+        this.ring = new MpmcArrayQueue<>(queueCapacity);
         this.slots = new Semaphore(capacity);
         this.metrics = metrics;
     }
 
-    /**
-     * Producer 写入。容量满 → false(背压)。
-     * Semaphore.tryAcquire 做 O(1) 无锁快失败;ring.offer 内部加锁写入。
-     */
+    private static int nextPowerOfTwo(int n) {
+        return n <= 1 ? 1 : Integer.highestOneBit(n - 1) << 1;
+    }
+
     public boolean offer(Object payload) {
         if (payload == null) {
             throw new IllegalArgumentException("payload must not be null");
@@ -50,11 +52,6 @@ public class InflightBuffer {
         return ok;
     }
 
-    /**
-     * 批量 offer。all-or-nothing:容量不够整批 reject,绝不部分写入。
-     * 一次 tryAcquire(n) 把 n 个 permit 原子预占;环形数组此时必然有 n 个空位,
-     * 逐个 ring.offer 不会失败(否则异常分支 release 全部 permit 回滚)。
-     */
     public int offerBatch(List<Object> payloads) {
         if (payloads == null || payloads.isEmpty()) return 0;
         int n = payloads.size();
@@ -83,14 +80,16 @@ public class InflightBuffer {
         return n;
     }
 
-    /**
-     * Consumer 拿走 + 移除(纯内存,无 WAL 竞争)。
-     * ring.drainTo 内部加锁批量取出;一次 slots.release(n) 归还 n 个 permit。
-     */
     public List<Object> drain(int max) {
         if (max <= 0) return List.of();
         List<Object> out = new ArrayList<>(max);
-        int n = ring.drainTo(out, max);
+        int n = 0;
+        for (int i = 0; i < max; i++) {
+            Object e = ring.poll();
+            if (e == null) break;
+            out.add(e);
+            n++;
+        }
         if (n > 0) {
             slots.release(n);
             metrics.updatePending(topic, partitionId, ring.size());
