@@ -2,7 +2,7 @@ spring-watch:
   collector:
     pool-size: 64
     jitter-percent: 10 # 采集时间抖动百分比（避免雪崩）
-    first-delay-spread-multiplier: 1 # 启动防雷鸣群羊窗口倍数(实际窗口 = intervalMs × 倍数,默认 2x,500 app 均匀分摊 30s)
+    first-delay-spread-multiplier: 2 # 启动防雷鸣群羊窗口倍数(实际窗口 = intervalMs × 倍数,默认 2x,500 app 均匀分摊 30s)
     http:
       connect-timeout-ms: 1000 # HTTP 连接超时（毫秒）
       read-timeout-ms: 2500 # HTTP 默认读取超时（毫秒，无历史数据时使用）

@@ -21,8 +21,8 @@ spring-watch:
       poll-max-batch: 200
       poll-wait-ms: 100
       concurrency:
-        monitor-metrics:        2
-        monitor-logs:           2
+        monitor-metrics:        3
+        monitor-logs:           3
         monitor-heartbeat:      1
         monitor-metrics.dlq:    1
         monitor-logs.dlq:       1

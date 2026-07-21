@@ -16,13 +16,13 @@ const { range, rangeStartTs, rangeEndTs, rangeMs, everyForRange } = useSelfMonit
 // v2.0:InflightQueue 核心指标(对应 InflightMetrics meter 名);
 // 消费批大小是 DistributionSummary,SelfMonitorCollector 已把 p50/p95/p99 展开成带 quantile tag 的 Point,
 // 1 张卡片里同图展示 3 条曲线,右侧最新值固定显示 p50(中位批大小)
-const SUMMARY_METRICS: { key: string; label: string; agg: 'rate' | 'last' | 'mean'; meterType?: 'counter' | 'gauge' | 'summary'; quantiles?: string[] }[] = [
-  { key: 'spring.watch.inflight.producer.sent',        label: '投递速率(producer.sent /s)',         agg: 'rate',  meterType: 'counter' },
-  { key: 'spring.watch.inflight.producer.drained',     label: '消费速率(producer.drained /s)',      agg: 'rate',  meterType: 'counter' },
-  { key: 'spring.watch.inflight.producer.rejected',    label: '拒绝速率(producer.rejected /s)',     agg: 'rate',  meterType: 'counter' },
-  { key: 'spring.watch.inflight.queue.pending',        label: '总滞留(queue.pending)',             agg: 'last',  meterType: 'gauge'   },
-  { key: 'spring.watch.inflight.queue.capacity',       label: '总容量(queue.capacity)',             agg: 'last',  meterType: 'gauge'   },
-  { key: 'spring.watch.inflight.consumer.batch.size',  label: '消费批大小(p50/p95/p99)',           agg: 'last',  meterType: 'summary', quantiles: ['0.50', '0.95', '0.99'] }
+const SUMMARY_METRICS: { key: string; label: string; agg: 'rate' | 'last' | 'mean'; meterType?: 'counter' | 'gauge' | 'summary'; quantiles?: string[]; format: 'rate' | 'int' }[] = [
+  { key: 'spring.watch.inflight.producer.sent',        label: '投递速率(producer.sent /s)',         agg: 'rate',  meterType: 'counter', format: 'rate' },
+  { key: 'spring.watch.inflight.producer.drained',     label: '消费速率(producer.drained /s)',      agg: 'rate',  meterType: 'counter', format: 'rate' },
+  { key: 'spring.watch.inflight.producer.rejected',    label: '拒绝速率(producer.rejected /s)',     agg: 'rate',  meterType: 'counter', format: 'rate' },
+  { key: 'spring.watch.inflight.queue.pending',        label: '总滞留(queue.pending)',             agg: 'last',  meterType: 'gauge',   format: 'int'   },
+  { key: 'spring.watch.inflight.queue.capacity',       label: '总容量(queue.capacity)',             agg: 'last',  meterType: 'gauge',   format: 'int'   },
+  { key: 'spring.watch.inflight.consumer.batch.size',  label: '消费批大小(p50/p95/p99)',           agg: 'last',  meterType: 'summary', quantiles: ['0.50', '0.95', '0.99'], format: 'int' }
 ]
 
 // per-partition 滞留 topic × partition 二维分布
@@ -125,18 +125,20 @@ function quantileTag(q: string): string {
 }
 
 async function fetchLatest(metric: string, meterType?: 'counter' | 'gauge' | 'summary', quantile?: string): Promise<number | null> {
-  const params: Record<string, unknown> = { category: 'meter', metric, agg: 'last' }
+  // counter 走 rate(后端 -5m 范围 derivative 取末点,单位 /s),gauge/summary 走 last(最新快照)
+  const agg = meterType === 'counter' ? 'rate' : 'last'
+  const params: Record<string, unknown> = { category: 'meter', metric, agg }
   if (meterType) params.meterType = meterType
   if (quantile) params.quantile = quantile
   try {
     const resp: any = await api.get('/api/self/latest', params)
     if (resp?.rows && resp.rows.length > 0) {
-      // Counter(如 sent/rejected/drained)按 topic×partition 拆成多 series,这里取总和;
-      // Gauge(如 queue.pending)在 4 partition 各自一份,取最大避免重复累加;
-      // Summary(如 batch.size p50/p95/p99)在 4 partition × 3 topic 展开,取平均体现典型批大小
+      // 各 partition 独立 series:
+      // - counter rate: 各 partition 速率求和 = 平台总速率
+      // - gauge(如 queue.pending): 各 partition 当前 depth 求和 = 平台总滞留(各 partition 独立,非重复)
+      // - summary(如 batch.size p50/p95/p99): 取平均体现典型批大小
       const vals = resp.rows.map((r: any) => r.value).filter((v: any) => v != null).map(Number)
       if (!vals.length) return null
-      if (meterType === 'gauge') return Math.max(...vals)
       if (meterType === 'summary') return vals.reduce((a: number, b: number) => a + b, 0) / vals.length
       return vals.reduce((a: number, b: number) => a + b, 0)
     }
@@ -317,7 +319,7 @@ watch(() => range.value, () => pollOnce())
               <div class="text-xs text-muted truncate" :title="it.metric">{{ labelOf(it.metric) }}</div>
             </div>
             <span class="text-sm font-mono ml-2 shrink-0">
-              {{ formatRate(latestValues[it.key]) }}
+              {{ it.format === 'int' ? formatInt(latestValues[it.key]) : formatRate(latestValues[it.key]) }}
             </span>
           </div>
           <Chart

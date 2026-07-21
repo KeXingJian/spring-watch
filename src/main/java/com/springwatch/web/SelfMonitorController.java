@@ -111,16 +111,21 @@ public class SelfMonitorController {
 
     /**
      * 取某指标最新一帧（带完整 tags），用于仪表盘卡片。
+     * agg: last(默认,适合 gauge/summary) / rate(counter 走 derivative 取末点,单位 /s)
      */
     @GetMapping("/latest")
     public Map<String, Object> latest(@RequestParam("metric") String metric,
                                       @RequestParam(required = false) String category,
                                       @RequestParam(required = false) String meterType,
-                                      @RequestParam(required = false) String gcName) {
+                                      @RequestParam(required = false) String gcName,
+                                      @RequestParam(required = false) String quantile,
+                                      @RequestParam(required = false, defaultValue = "last") String agg,
+                                      @RequestParam(required = false) String window) {
         Map<String, String> tagFilters = new LinkedHashMap<>();
         if (meterType != null && !meterType.isBlank()) tagFilters.put("meter_type", meterType);
         if (gcName != null && !gcName.isBlank()) tagFilters.put("gc_name", gcName);
-        return selfMetricQueryService.queryLatest(category, metric, tagFilters);
+        if (quantile != null && !quantile.isBlank()) tagFilters.put("quantile", quantile);
+        return selfMetricQueryService.queryLatest(category, metric, tagFilters, agg, window);
     }
 
     /**

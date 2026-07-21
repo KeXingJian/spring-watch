@@ -52,7 +52,7 @@ public class InflightBuffer {
         return ok;
     }
 
-    public int offerBatch(List<Object> payloads) {
+    public synchronized int offerBatch(List<Object> payloads) {
         if (payloads == null || payloads.isEmpty()) return 0;
         int n = payloads.size();
         if (!slots.tryAcquire(n)) {

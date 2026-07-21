@@ -212,21 +212,48 @@ public class SelfMetricQueryService {
 
     /**
      * 取某指标最新一帧（含完整标签与时间戳），用于卡片实时值。
+     *
+     * <p>agg:
+     * <ul>
+     *   <li>last (默认):  -1h 范围内每条 series 的最后一个 value,适合 gauge / summary(取最新快照)</li>
+     *   <li>rate: -5m 范围 derivative(unit: 1s, nonNegative: true) + aggregateWindow(mean) 取最后 1 帧,
+     *       适合 counter(累计计数 → 每秒增量)。聚合步长 window 默认 10s,与自监控 10s 采样周期对齐。</li>
+     * </ul>
      */
-    public Map<String, Object> queryLatest(String category, String metric, Map<String, String> tagFilters) {
+
+    public Map<String, Object> queryLatest(String category, String metric, Map<String, String> tagFilters,
+                                           String agg, String window) {
         long startNs = System.nanoTime();
         try {
             String filter = buildTagFilter(category, metric, tagFilters);
-            String flux = String.format(
-                    """
-                            from(bucket: "%s")
-                              |> range(start: -1h)
-                              |> filter(fn: (r) => r._measurement == "%s"
-                                                and r.appid == "%s"
-                                                and r._field == "value"%s)
-                              |> sort(columns: ["_time"], desc: true)
-                              |> limit(n: 50)""",
-                    bucket, MEASUREMENT, APPID_SELF, filter);
+            String aggLower = agg == null ? "last" : agg.toLowerCase();
+            String every = (window == null || window.isBlank()) ? "10s" : window;
+            String flux;
+            if ("rate".equals(aggLower)) {
+                flux = String.format(
+                        """
+                                from(bucket: "%s")
+                                  |> range(start: -5m)
+                                  |> filter(fn: (r) => r._measurement == "%s"
+                                                    and r.appid == "%s"
+                                                    and r._field == "value"%s)
+                                  |> derivative(unit: 1s, nonNegative: true)
+                                  |> aggregateWindow(every: %s, fn: mean, createEmpty: false)
+                                  |> sort(columns: ["_time"], desc: true)
+                                  |> limit(n: 50)""",
+                        bucket, MEASUREMENT, APPID_SELF, filter, every);
+            } else {
+                flux = String.format(
+                        """
+                                from(bucket: "%s")
+                                  |> range(start: -1h)
+                                  |> filter(fn: (r) => r._measurement == "%s"
+                                                    and r.appid == "%s"
+                                                    and r._field == "value"%s)
+                                  |> sort(columns: ["_time"], desc: true)
+                                  |> limit(n: 50)""",
+                        bucket, MEASUREMENT, APPID_SELF, filter);
+            }
             List<FluxTable> tables = queryApi.query(flux, influxOrg);
             Map<String, Map<String, Object>> latestByTags = new LinkedHashMap<>();
             for (FluxTable table : tables) {
