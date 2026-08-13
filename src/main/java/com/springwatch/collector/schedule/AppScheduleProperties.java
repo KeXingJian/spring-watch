@@ -59,8 +59,6 @@ public class AppScheduleProperties {
         private double recoverMultiplier = 0.9;
         private long p95DegradeMs = 3000L;
         private long p95RecoverMs = 1000L;
-        private int errorRateDegradePercent = 10;
-        private int errorRateRecoverPercent = 1;
         private long healthTickMs = 5000L;
     }
 }

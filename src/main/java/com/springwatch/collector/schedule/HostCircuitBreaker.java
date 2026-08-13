@@ -140,7 +140,7 @@ public class HostCircuitBreaker {
         int total = s.window.slots.length;
         int bad = 0;
         int slow = 0;
-        int consecutiveTimeouts = 0;
+        int consecutiveFailures = 0;
         int currentStreak = 0;
         int cursor = (s.window.cursor.get() - 1 + s.window.slots.length) % s.window.slots.length;
         for (int i = 0; i < total; i++) {
@@ -149,14 +149,12 @@ public class HostCircuitBreaker {
             if (o == null) {
                 continue;
             }
-            if (o == Outcome.TIMEOUT) {
+            if (o == Outcome.TIMEOUT || o == Outcome.ERROR) {
                 bad++;
                 currentStreak++;
-                consecutiveTimeouts = Math.max(consecutiveTimeouts, currentStreak);
+                consecutiveFailures = Math.max(consecutiveFailures, currentStreak);
             } else {
-                if (o == Outcome.ERROR) {
-                    bad++;
-                } else if (o == Outcome.SLOW) {
+                if (o == Outcome.SLOW) {
                     slow++;
                 }
                 currentStreak = 0;
@@ -170,7 +168,7 @@ public class HostCircuitBreaker {
 
         boolean tripByRate = badPct >= failureRatePct;
         boolean tripBySlow = slowPct >= slowRatePct;
-        boolean tripByConsecutive = consecutiveTo > 0 && consecutiveTimeouts >= consecutiveTo;
+        boolean tripByConsecutive = consecutiveTo > 0 && consecutiveFailures >= consecutiveTo;
 
         if (tripByRate || tripBySlow || tripByConsecutive) {
             if (s.state.compareAndSet(State.CLOSED, State.OPEN)) {
@@ -178,9 +176,9 @@ public class HostCircuitBreaker {
                 s.currentCoolDownMs.set(properties.getCircuitBreaker().getInitialCoolDownMs());
                 s.window.clear();
                 openedCounter.increment();
-                log.warn("[kxj: 熔断器打开 OPEN - host={}, badPct={}%, slowPct={}%, consecutiveTimeouts={}, reason={}]",
-                        host, badPct, slowPct, consecutiveTimeouts,
-                        tripByConsecutive ? "consecutiveTimeouts" :
+                log.warn("[kxj: 熔断器打开 OPEN - host={}, badPct={}%, slowPct={}%, consecutiveFailures={}, reason={}]",
+                        host, badPct, slowPct, consecutiveFailures,
+                        tripByConsecutive ? "consecutiveFailures" :
                                 (tripByRate ? "failureRate" : "slowRate"));
             }
         }
@@ -225,9 +223,6 @@ public class HostCircuitBreaker {
             return idx;
         }
 
-        int count() {
-            return count.get();
-        }
 
         void clear() {
             count.set(0);

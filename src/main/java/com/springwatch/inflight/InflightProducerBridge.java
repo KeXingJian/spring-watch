@@ -44,12 +44,12 @@ public class InflightProducerBridge {
 
     private <T> int sendBatch(String topic, List<T> events) {
         if (events == null || events.isEmpty()) return 0;
-        String key = extractKey(events.get(0));
+        String key = extractKey(events.getFirst());
         int partitionId = inflightQueue.route(topic, key);
         Partition p = inflightQueue.getPartition(topic, partitionId);
         int n = events.size();
         try {
-            int accepted = p.offerBatch((List<Object>) (List<?>) events);
+            int accepted = p.offerBatch((List<Object>) events);
             if (accepted == n) {
                 inflightQueue.metrics().sent(topic, partitionId, accepted);
             } else {

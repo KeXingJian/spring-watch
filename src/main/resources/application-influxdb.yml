@@ -21,7 +21,7 @@ influxdb:
     task-every: 1h # 任务调度频率
   write:
     retry-interval-ms: 1000 # 写入失败重试间隔（毫秒）
-    max-retries: 3 # 最大重试次数
+    max-retries: 1 # 最大重试次数
     max-retry-delay-ms: 5000 # 单次重试最大延迟（毫秒）
     max-retry-time-ms: 60000 # 整体重试最大耗时（毫秒）
     jitter-interval-ms: 200 # 重试抖动（毫秒）

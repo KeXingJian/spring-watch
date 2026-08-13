@@ -15,7 +15,7 @@ public class HostLatencyTracker {
     private final AppScheduleProperties properties;
     private final ConcurrentHashMap<String, HostLatency> hosts = new ConcurrentHashMap<>();
 
-    public void record(String host, long latencyMs) {
+    public void record(String host, long latencyMs, HostCircuitBreaker.Outcome outcome) {
         if (host == null) {
             return;
         }
@@ -23,7 +23,7 @@ public class HostLatencyTracker {
                 properties.getHttp().getMinReadTimeoutMs(),
                 properties.getHttp().getMaxReadTimeoutMs(),
                 properties.getHttp().getDefaultReadTimeoutMs()));
-        h.record(latencyMs);
+        h.record(latencyMs, outcome);
     }
 
     public int adaptiveTimeoutMs(String host) {
@@ -36,6 +36,7 @@ public class HostLatencyTracker {
 
     private static final class HostLatency {
         final AtomicLong ewmaLatencyMs = new AtomicLong(0L);
+        final AtomicLong ewmaBadPct = new AtomicLong(0L);
         final long minReadTimeoutMs;
         final long maxReadTimeoutMs;
         final long defaultReadTimeoutMs;
@@ -47,7 +48,7 @@ public class HostLatencyTracker {
             this.defaultReadTimeoutMs = defaultReadTimeoutMs;
         }
 
-        void record(long latencyMs) {
+        void record(long latencyMs, HostCircuitBreaker.Outcome outcome) {
             long prev = ewmaLatencyMs.get();
             long next;
             if (!warmed) {
@@ -61,14 +62,21 @@ public class HostLatencyTracker {
                 next = (long) (prev * 0.8 + latencyMs * 0.2);
             }
             ewmaLatencyMs.set(next);
+
+            long prevBad = ewmaBadPct.get();
+            int sampleBad = (outcome == HostCircuitBreaker.Outcome.SUCCESS) ? 0 : 100;
+            long nextBad = (long) (prevBad * 0.85 + sampleBad * 0.15);
+            ewmaBadPct.set(nextBad);
         }
 
         int adaptiveTimeoutMs() {
             long ewma = ewmaLatencyMs.get();
-            if (ewma <= 0L) {
-                return (int) defaultReadTimeoutMs;
-            }
-            long target = ewma * 5 / 2;
+            long base = ewma <= 0L ? defaultReadTimeoutMs : ewma * 5 / 2;
+
+            long badPct = ewmaBadPct.get();
+            double shrink = 1.0 - (badPct / 100.0) * 0.7;
+            long target = (long) (base * shrink);
+
             if (target < minReadTimeoutMs) {
                 return (int) minReadTimeoutMs;
             }

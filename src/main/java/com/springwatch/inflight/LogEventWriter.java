@@ -58,8 +58,13 @@ public class LogEventWriter {
                 .register(meterRegistry);
     }
 
-    public int write(List<Object> events) {
-        if (events == null || events.isEmpty()) return 0;
+    /**
+     * 写 InfluxDB 并返回 dedup 后保留的 LogEvent 列表(告警评估用)。
+     * 与旧 BatchLogConsumer.alertCandidates 等价: 真正入库的那批事件, 同步可走告警评估。
+     */
+    public List<LogEvent> write(List<Object> events) {
+        List<LogEvent> kept = new ArrayList<>();
+        if (events == null || events.isEmpty()) return kept;
         List<Point> points = new ArrayList<>(events.size());
         for (Object e : events) {
             receivedCounter.increment();
@@ -90,24 +95,24 @@ public class LogEventWriter {
             }
             try {
                 points.add(toPoint(event));
+                kept.add(event);
             } catch (Throwable t) {
                 parseFailCounter.increment();
             }
         }
-        if (points.isEmpty()) return 0;
+        if (points.isEmpty()) return kept;
         long start = System.nanoTime();
         try {
             writeApi.writePoints(points, logWriteParameters);
             writeTimer.record(System.nanoTime() - start, TimeUnit.NANOSECONDS);
             keptCounter.increment(points.size());
-            return points.size();
         } catch (Throwable t) {
             writeFailCounter.increment();
             writeTimer.record(System.nanoTime() - start, TimeUnit.NANOSECONDS);
             log.warn("[kxj: LogEventWriter 写 InfluxDB 失败 - size={}, error={}]",
                     points.size(), t.getMessage());
-            return 0;
         }
+        return kept;
     }
 
     private Point toPoint(LogEvent event) {

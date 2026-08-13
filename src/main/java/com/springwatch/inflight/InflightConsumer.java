@@ -1,6 +1,8 @@
 package com.springwatch.inflight;
 
+import com.springwatch.alerter.AsyncAlertExecutor;
 import com.springwatch.consumer.BatchAlertConsumer;
+import com.springwatch.model.event.LogEvent;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
@@ -28,6 +30,7 @@ public class InflightConsumer {
     private final LogEventWriter logWriter;
     private final HeartbeatEventWriter heartbeatWriter;
     private final BatchAlertConsumer batchAlertConsumer;
+    private final AsyncAlertExecutor alertExecutor;
 
     private final Map<String, ExecutorService> executors = new ConcurrentHashMap<>();
 
@@ -96,13 +99,23 @@ public class InflightConsumer {
                         inflightQueue.metrics().drained(topic, partitionId, n);
                         log.info("[kxj: InflightConsumer metrics 写 InfluxDB - size={}]", n);
                     }
-                    batchAlertConsumer.evaluate(events);
+                    // 告警评估异步 fire-and-forget: AlertEngine.process 是无状态且由 AsyncAlertExecutor
+                    // 内部虚拟线程池执行, 不阻塞 partition 处理下一批; 评估丢失风险同 Kafka 时代
+                    // (group 关闭时未 ack 的 offset 也会丢)
+                    submitAlertAsync(topic, () -> batchAlertConsumer.evaluate(events));
                 }
                 case InflightProducerBridge.TOPIC_LOGS -> {
-                    int n = logWriter.write(events);
-                    if (n > 0) {
-                        inflightQueue.metrics().drained(topic, partitionId, n);
-                        log.info("[kxj: InflightConsumer logs 写 InfluxDB - size={}]", n);
+                    List<LogEvent> kept = logWriter.write(events);
+                    if (!kept.isEmpty()) {
+                        inflightQueue.metrics().drained(topic, partitionId, kept.size());
+                        log.info("[kxj: InflightConsumer logs 写 InfluxDB - size={}]", kept.size());
+                        // 修复: 迁移丢日志告警评估。沿用旧 BatchLogConsumer.alertCandidates 语义,
+                        // 只对 dedup 后保留的事件做 log_keyword / log_new_pattern 实时评估
+                        submitAlertAsync(topic, () -> {
+                            for (LogEvent e : kept) {
+                                alertExecutor.submit(e);
+                            }
+                        });
                     }
                 }
                 case InflightProducerBridge.TOPIC_HEARTBEAT -> {
@@ -117,6 +130,25 @@ public class InflightConsumer {
             log.error("[kxj: InflightConsumer 写入失败 - topic={}, size={}, error={}]",
                 topic, events.size(), e.getMessage());
             inflightQueue.metrics().rejected(topic, partitionId);
+        }
+    }
+
+    /**
+     * 提交告警评估到该 topic 的虚拟线程 executor, fire-and-forget 不阻塞主线程。
+     * executor 可能在 @PreDestroy 阶段已 shutdown, 此时退化为同步执行, 避免任务被丢。
+     */
+    private void submitAlertAsync(String topic, Runnable task) {
+        ExecutorService exec = executors.get(topic);
+        if (exec == null || exec.isShutdown()) {
+            task.run();
+            return;
+        }
+        try {
+            exec.execute(task);
+        } catch (Exception e) {
+            log.warn("[kxj: InflightConsumer 告警评估提交失败, 降级同步 - topic={}, error={}]",
+                topic, e.getMessage());
+            task.run();
         }
     }
 }

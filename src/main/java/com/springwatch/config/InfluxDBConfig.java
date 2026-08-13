@@ -78,10 +78,10 @@ public class InfluxDBConfig {
     //  metrics flush 卡住时 logs 也跟着卡。拆分后互不干扰。
     //
     //  4 个桶独立调参:
-    //    metrics  (大流量,batch=5000, flush=1000ms, buffer=100000)
-    //    logs     (中等流量,batch=3000, flush=1000ms, buffer=50000)
-    //    self     (低频,默认值即可)
-    //    infra    (低频,默认值即可,5 个 monitor 共享)
+    //    metrics  (大流量,batch=2000, flush=500ms, buffer=30000)
+    //    logs     (中等流量,batch=1000, flush=500ms, buffer=15000)
+    //    self     (低频,batch=500, flush=1000ms, buffer=5000)
+    //    infra    (低频,batch=500, flush=1000ms, buffer=5000)
     //
     //  注入方式:用 @Qualifier("metricsWriteApi") 等,见各 Consumer/Collector。
     // ============================================================
@@ -89,64 +89,64 @@ public class InfluxDBConfig {
     @Bean(name = "metricsWriteApi", destroyMethod = "close")
     public WriteApi metricsWriteApi(InfluxDBClient client) {
         WriteOptions options = WriteOptions.builder()
-                .batchSize(5000)
-                .flushInterval(1000)
-                .bufferLimit(100000)
+                .batchSize(2000)
+                .flushInterval(500)
+                .bufferLimit(30000)
                 .retryInterval(writeRetryIntervalMs)
                 .maxRetries(writeMaxRetries)
                 .maxRetryDelay(writeMaxRetryDelayMs)
                 .maxRetryTime(writeMaxRetryTimeMs)
                 .jitterInterval(writeJitterIntervalMs)
                 .build();
-        log.info("[kxj: WriteApi(metrics) 初始化 - batch=5000, flush=1000ms, buffer=100000]");
+        log.info("[kxj: WriteApi(metrics) 初始化 - batch=2000, flush=500ms, buffer=30000]");
         return client.makeWriteApi(options);
     }
 
     @Bean(name = "logsWriteApi", destroyMethod = "close")
     public WriteApi logsWriteApi(InfluxDBClient client) {
         WriteOptions options = WriteOptions.builder()
-                .batchSize(3000)
-                .flushInterval(1000)
-                .bufferLimit(50000)
+                .batchSize(1000)
+                .flushInterval(500)
+                .bufferLimit(15000)
                 .retryInterval(writeRetryIntervalMs)
                 .maxRetries(writeMaxRetries)
                 .maxRetryDelay(writeMaxRetryDelayMs)
                 .maxRetryTime(writeMaxRetryTimeMs)
                 .jitterInterval(writeJitterIntervalMs)
                 .build();
-        log.info("[kxj: WriteApi(logs) 初始化 - batch=3000, flush=1000ms, buffer=50000]");
+        log.info("[kxj: WriteApi(logs) 初始化 - batch=1000, flush=500ms, buffer=15000]");
         return client.makeWriteApi(options);
     }
 
     @Bean(name = "selfMetricsWriteApi", destroyMethod = "close")
     public WriteApi selfMetricsWriteApi(InfluxDBClient client) {
         WriteOptions options = WriteOptions.builder()
-                .batchSize(1000)
-                .flushInterval(2000)
-                .bufferLimit(20000)
+                .batchSize(500)
+                .flushInterval(1000)
+                .bufferLimit(5000)
                 .retryInterval(writeRetryIntervalMs)
                 .maxRetries(writeMaxRetries)
                 .maxRetryDelay(writeMaxRetryDelayMs)
                 .maxRetryTime(writeMaxRetryTimeMs)
                 .jitterInterval(writeJitterIntervalMs)
                 .build();
-        log.info("[kxj: WriteApi(selfMetrics) 初始化 - batch=1000, flush=2000ms, buffer=20000]");
+        log.info("[kxj: WriteApi(selfMetrics) 初始化 - batch=500, flush=1000ms, buffer=5000]");
         return client.makeWriteApi(options);
     }
 
     @Bean(name = "infraWriteApi", destroyMethod = "close")
     public WriteApi infraWriteApi(InfluxDBClient client) {
         WriteOptions options = WriteOptions.builder()
-                .batchSize(1000)
-                .flushInterval(2000)
-                .bufferLimit(20000)
+                .batchSize(500)
+                .flushInterval(1000)
+                .bufferLimit(5000)
                 .retryInterval(writeRetryIntervalMs)
                 .maxRetries(writeMaxRetries)
                 .maxRetryDelay(writeMaxRetryDelayMs)
                 .maxRetryTime(writeMaxRetryTimeMs)
                 .jitterInterval(writeJitterIntervalMs)
                 .build();
-        log.info("[kxj: WriteApi(infra) 初始化 - batch=1000, flush=2000ms, buffer=20000]");
+        log.info("[kxj: WriteApi(infra) 初始化 - batch=500, flush=1000ms, buffer=5000]");
         return client.makeWriteApi(options);
     }
 

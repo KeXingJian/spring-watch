@@ -55,7 +55,7 @@ public class AgentLogCollector {
         }
 
         Instant latest = since;
-        List<LogEvent> events = new ArrayList<>(256);
+        List<LogEvent> events = new ArrayList<>(1024);
         try (InputStream in = body; JsonParser p = objectMapper.createParser(in)) {
             if (p.nextToken() != JsonToken.START_ARRAY) {
                 log.warn("[kxj: Agent日志响应非数组 - appid={}, app={}, latencyMs={}]",

@@ -10,7 +10,7 @@ spring-watch:
     rule-cache:
       refresh-interval-ms: 30000 # 告警规则缓存刷新间隔（毫秒）
     executor:
-      pool-size: 8 # 告警执行线程池大小（虚拟线程并发上限）
+      pool-size: 3 # 告警执行线程池大小（虚拟线程并发上限）
     scan:
       interval-ms: 5000 # 扫描间隔（毫秒）
       batch-size: 200 # 每批扫描条数

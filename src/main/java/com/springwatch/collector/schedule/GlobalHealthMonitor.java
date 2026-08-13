@@ -23,7 +23,6 @@ public class GlobalHealthMonitor {
     private final MeterRegistry meterRegistry;
 
     private final long[] latencyRing = new long[WINDOW_SIZE];
-    private final boolean[] outcomeRing = new boolean[WINDOW_SIZE];
     private final AtomicInteger cursor = new AtomicInteger(0);
     private final AtomicInteger totalSamples = new AtomicInteger(0);
 
@@ -45,21 +44,18 @@ public class GlobalHealthMonitor {
         Gauge.builder("spring.watch.collector.global.slow_factor", this, m -> m.slowFactor)
                 .description("全局慢因子(1.0=基线,越大调度越慢)")
                 .register(meterRegistry);
-        log.info("[kxj: GlobalHealthMonitor 初始化 - windowSize={}, slowFactor=[{}, {}], p95Degrade={}ms, p95Recover={}ms, errDegrade={}%, errRecover={}%, healthTickMs={}]",
+        log.info("[kxj: GlobalHealthMonitor 初始化 - windowSize={}, slowFactor=[{}, {}], p95Degrade={}ms, p95Recover={}ms, healthTickMs={}]",
                 WINDOW_SIZE,
                 properties.getSchedule().getSlowFactorMin(),
                 properties.getSchedule().getSlowFactorMax(),
                 properties.getSchedule().getP95DegradeMs(),
                 properties.getSchedule().getP95RecoverMs(),
-                properties.getSchedule().getErrorRateDegradePercent(),
-                properties.getSchedule().getErrorRateRecoverPercent(),
                 properties.getSchedule().getHealthTickMs());
     }
 
-    public synchronized void recordPull(long latencyMs, boolean success) {
+    public synchronized void recordPull(long latencyMs) {
         int idx = cursor.getAndIncrement() % WINDOW_SIZE;
         latencyRing[idx] = latencyMs;
-        outcomeRing[idx] = success;
         totalSamples.incrementAndGet();
     }
 
@@ -90,18 +86,8 @@ public class GlobalHealthMonitor {
         Arrays.sort(sortedLatencies);
         long p95 = sortedLatencies[(int) (n * 0.95)];
 
-        int failures = 0;
-        for (int i = 0; i < n; i++) {
-            if (!outcomeRing[i]) {
-                failures++;
-            }
-        }
-        double errorRate = (double) failures / n;
-
         long p95Degrade = properties.getSchedule().getP95DegradeMs();
         long p95Recover = properties.getSchedule().getP95RecoverMs();
-        double errDegrade = properties.getSchedule().getErrorRateDegradePercent() / 100.0;
-        double errRecover = properties.getSchedule().getErrorRateRecoverPercent() / 100.0;
         double slowMax = properties.getSchedule().getSlowFactorMax();
         double slowMin = properties.getSchedule().getSlowFactorMin();
         double degradeMul = properties.getSchedule().getDegradeMultiplier();
@@ -110,21 +96,21 @@ public class GlobalHealthMonitor {
         double oldFactor = slowFactor;
         double newFactor = oldFactor;
 
-        boolean degraded = p95 > p95Degrade || errorRate > errDegrade;
-        boolean recovered = p95 < p95Recover && errorRate < errRecover;
+        boolean degraded = p95 > p95Degrade;
+        boolean recovered = p95 < p95Recover;
 
         if (degraded) {
             newFactor = Math.min(oldFactor * degradeMul, slowMax);
             decreaseCounter.increment();
             slowFactor = newFactor;
-            log.warn("[kxj: 全局慢因子退避 - slowFactor {} -> {}, p95={}ms, errRate={}%, threshold=p95>{}ms OR err>{}%]",
-                    oldFactor, newFactor, p95, (int) (errorRate * 100), p95Degrade, (int) (errDegrade * 100));
+            log.warn("[kxj: 全局慢因子退避 - slowFactor {} -> {}, p95={}ms, threshold=p95>{}ms]",
+                    oldFactor, newFactor, p95, p95Degrade);
         } else if (recovered) {
             newFactor = Math.max(oldFactor * recoverMul, slowMin);
             increaseCounter.increment();
             slowFactor = newFactor;
-            log.info("[kxj: 全局慢因子恢复 - slowFactor {} -> {}, p95={}ms, errRate={}%, threshold=p95<{}ms AND err<{}%]",
-                    oldFactor, newFactor, p95, (int) (errorRate * 100), p95Recover, (int) (errRecover * 100));
+            log.info("[kxj: 全局慢因子恢复 - slowFactor {} -> {}, p95={}ms, threshold=p95<{}ms]",
+                    oldFactor, newFactor, p95, p95Recover);
         }
     }
 }

@@ -70,7 +70,6 @@ public class AppPullTask {
 
     public void run(Long appid) {
         long start = System.nanoTime();
-        boolean success = false;
 
         MonitorApp app = monitorAppRepository.findByAppid(appid).orElse(null);
         if (app == null) {
@@ -100,20 +99,31 @@ public class AppPullTask {
         }
 
         int timeoutMs = hostLatencyTracker.adaptiveTimeoutMs(host);
+        long slowThresholdMs = properties.getCircuitBreaker().getSlowThresholdMs();
+        boolean recordable = false;
+        System.out.println(timeoutMs);
         try {
             HostCircuitBreaker.Outcome outcome = doHeavyWork(appid, timeoutMs);
-            if (outcome == HostCircuitBreaker.Outcome.TIMEOUT || outcome == HostCircuitBreaker.Outcome.ERROR) {
+            if (outcome == HostCircuitBreaker.Outcome.TIMEOUT) {
                 pullRetryQueue.enqueue(new RetryPull(appid, host, 1, Instant.now()));
+                if ((System.nanoTime() - start) / 1_000_000L >= slowThresholdMs) {
+                    recordable = true;
+                }
+                return;
+            }
+            if (outcome == HostCircuitBreaker.Outcome.ERROR) {
                 return;
             }
             sendHeartbeat(app);
-            success = true;
+            recordable = true;
         } catch (Exception e) {
             log.warn("[kxj: 拉取异常 - appid={}, app={}, error={}]", appid, app.getAppName(), e.getMessage(), e);
         } finally {
             long costMs = (System.nanoTime() - start) / 1_000_000L;
             recordCost(start, appid, app.getAppName());
-            globalHealthMonitor.recordPull(costMs, success);
+            if (recordable) {
+                globalHealthMonitor.recordPull(costMs);
+            }
         }
     }
 
@@ -148,11 +158,11 @@ public class AppPullTask {
         MonitorApp app = monitorAppRepository.findByAppid(appid).orElse(null);
         if (app == null) {
             log.warn("[kxj: 重投执行跳过 - appid={} 已删除]", appid);
-            return HostCircuitBreaker.Outcome.ERROR;
+            return HostCircuitBreaker.Outcome.SUCCESS;
         }
         if (MonitorStatus.isPaused(app.getStatus())) {
             log.debug("[kxj: 重投执行跳过 - appid={} 已暂停]", appid);
-            return HostCircuitBreaker.Outcome.ERROR;
+            return HostCircuitBreaker.Outcome.SUCCESS;
         }
 
         String host = extractHost(app);
@@ -162,10 +172,10 @@ public class AppPullTask {
                 app.getAppid(), app.getAppName(), app.getEndpoint(), metricsPort);
 
         AgentMetricsCollector.Result m = agentMetricsCollector.collect(target, timeoutMs);
-        HostCircuitBreaker.Outcome metricsOutcome = (m != null) ? classifyOutcome(m) : null;
+        HostCircuitBreaker.Outcome metricsOutcome = (m != null) ? classifyOutcome(m) : HostCircuitBreaker.Outcome.ERROR;
 
         AgentLogCollector.Result l = null;
-        if (m == null || m.ok()) {
+        if (m != null && m.ok()) {
             Instant since = app.getLastLogPullTime() != null ? app.getLastLogPullTime() : now.minusSeconds(3600);
             l = agentLogCollector.collect(app.getAppid(), app.getAppName(), app.getEndpoint(), since, timeoutMs);
             if (l.ok() && l.latestTimestamp() != null && l.latestTimestamp().isAfter(since)) {
@@ -187,16 +197,8 @@ public class AppPullTask {
                 ? HostCircuitBreaker.Outcome.SLOW
                 : combined;
 
-        hostLatencyTracker.record(host, totalLatency);
+        hostLatencyTracker.record(host, totalLatency, outcome);
         hostCircuitBreaker.recordOutcome(host, outcome, totalLatency);
-
-        if (outcome == HostCircuitBreaker.Outcome.TIMEOUT || outcome == HostCircuitBreaker.Outcome.ERROR) {
-            log.warn("[kxj: 拉取失败 - appid={}, outcome={},  total={}ms]",
-                    appid, outcome,totalLatency);
-        } else if (outcome == HostCircuitBreaker.Outcome.SLOW) {
-            log.warn("[kxj: 拉取SLOW - appid={}, host={}, total={}ms, 已计入熔断器滑窗]",
-                    appid, host, totalLatency);
-        }
 
         return outcome;
     }
