@@ -1,0 +1,4 @@
+com.springwatch.agent.sql.JdbcTemplateInstrumentation
+com.springwatch.agent.sql.nativejdbc.StatementInstrumentation
+com.springwatch.agent.sql.nativejdbc.PreparedStatementInstrumentation
+com.springwatch.agent.sql.pool.HikariPoolInstrumentation

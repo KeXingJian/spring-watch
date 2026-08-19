@@ -69,28 +69,6 @@ public class LogFingerprinter {
         return sha1Hex(normalized);
     }
 
-    /**
-     * kxj: 模式名-保留原始message+异常首行截断,供前端展示
-     */
-    public String patternName(LogEvent event) {
-        if (event == null) {
-            return null;
-        }
-        StringBuilder sb = new StringBuilder();
-        if (event.getMessage() != null) {
-            sb.append(event.getMessage());
-        }
-        if (event.getThrowable() != null) {
-            int nl = event.getThrowable().indexOf('\n');
-            String first = nl > 0 ? event.getThrowable().substring(0, nl) : event.getThrowable();
-            if (!sb.isEmpty()) {
-                sb.append(" | ");
-            }
-            sb.append(first);
-        }
-        String s = sb.toString();
-        return s.length() > PATTERN_MAX_LEN ? s.substring(0, PATTERN_MAX_LEN) + "..." : s;
-    }
 
     private String normalize(String s) {
         s = TIMESTAMP.matcher(s).replaceAll("<TS>");
