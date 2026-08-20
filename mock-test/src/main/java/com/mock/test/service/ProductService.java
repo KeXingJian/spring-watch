@@ -1,7 +1,7 @@
 package com.mock.test.service;
 
 import com.mock.test.dao.ProductDao;
-import io.opentelemetry.instrumentation.annotations.WithSpan;
+import com.springwatch.sdk.annotation.SwMon;
 import org.springframework.stereotype.Service;
 
 import java.util.LinkedHashMap;
@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Map;
 
 @Service
+@SwMon
 public class ProductService {
 
     private final ProductDao productDao;
@@ -17,7 +18,6 @@ public class ProductService {
         this.productDao = productDao;
     }
 
-    @WithSpan
     public Map<String, Object> listProducts(int page, int size, String category) {
         List<Map<String, Object>> list;
         if (category != null && !category.isBlank()) {
@@ -35,12 +35,10 @@ public class ProductService {
         return data;
     }
 
-    @WithSpan
     public Map<String, Object> getProduct(Long id) {
         return productDao.findById(id);
     }
 
-    @WithSpan
     public Map<String, Object> createProduct(Map<String, Object> body) {
         return productDao.save(
                 (String) body.getOrDefault("name", "商品"),
@@ -50,12 +48,10 @@ public class ProductService {
         );
     }
 
-    @WithSpan
     public long count() {
         return productDao.count();
     }
 
-    @WithSpan
     public Map<String, Object> findLowStock(int threshold) {
         List<Map<String, Object>> low = productDao.findLowStock(threshold);
         Map<String, Object> result = new LinkedHashMap<>();

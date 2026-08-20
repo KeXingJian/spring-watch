@@ -15,6 +15,7 @@ import com.springwatch.agent.metric.JvmMetricsProvider;
 import com.springwatch.agent.metric.Labels;
 import com.springwatch.agent.metric.MetricRegistry;
 import com.springwatch.agent.metric.OsMetricsProvider;
+import com.springwatch.agent.metric.SwMetricsBridge;
 import com.springwatch.agent.sql.JdbcEventExporter;
 import net.bytebuddy.agent.builder.AgentBuilder;
 import org.slf4j.Logger;
@@ -89,6 +90,8 @@ public final class AppContext {
         }
 
         LogAppenderInstaller.install(c.logBuffer);
+
+        SwMetricsBridge.register(c.metrics);
 
         JdbcEventExporter exporter = new JdbcEventExporter(
                 c.metrics, AgentConfig.sqlSlowMs(), AgentConfig.sqlDigestLimit());

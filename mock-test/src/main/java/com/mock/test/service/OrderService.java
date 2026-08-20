@@ -4,12 +4,13 @@ import com.mock.test.dao.OrderDao;
 import com.mock.test.dao.ProductDao;
 import com.mock.test.dao.UserDao;
 import com.mock.test.metrics.BusinessMetrics;
-import io.opentelemetry.instrumentation.annotations.WithSpan;
+import com.springwatch.sdk.annotation.SwMon;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
 
 @Service
+@SwMon
 public class OrderService {
 
     private final OrderDao orderDao;
@@ -24,7 +25,6 @@ public class OrderService {
         this.businessMetrics = businessMetrics;
     }
 
-    @WithSpan("order.listOrders")
     public Map<String, Object> listOrders(int page, int size, String status) {
         List<Map<String, Object>> list;
         if (status != null && !status.isBlank()) {
@@ -42,12 +42,10 @@ public class OrderService {
         return data;
     }
 
-    @WithSpan
     public Map<String, Object> getOrder(Long id) {
         return orderDao.findById(id);
     }
 
-    @WithSpan
     @SuppressWarnings("unchecked")
     public Map<String, Object> createOrder(Map<String, Object> body) {
         Long userId = ((Number) body.getOrDefault("userId", 1)).longValue();
@@ -78,7 +76,6 @@ public class OrderService {
         return saved;
     }
 
-    @WithSpan
     public Map<String, Object> payOrder(Long id) {
         Map<String, Object> o = orderDao.findById(id);
         if (o == null) return null;
@@ -90,7 +87,6 @@ public class OrderService {
         return updated;
     }
 
-    @WithSpan
     public Map<String, Object> shipOrder(Long id) {
         Map<String, Object> o = orderDao.findById(id);
         if (o == null) return null;
@@ -98,7 +94,6 @@ public class OrderService {
         return orderDao.updateStatus(id, "shipped");
     }
 
-    @WithSpan
     public Map<String, Object> completeOrder(Long id) {
         Map<String, Object> o = orderDao.findById(id);
         if (o == null) return null;
@@ -106,7 +101,6 @@ public class OrderService {
         return orderDao.updateStatus(id, "completed");
     }
 
-    @WithSpan
     public Map<String, Object> cancelOrder(Long id) {
         Map<String, Object> o = orderDao.findById(id);
         if (o == null) return null;
@@ -116,22 +110,18 @@ public class OrderService {
         return orderDao.updateStatus(id, "cancelled");
     }
 
-    @WithSpan
     public Map<String, Object> deleteOrder(Long id) {
         return orderDao.deleteById(id);
     }
 
-    @WithSpan
     public long count() {
         return orderDao.count();
     }
 
-    @WithSpan
     public double sumTotalAmount() {
         return orderDao.sumTotalAmount();
     }
 
-    @WithSpan
     public Map<String, Long> countByStatus() {
         return orderDao.countByStatus();
     }

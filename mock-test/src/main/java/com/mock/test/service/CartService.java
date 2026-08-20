@@ -1,13 +1,14 @@
 package com.mock.test.service;
 
 import com.mock.test.dao.ProductDao;
-import io.opentelemetry.instrumentation.annotations.WithSpan;
+import com.springwatch.sdk.annotation.SwMon;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Service
+@SwMon
 public class CartService {
 
     private final ProductDao productDao;
@@ -17,7 +18,6 @@ public class CartService {
         this.productDao = productDao;
     }
 
-    @WithSpan
     public Map<String, Object> addToCart(Long userId, Long productId, int quantity) {
         Map<String, Object> prod = productDao.findById(productId);
         if (prod == null) return null;
@@ -40,7 +40,6 @@ public class CartService {
         return cart;
     }
 
-    @WithSpan
     public Map<String, Object> getCart(Long userId) {
         Map<String, Object> cart = carts.get(userId);
         if (cart != null) return cart;

@@ -1,0 +1,8 @@
+<configuration name="MockTest + SpringWatchAgent" type="SpringBootApplicationConfigurationType" factoryName="Spring Boot">
+  <module name="mock-test" />
+  <option name="SPRING_BOOT_MAIN_CLASS" value="com.mock.test.MockTestApplication" />
+  <option name="VM_PARAMETERS" value="-javaagent:$PROJECT_DIR$/spring-watch-agent/agent-shade/target/spring-watch-agent.jar -Dspring.watch.metrics.host=0.0.0.0 -Dspring.watch.metrics.port=9464 -Dspring.watch.app.name=mock-test -Dspring.watch.sql.slow.ms=200 -Dspring.watch.log.buffer.size=65536" />
+  <method v="2">
+    <option name="Make" enabled="true" />
+  </method>
+</configuration>

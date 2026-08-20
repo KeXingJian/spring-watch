@@ -1,7 +1,7 @@
 package com.mock.test.service;
 
 import com.mock.test.dao.UserDao;
-import io.opentelemetry.instrumentation.annotations.WithSpan;
+import com.springwatch.sdk.annotation.SwMon;
 import org.springframework.stereotype.Service;
 
 import java.util.LinkedHashMap;
@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Map;
 
 @Service
+@SwMon
 public class UserService {
 
     private final UserDao userDao;
@@ -17,7 +18,6 @@ public class UserService {
         this.userDao = userDao;
     }
 
-    @WithSpan
     public Map<String, Object> listUsers(int page, int size) {
         List<Map<String, Object>> list = userDao.findAll();
         int from = Math.min((page - 1) * size, list.size());
@@ -30,12 +30,10 @@ public class UserService {
         return data;
     }
 
-    @WithSpan
     public Map<String, Object> getUser(Long id) {
         return userDao.findById(id);
     }
 
-    @WithSpan
     public Map<String, Object> createUser(Map<String, Object> body) {
         return userDao.save(
                 (String) body.getOrDefault("username", "user"),
@@ -44,7 +42,6 @@ public class UserService {
         );
     }
 
-    @WithSpan
     public long count() {
         return userDao.count();
     }

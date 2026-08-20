@@ -1,7 +1,6 @@
 package com.mock.test.service;
 
-import io.opentelemetry.instrumentation.annotations.SpanAttribute;
-import io.opentelemetry.instrumentation.annotations.WithSpan;
+import com.springwatch.sdk.annotation.SwMon;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -11,11 +10,11 @@ import java.util.Map;
 
 @Service
 @RequiredArgsConstructor
+@SwMon
 public class UserStatsService {
 
     private final JdbcTemplate jdbcTemplate;
 
-    @WithSpan
     public Map<String, Object> summary() {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("totalUsers", jdbcTemplate.queryForObject("SELECT COUNT(*) FROM users", Long.class));
@@ -28,8 +27,7 @@ public class UserStatsService {
         return result;
     }
 
-    @WithSpan
-    public Map<String, Object> userOrderSummary(@SpanAttribute("user.id") Long userId) {
+    public Map<String, Object> userOrderSummary(Long userId) {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("userId", userId);
         result.put("orderCount", jdbcTemplate.queryForObject(

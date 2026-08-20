@@ -25,7 +25,7 @@ spring:
 
 logging:
   pattern:
-    console: "%d{HH:mm:ss.SSS} [%thread] [%5level] traceId=%mdc{trace_id:-} spanId=%mdc{span_id:-} %logger{36} - %msg%n"
+    console: "%d{HH:mm:ss.SSS} [%thread] [%5level] %logger{36} - %msg%n"
 
 mock:
   sim:

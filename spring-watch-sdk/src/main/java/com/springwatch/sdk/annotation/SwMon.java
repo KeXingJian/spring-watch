@@ -9,10 +9,11 @@ import java.lang.annotation.Target;
  * 方法级监控注解(自研,功能等价于 OpenTelemetry @WithSpan)。
  * <p>
  * Agent 通过描述符匹配识别本注解,无需在 Agent 中 import;
- * 客户可不引用 SDK,继续使用 @WithSpan,行为完全一致。
+ * 可标注在类上(Agent 织入该类的全部方法)或方法上,客户可不引用 SDK 的
+ * 情况下也可继续使用 @WithSpan,行为完全一致。
  */
 @Retention(RetentionPolicy.RUNTIME)
-@Target(ElementType.METHOD)
+@Target({ElementType.TYPE, ElementType.METHOD})
 public @interface SwMon {
 
     String DEFAULT_NAME = "";

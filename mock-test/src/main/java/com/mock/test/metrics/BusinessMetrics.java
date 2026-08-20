@@ -1,58 +1,33 @@
 package com.mock.test.metrics;
 
-import io.opentelemetry.api.GlobalOpenTelemetry;
-import io.opentelemetry.api.common.AttributeKey;
-import io.opentelemetry.api.common.Attributes;
-import io.opentelemetry.api.metrics.DoubleHistogram;
-import io.opentelemetry.api.metrics.LongCounter;
-import io.opentelemetry.api.metrics.Meter;
+import com.springwatch.sdk.metric.SwMetricsRecorder;
 import org.springframework.stereotype.Component;
 
-import java.util.concurrent.atomic.AtomicLong;
-
+/**
+ * 业务指标埋点,基于自研 SDK {@link SwMetricsRecorder} 手动上报。
+ * <p>
+ * 数据最终汇入 spring-watch-agent 的 MetricRegistry(agent 启动时注册后端),
+ * 由 GET /metrics 拉取;Agent 未挂载时 SwMetricsRecorder 自动降级为 NOOP,业务不受影响。
+ */
 @Component
 public class BusinessMetrics {
 
-    private final LongCounter orderCreatedCounter;
-    private final LongCounter orderPaidCounter;
-    private final DoubleHistogram orderAmountHistogram;
-    private final LongCounter userLoginCounter;
-
-    public BusinessMetrics() {
-        Meter meter = GlobalOpenTelemetry.get().getMeter("com.mock.test");
-
-        this.orderCreatedCounter = meter.counterBuilder("business.order.created")
-                .setDescription("订单创建次数")
-                .setUnit("{order}")
-                .build();
-
-        this.orderPaidCounter = meter.counterBuilder("business.order.paid")
-                .setDescription("订单支付次数")
-                .setUnit("{order}")
-                .build();
-
-        this.orderAmountHistogram = meter.histogramBuilder("business.order.amount")
-                .setDescription("订单金额分布")
-                .setUnit("CNY")
-                .build();
-
-        this.userLoginCounter = meter.counterBuilder("business.user.login")
-                .setDescription("用户登录次数")
-                .setUnit("{login}")
-                .build();
-    }
+    private static final String ORDER_CREATED = "business.order.created";
+    private static final String ORDER_PAID = "business.order.paid";
+    private static final String ORDER_AMOUNT = "business.order.amount";
+    private static final String USER_LOGIN = "business.user.login";
 
     public void recordOrderCreated(String status, double amount) {
-        orderCreatedCounter.add(1, Attributes.of(AttributeKey.stringKey("status"), status));
-        orderAmountHistogram.record(amount);
+        SwMetricsRecorder.counterInc(ORDER_CREATED, "status", status);
+        SwMetricsRecorder.histogramObserve(ORDER_AMOUNT, amount);
     }
 
     public void recordOrderPaid(double amount) {
-        orderPaidCounter.add(1);
-        orderAmountHistogram.record(amount);
+        SwMetricsRecorder.counterInc(ORDER_PAID);
+        SwMetricsRecorder.histogramObserve(ORDER_AMOUNT, amount);
     }
 
     public void recordUserLogin(String channel) {
-        userLoginCounter.add(1, Attributes.of(AttributeKey.stringKey("channel"), channel));
+        SwMetricsRecorder.counterInc(USER_LOGIN, "channel", channel);
     }
 }
