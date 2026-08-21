@@ -50,6 +50,7 @@ public class AgentHttpClient {
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofMillis(connectTimeoutMs))
                 .followRedirects(HttpClient.Redirect.NORMAL)
+                .version(HttpClient.Version.HTTP_1_1)
                 .executor(executor)
                 .build();
         this.requestTimer = Timer.builder("spring.watch.collector.http.request")
