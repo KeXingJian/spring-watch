@@ -51,6 +51,10 @@ public final class HikariPoolInstrumentation implements InstrumentDefinition {
         this.registry = registry;
     }
 
+    public HikariPoolInstrumentation() {
+        this(com.springwatch.agent.AppContext.get().metrics);
+    }
+
     @Override
     public String name() {
         return "hikari-pool";

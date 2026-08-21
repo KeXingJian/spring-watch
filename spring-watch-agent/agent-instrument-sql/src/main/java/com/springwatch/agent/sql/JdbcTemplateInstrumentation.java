@@ -1,5 +1,6 @@
 package com.springwatch.agent.sql;
 
+import com.springwatch.agent.AppContext;
 import com.springwatch.agent.config.AgentConfig;
 import com.springwatch.agent.instrument.InstrumentDefinition;
 import com.springwatch.agent.metric.MetricRegistry;
@@ -25,6 +26,10 @@ public final class JdbcTemplateInstrumentation implements InstrumentDefinition {
 
     public JdbcTemplateInstrumentation(MetricRegistry registry) {
         this.registry = registry;
+    }
+
+    public JdbcTemplateInstrumentation() {
+        this(AppContext.get().metrics);
     }
 
     @Override

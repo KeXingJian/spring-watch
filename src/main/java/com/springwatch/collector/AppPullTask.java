@@ -177,7 +177,7 @@ public class AppPullTask {
         AgentLogCollector.Result l = null;
         if (m != null && m.ok()) {
             Instant since = app.getLastLogPullTime() != null ? app.getLastLogPullTime() : now.minusSeconds(3600);
-            l = agentLogCollector.collect(app.getAppid(), app.getAppName(), app.getEndpoint(), since, timeoutMs);
+            l = agentLogCollector.collect(app.getAppid(), app.getAppName(), app.getEndpoint(), metricsPort, since, timeoutMs);
             if (l.ok() && l.latestTimestamp() != null && l.latestTimestamp().isAfter(since)) {
                 app.setLastLogPullTime(l.latestTimestamp());
                 app.setUpdatedAt(now);

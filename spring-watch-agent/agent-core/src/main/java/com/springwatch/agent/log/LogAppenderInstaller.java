@@ -32,18 +32,21 @@ public final class LogAppenderInstaller {
         }
         try {
             Class<?> contextClazz = Class.forName("ch.qos.logback.classic.LoggerContext", true, ClassLoader.getSystemClassLoader());
+            Class<?> contextBaseClazz = Class.forName("ch.qos.logback.core.Context", true, ClassLoader.getSystemClassLoader());
             Class<?> appenderBaseClazz = Class.forName("ch.qos.logback.core.AppenderBase", true, ClassLoader.getSystemClassLoader());
+            Class<?> appenderInterfaceClazz = Class.forName("ch.qos.logback.core.Appender", true, ClassLoader.getSystemClassLoader());
             Class<?> loggerClazz = Class.forName("ch.qos.logback.classic.Logger", true, ClassLoader.getSystemClassLoader());
 
             Class<?> appenderClazz = Class.forName(APPENDER_CLASS, true, ClassLoader.getSystemClassLoader());
             Object appender = appenderClazz.getConstructor(LogRingBuffer.class).newInstance(buffer);
 
-            Method setContext = appenderBaseClazz.getMethod("setContext", contextClazz);
+            Method setContext = appenderBaseClazz.getMethod("setContext", contextBaseClazz);
             Method start = appenderBaseClazz.getMethod("start");
             Method getLogger = contextClazz.getMethod("getLogger", String.class);
-            Method addAppender = loggerClazz.getMethod("addAppender", appenderBaseClazz);
+            Method addAppender = loggerClazz.getMethod("addAppender", appenderInterfaceClazz);
 
-            Object context = contextClazz.getMethod("getILoggerFactory").invoke(null);
+            Class<?> slf4jFactoryClazz = Class.forName("org.slf4j.LoggerFactory", true, ClassLoader.getSystemClassLoader());
+            Object context = slf4jFactoryClazz.getMethod("getILoggerFactory").invoke(null);
             Object rootLogger = getLogger.invoke(context, "ROOT");
 
             setContext.invoke(appender, context);

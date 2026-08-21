@@ -30,9 +30,9 @@ public class AgentLogCollector {
     private final ObjectMapper objectMapper;
     private final AgentHttpClient agentHttpClient;
 
-    public Result collect(Long appid, String appName, String endpoint, Instant since, int readTimeoutMs) {
+    public Result collect(Long appid, String appName, String endpoint, Integer metricsPort, Instant since, int readTimeoutMs) {
         long start = System.nanoTime();
-        String url = buildUrl(endpoint, since);
+        String url = buildUrl(endpoint, metricsPort, since);
         String remoteHost = parseHost(endpoint);
         long latencyMs = 0;
 
@@ -110,11 +110,15 @@ public class AgentLogCollector {
         }
     }
 
-    private String buildUrl(String endpoint, Instant since) {
-        String base = endpoint.endsWith("/")
-                ? endpoint.substring(0, endpoint.length() - 1)
-                : endpoint;
-        return normalizeBaseUrl(base) + "/api/agent/logs?since=" + since.toString();
+    private String buildUrl(String endpoint, Integer metricsPort, Instant since) {
+        String base = endpoint == null || endpoint.isBlank()
+                ? "http://localhost:" + (metricsPort != null ? metricsPort : 9464)
+                : endpoint.endsWith("/")
+                        ? endpoint.substring(0, endpoint.length() - 1)
+                        : endpoint;
+        String host = base.replaceFirst(":\\d+", "");
+        int port = metricsPort != null ? metricsPort : 9464;
+        return normalizeBaseUrl(host) + ":" + port + "/api/agent/logs?since=" + since.toString();
     }
 
     private static String normalizeBaseUrl(String hostOrUrl) {
