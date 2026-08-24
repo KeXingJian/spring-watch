@@ -17,6 +17,10 @@ public interface AlertHistoryRepository extends JpaRepository<AlertHistory, Long
 
     Page<AlertHistory> findByAppAppid(Long appid, Pageable pageable);
 
+    List<AlertHistory> findByResolvedAtIsNullOrderByCreatedAtDesc(Pageable pageable);
+
+    List<AlertHistory> findTop20ByOrderByCreatedAtDesc();
+
     @Modifying
     @Query("delete from AlertHistory h where h.createdAt < :cutoff")
     int deleteByCreatedAtBefore(@Param("cutoff") Instant cutoff);

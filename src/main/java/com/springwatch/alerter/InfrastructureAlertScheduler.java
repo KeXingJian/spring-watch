@@ -141,7 +141,8 @@ public class InfrastructureAlertScheduler {
                 .tags(rule.getTag())
                 .build();
         try {
-            alertNotifier.notify(alertRule, synthetic, "infra_alert");
+            // kxj: 用 firing 类型走正确的"告警触发"邮件模板,原 infra_alert 会命中恢复模板
+            alertNotifier.notify(alertRule, synthetic, "firing");
         } catch (Exception e) {
             log.warn("[kxj: 基础设施告警 邮件发送失败 - rule={}, error={}]",
                     rule.getName(), e.getMessage());

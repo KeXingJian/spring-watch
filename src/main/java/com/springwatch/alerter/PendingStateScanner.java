@@ -11,6 +11,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -32,6 +33,9 @@ public class PendingStateScanner {
 
     @Value("${spring-watch.alert.scan.batch-size:200}")
     private long batchSize;
+
+    @Value("${spring-watch.alert.recover.stale-firing-seconds:86400}")
+    private long staleFiringSeconds;
 
     private ExecutorService scanExecutor;
 
@@ -85,12 +89,14 @@ public class PendingStateScanner {
     private void doScan() {
         long start = System.nanoTime();
         try {
-            List<AlertStateStore.PendingEntry> entries = stateStore.scanPending(batchSize);
+            List<AlertStateStore.PendingEntry> entries = stateStore.scanStates(
+                    batchSize, Duration.ofSeconds(staleFiringSeconds));
             if (entries.isEmpty()) {
                 return;
             }
-            log.debug("[Alerter] 扫描器发现PENDING - count={}", entries.size());
+            log.debug("[Alerter] 扫描器发现待处理 - count={}", entries.size());
             int fired = 0;
+            int recovered = 0;
             int skipped = 0;
             Instant now = Instant.now();
             for (AlertStateStore.PendingEntry entry : entries) {
@@ -110,16 +116,21 @@ public class PendingStateScanner {
                         skipped++;
                         continue;
                     }
-                    alertExecutor.submitFromScanner(rule, entry.appid(), entry.firstBreachAt(), entry.triggerCount(), now);
-                    fired++;
+                    if (entry.isFiring()) {
+                        alertExecutor.submitResolveFromScanner(rule, entry.appid(), now);
+                        recovered++;
+                    } else {
+                        alertExecutor.submitFromScanner(rule, entry.appid(), entry.firstBreachAt(), entry.triggerCount(), now);
+                        fired++;
+                    }
                 } catch (Exception e) {
                     log.warn("[Alerter] 扫描器处理单条失败 - ruleId={}, appid={}, error={}",
                             entry.ruleId(), entry.appid(), e.getMessage());
                 }
             }
             long costMs = (System.nanoTime() - start) / 1_000_000;
-            log.info("[Alerter] 扫描器完成 - scanned={}, fired={}, skipped={}, cost={}ms",
-                    entries.size(), fired, skipped, costMs);
+            log.info("[Alerter] 扫描器完成 - scanned={}, fired={}, recovered={}, skipped={}, cost={}ms",
+                    entries.size(), fired, recovered, skipped, costMs);
         } catch (Exception e) {
             long costMs = (System.nanoTime() - start) / 1_000_000;
             log.warn("[Alerter] 扫描器异常 - error={}, cost={}ms", e.getMessage(), costMs);

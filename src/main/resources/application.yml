@@ -13,6 +13,7 @@ spring:
       - classpath:application-inflight.yml
       - classpath:application-infra.yml
       - classpath:application-influxdb.yml
+      - classpath:application-ai.yml
       - optional:file:.env[.properties]
 
   mail:

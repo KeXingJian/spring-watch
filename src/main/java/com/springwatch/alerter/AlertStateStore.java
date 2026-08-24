@@ -192,6 +192,10 @@ public class AlertStateStore {
         return readField(ruleId, appid, AlertStateData::lastValue);
     }
 
+    public Instant getLastFiredAt(Long ruleId, Long appid) {
+        return readField(ruleId, appid, AlertStateData::lastFiredAt);
+    }
+
     public String getLastMetric(Long ruleId, Long appid) {
         return readField(ruleId, appid, AlertStateData::lastMetric);
     }
@@ -206,6 +210,16 @@ public class AlertStateStore {
                 .build());
         log.debug("[Alerter] 状态变更 - ruleId={}, appid={}, state={}, firstBreachAt={}, lastFiredAt={}",
                 ruleId, appid, state, firstBreachAt, lastFiredAt);
+    }
+
+    /**
+     * kxj: FIRING 保持期续期 - 日志规则持续命中时更新 lastFiredAt,恢复判断以它为准
+     */
+    public void updateLastFiredAt(Long ruleId, Long appid, Instant now) {
+        update(ruleId, appid, current -> current.toBuilder()
+                .lastFiredAt(now)
+                .expireAt(now.plus(Duration.ofHours(ttlHours)))
+                .build());
     }
 
     public void clear(Long ruleId, Long appid) {
@@ -272,37 +286,68 @@ public class AlertStateStore {
     }
 
     public List<PendingEntry> scanPending(long scanCount) {
-        long limit = Math.min(scanCount, scanMaxEntries);
-        List<PendingEntry> result = new ArrayList<>();
-        for (Map.Entry<RuleAppKey, AlertStateData> entry : stateCache.asMap().entrySet()) {
-            if (result.size() >= limit) {
-                break;
-            }
-            AlertStateData data = entry.getValue();
-            if (data == null) {
-                continue;
-            }
-            if (Instant.now().isAfter(data.expireAt())) {
-                continue;
-            }
-            if (data.state() != AlertState.PENDING) {
-                continue;
-            }
-            if (data.firstBreachAt() == null) {
-                continue;
-            }
-            result.add(new PendingEntry(
-                    entry.getKey().ruleId(),
-                    entry.getKey().appid(),
-                    data.firstBreachAt(),
-                    data.triggerCount()));
-        }
-        log.trace("[Alerter] scanPending 完成 - size={}", result.size());
-        return result;
+        return scanStates(scanCount, null);
     }
 
-    public record PendingEntry(Long ruleId, Long appid, Instant firstBreachAt, long triggerCount) {
+    /**
+     * kxj: 扫描器统一入口 - 返回 PENDING 条目 + 超时未恢复的 stale FIRING 条目
+     * staleFiringAge 为 null 时只返回 PENDING;轮转起点避免固定截断饿死尾部条目
+     */
+    public List<PendingEntry> scanStates(long scanCount, Duration staleFiringAge) {
+        Instant now = Instant.now();
+        List<PendingEntry> all = new ArrayList<>();
+        for (Map.Entry<RuleAppKey, AlertStateData> entry : stateCache.asMap().entrySet()) {
+            AlertStateData data = entry.getValue();
+            if (data == null || now.isAfter(data.expireAt())) {
+                continue;
+            }
+            if (data.state() == AlertState.PENDING) {
+                if (data.firstBreachAt() != null) {
+                    all.add(new PendingEntry(
+                            entry.getKey().ruleId(),
+                            entry.getKey().appid(),
+                            data.firstBreachAt(),
+                            data.triggerCount(),
+                            AlertState.PENDING));
+                }
+            } else if (data.state() == AlertState.FIRING && staleFiringAge != null
+                    && data.lastFiredAt() != null
+                    && Duration.between(data.lastFiredAt(), now).compareTo(staleFiringAge) >= 0) {
+                all.add(new PendingEntry(
+                        entry.getKey().ruleId(),
+                        entry.getKey().appid(),
+                        data.firstBreachAt(),
+                        data.triggerCount(),
+                        AlertState.FIRING));
+            }
+        }
+        if (all.isEmpty()) {
+            return all;
+        }
+        long limit = Math.min(scanCount, scanMaxEntries);
+        if (all.size() <= limit) {
+            return all;
+        }
+        int start = (int) (scanCursor.getAndIncrement() % all.size());
+        List<PendingEntry> out = new ArrayList<>((int) limit);
+        for (int i = 0; i < all.size() && out.size() < limit; i++) {
+            out.add(all.get((start + i) % all.size()));
+        }
+        log.trace("[Alerter] scanStates 完成 - total={}, returned={}, start={}", all.size(), out.size(), start);
+        return out;
     }
+
+    public record PendingEntry(Long ruleId, Long appid, Instant firstBreachAt, long triggerCount, AlertState state) {
+        public PendingEntry(Long ruleId, Long appid, Instant firstBreachAt, long triggerCount) {
+            this(ruleId, appid, firstBreachAt, triggerCount, AlertState.PENDING);
+        }
+
+        public boolean isFiring() {
+            return state == AlertState.FIRING;
+        }
+    }
+
+    private final AtomicLong scanCursor = new AtomicLong(0);
 
     private void update(Long ruleId, Long appid, java.util.function.Function<AlertStateData, AlertStateData> mutator) {
         RuleAppKey key = new RuleAppKey(ruleId, appid);

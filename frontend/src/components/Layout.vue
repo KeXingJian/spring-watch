@@ -45,6 +45,7 @@ const navItems = [
   { path: '/alert-history', label: '告警历史', icon: 'M4 5h16M4 10h16M4 15h12M4 20h8' },
   { path: '/email-config', label: '邮箱配置', icon: 'M3 5h18v14H3zM3 5l9 7 9-7' },
   { path: '/self-monitor', label: '自身监控', icon: 'M12 2l3 6 6 1-4.5 4.5L18 20l-6-3-6 3 1.5-6.5L3 9l6-1z' },
+  { path: '/ai-chat', label: 'AI 助手', icon: 'M12 3v3M12 21v-3M3 12h3M21 12h-3M5.6 5.6l2.1 2.1M18.4 18.4l-2.1-2.1M5.6 18.4l2.1-2.1M18.4 5.6l-2.1 2.1' },
   { path: '/apps', label: '监控应用', icon: 'M12 2l9 4-9 4-9-4zM3 12l9 4 9-4M3 18l9 4 9-4' }
 ]
 

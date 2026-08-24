@@ -55,7 +55,10 @@ async function loadRetention() {
 }
 
 const filtered = computed(() => {
+  const cutoff = Date.now() - rangeSec.value * 1000
   return allRows.value.filter((r) => {
+    const t = new Date(r.createdAt).getTime()
+    if (isNaN(t) || t < cutoff) return false
     if (levelFilter.value && (r.alertLevel || 'warning') !== levelFilter.value) return false
     const isFiring = !r.resolvedAt
     if (statusFilter.value === 'firing' && !isFiring) return false
@@ -78,7 +81,7 @@ function toggleDetail(id: number) {
 }
 
 function appLabel(r: any) {
-  return r.app ? `${r.app.appName} (${r.app.appid})` : '-'
+  return r.appName ? `${r.appName} (${r.appid})` : '-'
 }
 
 function formatPurgedAt(iso: string | null): string {
@@ -180,7 +183,7 @@ onBeforeUnmount(() => {
                     </span>
                   </td>
                   <td>{{ appLabel(r) }}</td>
-                  <td>{{ r.rule ? r.rule.ruleName : '-' }}</td>
+                  <td>{{ r.ruleName || '-' }}</td>
                   <td class="truncate max-w-md" :title="r.alertMessage">{{ r.alertMessage || '-' }}</td>
                   <td>
                     <button class="btn btn-ghost btn-xs" @click="toggleDetail(r.id)">{{ expanded[r.id] ? '收起' : '查看' }}</button>

@@ -46,7 +46,7 @@ public class LogAnomalyDetector {
     private Counter alertCandidateCounter;
 
     @PostConstruct
-    void init() {
+    public void init() {
         this.errorRateCache = Caffeine.newBuilder()
                 .expireAfterWrite(Duration.ofSeconds(rateTtlSeconds))
                 .maximumSize(maxAppids)

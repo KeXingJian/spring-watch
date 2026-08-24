@@ -14,6 +14,10 @@ spring-watch:
     scan:
       interval-ms: 5000 # 扫描间隔（毫秒）
       batch-size: 200 # 每批扫描条数
+    recover:
+      stale-firing-seconds: 86400 # 数据停止上报后,FIRING 超过该时长由扫描器兜底恢复(默认24h,对齐状态TTL)
+    log:
+      recover-grace-seconds: 30 # 日志规则触发后,连续无命中该时长才允许恢复,防普通日志闪断告警
     history:
       retention-days: 90 # 告警历史保留天数（P0-5）
   infra-alerts:

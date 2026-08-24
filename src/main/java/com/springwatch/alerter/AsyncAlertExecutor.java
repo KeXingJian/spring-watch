@@ -141,4 +141,22 @@ public class AsyncAlertExecutor {
             }
         });
     }
+
+    /**
+     * kxj: 扫描器提交 stale FIRING 兜底恢复 - 数据停止上报时关闭遗留告警
+     */
+    public void submitResolveFromScanner(AlertRule rule, Long appid, Instant now) {
+        if (rule == null || appid == null) {
+            return;
+        }
+        runWrapped(() -> {
+            try {
+                log.info("[Alerter] 扫描器兜底恢复任务开始 - ruleId={}, appid={}", rule.getId(), appid);
+                engine.resolveFromScanner(rule, appid, now);
+            } catch (Throwable t) {
+                log.error("[Alerter] 扫描器兜底恢复异常 - ruleId={}, appid={}, error={}",
+                        rule.getId(), appid, t.getMessage(), t);
+            }
+        });
+    }
 }

@@ -26,6 +26,9 @@ public class AlertEngine {
     @Value("${spring-watch.alert.enabled:true}")
     private boolean alertEnabled;
 
+    @Value("${spring-watch.alert.log.recover-grace-seconds:30}")
+    private long logRecoverGraceSeconds;
+
     private final AlertEvaluator evaluator;
     private final AlertStateStore stateStore;
     private final AlertRuleCache ruleCache;
@@ -175,22 +178,35 @@ public class AlertEngine {
 
         if (breached) {
             if (current == AlertState.FIRING) {
-                log.trace("[Alerter] 日志告警持续中, 跳过 - ruleId={}, appid={}", ruleId, appid);
+                // kxj: 持续命中时续期 lastFiredAt,恢复判断以"最近一次命中时间"为准
+                stateStore.updateLastFiredAt(ruleId, appid, now);
+                log.trace("[Alerter] 日志告警持续命中,续期 - ruleId={}, appid={}", ruleId, appid);
                 return;
             }
             stateStore.setState(ruleId, appid, AlertState.FIRING, now, now);
             log.debug("[Alerter] 日志规则构造合成指标 - ruleId={}, appid={}, metric={}, fingerprint={}",
                     ruleId, appid, synthetic.getMetricName(), event.getFingerprint());
-            self.fire(rule, synthetic);
+            fireSafely(rule, synthetic);
             return;
         }
 
         if (current == AlertState.FIRING) {
-            log.info("[Alerter] 日志告警恢复 - ruleId={}, appid={}, fingerprint={}",
-                    ruleId, appid, event.getFingerprint());
-            stateStore.setState(ruleId, appid, AlertState.RESOLVED, null, null);
-            self.resolve(rule, synthetic, now);
-            stateStore.clear(ruleId, appid);
+            // kxj: 仅当"最近一次命中"超过 grace 窗口后才允许恢复,避免普通日志闪断告警
+            Instant lastFiredAt = stateStore.getLastFiredAt(ruleId, appid);
+            long elapsedSec = lastFiredAt == null
+                    ? Long.MAX_VALUE
+                    : Duration.between(lastFiredAt, now).toSeconds();
+            if (elapsedSec < logRecoverGraceSeconds) {
+                log.trace("[Alerter] 日志告警恢复被grace窗口拦截 - ruleId={}, appid={}, elapsed={}s, grace={}s",
+                        ruleId, appid, elapsedSec, logRecoverGraceSeconds);
+                return;
+            }
+            log.info("[Alerter] 日志告警恢复 - ruleId={}, appid={}, fingerprint={}, 无命中持续={}s",
+                    ruleId, appid, event.getFingerprint(), elapsedSec);
+            if (stateStore.tryResolve(ruleId, appid)) {
+                resolveSafely(rule, synthetic, now);
+                stateStore.clear(ruleId, appid);
+            }
         }
     }
 
@@ -259,7 +275,7 @@ public class AlertEngine {
             if (timesMet && durationMet) {
                 if (stateStore.tryFire(ruleId, appid, firstBreach, now)) {
                     stateStore.clearTriggerCount(ruleId, appid);
-                    self.fire(rule, event);
+                    fireSafely(rule, event);
                 } else {
                     log.debug("[Alerter] CAS抢占FIRING失败, 已被其他线程触发 - ruleId={}, appid={}", ruleId, appid);
                 }
@@ -285,17 +301,21 @@ public class AlertEngine {
         }
 
         if (current == AlertState.FIRING) {
-            //TODO 临时补丁
-            // kxj: 仅当"触发告警的同一个 metric"再次出现且条件不满足时,才算真正恢复
-            // 否则路过的任意 metric(JEXL 评估自然返回 false)会误触发 resolve
+            // kxj: lastMetric 为 null(触发事件无指标名/状态已清)时无法判断相关性,
+            // 不恢复,交由扫描器超时兜底,避免任意路过事件误关告警
             String lastMetric = stateStore.getLastMetric(ruleId, appid);
-            if (lastMetric != null && !lastMetric.equals(event.getMetricName())) {
+            if (lastMetric == null) {
+                log.debug("[Alerter] 无lastMetric记录, 跳过恢复(交扫描器兜底) - ruleId={}, appid={}",
+                        ruleId, appid);
+                return;
+            }
+            if (!lastMetric.equals(event.getMetricName())) {
                 log.debug("[Alerter] 收到不相关事件, 跳过恢复 - ruleId={}, appid={}, lastMetric={}, currentMetric={}",
                         ruleId, appid, lastMetric, event.getMetricName());
                 return;
             }
             if (stateStore.tryResolve(ruleId, appid)) {
-                self.resolve(rule, event, now);
+                resolveSafely(rule, event, now);
                 stateStore.clear(ruleId, appid);
             } else {
                 log.debug("[Alerter] CAS抢占RESOLVED失败, 已被其他线程恢复 - ruleId={}, appid={}", ruleId, appid);
@@ -411,9 +431,80 @@ public class AlertEngine {
             stateStore.clearTriggerCount(rule.getId(), appid);
             log.info("[Alerter] 扫描器触发FIRING - ruleId={}, appid={}, firstBreachAt={}, triggerCount={}, metric={}, value={}",
                     rule.getId(), appid, firstBreachAt, triggerCount, synthetic.getMetricName(), synthetic.getValue());
-            self.fire(rule, synthetic);
+            fireSafely(rule, synthetic);
         } else {
             log.debug("[Alerter] 扫描器CAS抢占FIRING失败, 已被实时事件触发 - ruleId={}, appid={}",
+                    rule.getId(), appid);
+        }
+    }
+
+    /**
+     * kxj: P0-1 修复 - fire 失败(DB/通知异常)时把状态回退到 PENDING,由后续事件或扫描器重试,不丢告警
+     */
+    private void fireSafely(AlertRule rule, MetricEvent event) {
+        try {
+            self.fire(rule, event);
+        } catch (Exception e) {
+            log.error("[Alerter] 告警触发失败,回退状态到PENDING待重试 - ruleId={}, appid={}, error={}",
+                    rule.getId(), event.getAppid(), e.getMessage(), e);
+            stateStore.setState(rule.getId(), event.getAppid(), AlertState.PENDING, null, null);
+        }
+    }
+
+    /**
+     * kxj: resolve 失败(DB/通知异常)时回退到 FIRING,由后续事件或扫描器重试
+     */
+    private void resolveSafely(AlertRule rule, MetricEvent event, Instant now) {
+        try {
+            self.resolve(rule, event, now);
+        } catch (Exception e) {
+            log.error("[Alerter] 告警恢复失败,回退状态到FIRING待重试 - ruleId={}, appid={}, error={}",
+                    rule.getId(), event.getAppid(), e.getMessage(), e);
+            stateStore.setState(rule.getId(), event.getAppid(), AlertState.FIRING, null, now);
+        }
+    }
+
+    /**
+     * kxj: P0-4 修复 - 扫描器兜底入口,关闭"数据停止上报"导致的 stale FIRING 遗留告警
+     */
+    public void resolveFromScanner(AlertRule rule, Long appid, Instant now) {
+        if (!alertEnabled) {
+            return;
+        }
+        if (rule == null || appid == null) {
+            return;
+        }
+        AlertState current = stateStore.getState(rule.getId(), appid);
+        if (current != AlertState.FIRING) {
+            log.debug("[Alerter] 扫描器兜底恢复时状态已变更, 跳过 - ruleId={}, appid={}, current={}",
+                    rule.getId(), appid, current);
+            return;
+        }
+        String lastMetric = stateStore.getLastMetric(rule.getId(), appid);
+        String lastValueStr = stateStore.getLastValue(rule.getId(), appid);
+        Double lastValue = null;
+        if (lastValueStr != null) {
+            try {
+                lastValue = Double.parseDouble(lastValueStr);
+            } catch (NumberFormatException ignored) {
+            }
+        }
+        Map<String, String> tags = new HashMap<>();
+        tags.put("trigger", "scanner-stale-recover");
+        MetricEvent synthetic = MetricEvent.builder()
+                .appid(appid)
+                .metricName(lastMetric != null ? lastMetric : rule.getRuleType())
+                .value(lastValue != null ? lastValue : 1.0)
+                .timestamp(now)
+                .tags(tags)
+                .build();
+        if (stateStore.tryResolve(rule.getId(), appid)) {
+            log.info("[Alerter] 扫描器兜底恢复FIRING - ruleId={}, appid={}, metric={}, value={}",
+                    rule.getId(), appid, synthetic.getMetricName(), synthetic.getValue());
+            resolveSafely(rule, synthetic, now);
+            stateStore.clear(rule.getId(), appid);
+        } else {
+            log.debug("[Alerter] 扫描器兜底CAS抢占RESOLVED失败, 已被其他线程恢复 - ruleId={}, appid={}",
                     rule.getId(), appid);
         }
     }

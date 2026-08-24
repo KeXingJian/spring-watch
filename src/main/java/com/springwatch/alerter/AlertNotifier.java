@@ -126,17 +126,31 @@ public class AlertNotifier {
         String subject = buildSubject(rule, event, type);
         String body = buildBody(rule, event, type);
         log.debug("[Alerter] sendEmail - to={}, type={}, subject={}", Arrays.toString(toArr), type, subject);
-        try {
-            SimpleMailMessage msg = new SimpleMailMessage();
-            msg.setFrom(from);
-            msg.setTo(toArr);
-            msg.setSubject(subject);
-            msg.setText(body);
-            mailSender.send(msg);
-            log.info("[Alerter] 邮件发送成功 - to={}, type={}, ruleId={}, appid={}",
-                    Arrays.toString(toArr), type, rule.getId(), event.getAppid());
-        } catch (Exception e) {
-            log.warn("[Alerter] 邮件发送失败 - to={}, type={}, error={}", Arrays.toString(toArr), type, e.getMessage());
+        int attempt = 0;
+        while (attempt < 2) {
+            attempt++;
+            try {
+                SimpleMailMessage msg = new SimpleMailMessage();
+                msg.setFrom(from);
+                msg.setTo(toArr);
+                msg.setSubject(subject);
+                msg.setText(body);
+                mailSender.send(msg);
+                log.info("[Alerter] 邮件发送成功 - to={}, type={}, ruleId={}, appid={}, attempt={}",
+                        Arrays.toString(toArr), type, rule.getId(), event.getAppid(), attempt);
+                return;
+            } catch (Exception e) {
+                log.warn("[Alerter] 邮件发送失败 - to={}, type={}, attempt={}, error={}",
+                        Arrays.toString(toArr), type, attempt, e.getMessage());
+                if (attempt == 1) {
+                    try {
+                        Thread.sleep(1000L * attempt);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        return;
+                    }
+                }
+            }
         }
     }
 

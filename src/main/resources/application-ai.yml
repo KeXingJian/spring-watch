@@ -1,0 +1,24 @@
+# ============================================================
+# AI 模块配置(spring-ai-openai,OpenAI 兼容端点:DeepSeek/Qwen/Ollama)
+# api-key 建议通过环境变量 DEEPSEEK_API_KEY 注入,不写死
+# ============================================================
+spring:
+  ai:
+    openai:
+      api-key: ${AI_API_KEY:sk-xxx}       # LLM API Key(必填,来自环境变量或 .env)
+      base-url: ${AI_BASE_URL:https://api.deepseek.com}  # OpenAI 兼容 base-url
+      chat:
+        options:
+          model: ${AI_MODEL:deepseek-chat}   # 模型名
+          temperature: 0.7
+          max-tokens: 2048
+
+ai:
+  chat:
+    system-prompt: >
+      你是 spring-watch 监控平台内置的智能运维助手。平台已接入被监控应用,存储了
+      JVM/HTTP/JDBC/OS 等指标、日志(含指纹去重与异常检测)、告警规则与历史。
+      你可以调用工具查询数据,回答必须引用工具返回的真实数据作为证据;
+      没有数据支撑时明确说明"暂无数据",不得编造。日志内容可能含业务敏感信息,
+      回答时优先做脱敏/摘要,不要原样大段复述日志全文。
+      涉及根因分析时,结论需标注置信度,并给出可执行的排查建议。

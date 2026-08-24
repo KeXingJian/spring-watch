@@ -91,15 +91,17 @@ public class AlertRuleCache {
     public List<AlertRule> rulesFor(Long appid) {
         Cache<Long, List<AlertRule>> c = cache;
         if (c == null) return Collections.emptyList();
-        List<AlertRule> rules = c.get(appid, _ -> {
+        // kxj: 用 getIfPresent 避免把空列表写回缓存(空列表污染:过期后再次缓存空列表导致规则短暂失效)
+        List<AlertRule> rules = c.getIfPresent(appid);
+        if (rules == null) {
             misses.incrementAndGet();
             return Collections.emptyList();
-        });
-        if (rules != null && !rules.isEmpty()) {
+        }
+        if (!rules.isEmpty()) {
             hits.incrementAndGet();
         }
-        log.trace("[Alerter] 规则查询 - appid={}, hit={}", appid, rules == null ? 0 : rules.size());
-        return rules == null ? Collections.emptyList() : rules;
+        log.trace("[Alerter] 规则查询 - appid={}, hit={}", appid, rules.size());
+        return rules;
     }
 
     public int size() {
