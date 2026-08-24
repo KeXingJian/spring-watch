@@ -14,12 +14,14 @@ import org.springframework.stereotype.Component;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
-import java.util.Optional;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Component
@@ -95,20 +97,26 @@ public class PendingStateScanner {
                 return;
             }
             log.debug("[Alerter] 扫描器发现待处理 - count={}", entries.size());
+            Set<Long> ruleIds = entries.stream()
+                    .map(AlertStateStore.PendingEntry::ruleId)
+                    .collect(Collectors.toSet());
+            Map<Long, AlertRule> ruleMap = ruleIds.isEmpty()
+                    ? Map.of()
+                    : ruleRepository.findAllById(ruleIds).stream()
+                            .collect(Collectors.toMap(AlertRule::getId, r -> r, (a, b) -> a));
             int fired = 0;
             int recovered = 0;
             int skipped = 0;
             Instant now = Instant.now();
             for (AlertStateStore.PendingEntry entry : entries) {
                 try {
-                    Optional<AlertRule> ruleOpt = ruleRepository.findById(entry.ruleId());
-                    if (ruleOpt.isEmpty()) {
+                    AlertRule rule = ruleMap.get(entry.ruleId());
+                    if (rule == null) {
                         log.debug("[Alerter] 扫描器跳过已删除规则 - ruleId={}, appid={}", entry.ruleId(), entry.appid());
                         stateStore.clear(entry.ruleId(), entry.appid());
                         skipped++;
                         continue;
                     }
-                    AlertRule rule = ruleOpt.get();
                     if (!"enabled".equalsIgnoreCase(rule.getStatus())) {
                         log.debug("[Alerter] 扫描器跳过已禁用规则 - ruleId={}, appid={}, status={}",
                                 entry.ruleId(), entry.appid(), rule.getStatus());

@@ -20,7 +20,6 @@ import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.test.util.ReflectionTestUtils;
 import tools.jackson.databind.ObjectMapper;
 
-import java.lang.reflect.Field;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -72,6 +71,8 @@ class AlertEngineStreamingTest {
         SimpleMeterRegistry meters = new SimpleMeterRegistry();
         JexlEngine jexl = new JexlConfig().jexlEngine();
         JexlExprEvaluator jexlEvaluator = new JexlExprEvaluator(jexl, meters);
+        ReflectionTestUtils.setField(jexlEvaluator, "cacheSize", 256);
+        ReflectionTestUtils.setField(jexlEvaluator, "cacheExpireMinutes", 60L);
         jexlEvaluator.initMetrics();
         AlertEvaluator evaluator = new AlertEvaluator(jexlEvaluator);
 
@@ -123,13 +124,10 @@ class AlertEngineStreamingTest {
         ReflectionTestUtils.setField(anomalyDetector, "maxPatternsPerAppid", 1000);
         anomalyDetector.init();
 
-        engine = new AlertEngine(evaluator, stateStore, ruleCache, notifier,
-                historyRepository, anomalyDetector, null);
+        engine = new AlertEngine(evaluator, stateStore, ruleCache, anomalyDetector,
+                new AlertLifecycleService(stateStore, notifier, historyRepository));
         ReflectionTestUtils.setField(engine, "alertEnabled", true);
         ReflectionTestUtils.setField(engine, "logRecoverGraceSeconds", 5L);
-        Field self = AlertEngine.class.getDeclaredField("self");
-        self.setAccessible(true);
-        self.set(engine, engine);
 
         asyncExecutor = new AsyncAlertExecutor(engine);
         ReflectionTestUtils.setField(asyncExecutor, "poolSize", 4);

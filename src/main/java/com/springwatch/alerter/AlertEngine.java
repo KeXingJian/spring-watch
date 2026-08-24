@@ -1,17 +1,13 @@
 package com.springwatch.alerter;
 
 import com.springwatch.analysis.LogAnomalyDetector;
-import com.springwatch.model.entity.AlertHistory;
 import com.springwatch.model.entity.AlertRule;
 import com.springwatch.model.event.LogEvent;
 import com.springwatch.model.event.MetricEvent;
-import com.springwatch.repository.AlertHistoryRepository;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -21,6 +17,7 @@ import java.util.Map;
 
 @Slf4j
 @Component
+@RequiredArgsConstructor
 public class AlertEngine {
 
     @Value("${spring-watch.alert.enabled:true}")
@@ -32,31 +29,8 @@ public class AlertEngine {
     private final AlertEvaluator evaluator;
     private final AlertStateStore stateStore;
     private final AlertRuleCache ruleCache;
-    private final AlertNotifier notifier;
-    private final AlertHistoryRepository historyRepository;
     private final LogAnomalyDetector anomalyDetector;
-
-    /**
-     * kxj: self代理,解决 @Transactional 内部调用不生效问题
-     */
-    private final AlertEngine self;
-
-    @Autowired
-    public AlertEngine(AlertEvaluator evaluator,
-                       AlertStateStore stateStore,
-                       AlertRuleCache ruleCache,
-                       AlertNotifier notifier,
-                       AlertHistoryRepository historyRepository,
-                       LogAnomalyDetector anomalyDetector,
-                       @Lazy AlertEngine self) {
-        this.evaluator = evaluator;
-        this.stateStore = stateStore;
-        this.ruleCache = ruleCache;
-        this.notifier = notifier;
-        this.historyRepository = historyRepository;
-        this.anomalyDetector = anomalyDetector;
-        this.self = self;
-    }
+    private final AlertLifecycleService lifecycleService;
 
     public void process(MetricEvent event) {
         if (!alertEnabled) {
@@ -323,51 +297,29 @@ public class AlertEngine {
         }
     }
 
-    @Transactional
-    public void fire(AlertRule rule, MetricEvent event) {
-        log.info("[Alerter] 告警触发 - ruleId={}, appid={}, metric={}, value={}, expression={}",
-                rule.getId(), event.getAppid(), event.getMetricName(),
-                event.getValue(), rule.getExpression());
-        if (event.getMetricName() != null) {
-            stateStore.recordLastEvent(rule.getId(), event.getAppid(),
-                    event.getValue(), event.getMetricName(), null);
+    /**
+     * kxj: P0-1 修复 - fire 失败(DB/通知异常)时把状态回退到 PENDING,由后续事件或扫描器重试,不丢告警
+     */
+    private void fireSafely(AlertRule rule, MetricEvent event) {
+        try {
+            lifecycleService.fire(rule, event);
+        } catch (Exception e) {
+            log.error("[Alerter] 告警触发失败,回退状态到PENDING待重试 - ruleId={}, appid={}, error={}",
+                    rule.getId(), event.getAppid(), e.getMessage(), e);
+            stateStore.setState(rule.getId(), event.getAppid(), AlertState.PENDING, null, null);
         }
-
-        AlertHistory history = AlertHistory.builder()
-                .rule(rule)
-                .app(rule.getApp())
-                .alertLevel(determineLevel(rule))
-                .alertMessage(buildMessage(rule, event))
-                .build();
-        AlertHistory saved = historyRepository.save(history);
-
-        String notifyResult = notifier.notify(rule, event, "firing");
-        saved.setNotifyResult(notifyResult);
-        historyRepository.save(saved);
-        log.info("[Alerter] 告警历史持久化 - historyId={}, notifyResult={}", saved.getId(), notifyResult);
     }
 
-    @Transactional
-    public void resolve(AlertRule rule, MetricEvent event, Instant now) {
-        log.info("[Alerter] 告警恢复 - ruleId={}, appid={}, metric={}",
-                rule.getId(), event.getAppid(), event.getMetricName());
-
-        List<AlertHistory> open = historyRepository
-                .findByAppAppidAndRuleIdAndResolvedAtIsNullOrderByCreatedAtDesc(
-                        event.getAppid(), rule.getId());
-        if (!open.isEmpty()) {
-            AlertHistory latest = open.getFirst();
-            latest.setResolvedAt(now);
-            historyRepository.save(latest);
-            log.info("[Alerter] 告警历史标记恢复 - historyId={}, resolvedAt={}", latest.getId(), now);
-        } else {
-            log.warn("[Alerter] 恢复时未找到open历史 - ruleId={}, appid={}", rule.getId(), event.getAppid());
-        }
-
+    /**
+     * kxj: resolve 失败(DB/通知异常)时回退到 FIRING,由后续事件或扫描器重试
+     */
+    private void resolveSafely(AlertRule rule, MetricEvent event, Instant now) {
         try {
-            notifier.notify(rule, event, "resolved");
+            lifecycleService.resolve(rule, event, now);
         } catch (Exception e) {
-            log.warn("[Alerter] 恢复通知失败 - ruleId={}, error={}", rule.getId(), e.getMessage());
+            log.error("[Alerter] 告警恢复失败,回退状态到FIRING待重试 - ruleId={}, appid={}, error={}",
+                    rule.getId(), event.getAppid(), e.getMessage(), e);
+            stateStore.setState(rule.getId(), event.getAppid(), AlertState.FIRING, null, now);
         }
     }
 
@@ -439,32 +391,6 @@ public class AlertEngine {
     }
 
     /**
-     * kxj: P0-1 修复 - fire 失败(DB/通知异常)时把状态回退到 PENDING,由后续事件或扫描器重试,不丢告警
-     */
-    private void fireSafely(AlertRule rule, MetricEvent event) {
-        try {
-            self.fire(rule, event);
-        } catch (Exception e) {
-            log.error("[Alerter] 告警触发失败,回退状态到PENDING待重试 - ruleId={}, appid={}, error={}",
-                    rule.getId(), event.getAppid(), e.getMessage(), e);
-            stateStore.setState(rule.getId(), event.getAppid(), AlertState.PENDING, null, null);
-        }
-    }
-
-    /**
-     * kxj: resolve 失败(DB/通知异常)时回退到 FIRING,由后续事件或扫描器重试
-     */
-    private void resolveSafely(AlertRule rule, MetricEvent event, Instant now) {
-        try {
-            self.resolve(rule, event, now);
-        } catch (Exception e) {
-            log.error("[Alerter] 告警恢复失败,回退状态到FIRING待重试 - ruleId={}, appid={}, error={}",
-                    rule.getId(), event.getAppid(), e.getMessage(), e);
-            stateStore.setState(rule.getId(), event.getAppid(), AlertState.FIRING, null, now);
-        }
-    }
-
-    /**
      * kxj: P0-4 修复 - 扫描器兜底入口,关闭"数据停止上报"导致的 stale FIRING 遗留告警
      */
     public void resolveFromScanner(AlertRule rule, Long appid, Instant now) {
@@ -507,23 +433,5 @@ public class AlertEngine {
             log.debug("[Alerter] 扫描器兜底CAS抢占RESOLVED失败, 已被其他线程恢复 - ruleId={}, appid={}",
                     rule.getId(), appid);
         }
-    }
-
-    private String determineLevel(AlertRule rule) {
-        String level = rule.getLevel();
-        if (level == null || level.isBlank()) {
-            return "warning";
-        }
-        return level;
-    }
-
-    private String buildMessage(AlertRule rule, MetricEvent event) {
-        String msg = String.format("[%s][%s] appid=%s 指标 %s 当前值=%.2f 规则=%s 时间=%s",
-                determineLevel(rule).toUpperCase(),
-                "firing".toUpperCase(), event.getAppid(), event.getMetricName(),
-                event.getValue() != null ? event.getValue() : 0.0,
-                rule.getExpression(), Instant.now());
-        log.debug("[Alerter] 告警消息构建 - ruleId={}, appid={}, message={}", rule.getId(), event.getAppid(), msg);
-        return msg;
     }
 }

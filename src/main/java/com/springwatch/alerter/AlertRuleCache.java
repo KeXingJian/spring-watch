@@ -12,8 +12,10 @@ import org.springframework.stereotype.Component;
 
 import java.time.Duration;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -39,6 +41,9 @@ public class AlertRuleCache {
     private final AtomicLong misses = new AtomicLong(0);
     private final AtomicLong evictions = new AtomicLong(0);
 
+    /** kxj: 最近一次全量重建时的 enabled 规则 id 集合,用于定时路径的变更检测 */
+    private volatile Set<Long> lastEnabledIds = Collections.emptySet();
+
     public AlertRuleCache(AlertRuleRepository repository) {
         this.repository = repository;
     }
@@ -52,6 +57,16 @@ public class AlertRuleCache {
 
     @Scheduled(fixedDelayString = "${spring-watch.alert.rule-cache.refresh-interval-ms:30000}")
     public void scheduledRefresh() {
+        // kxj: 定时路径先做轻量 id 变更检测(enabled 集合未变则跳过全量重建),
+        // 避免每 30s 无变化时也全量加载规则实体。规则内容变更由写接口 refresh() 强制刷新。
+        try {
+            List<Long> ids = repository.findIdsByStatus("enabled");
+            if (new HashSet<>(ids).equals(lastEnabledIds)) {
+                return;
+            }
+        } catch (Exception e) {
+            log.warn("[Alerter] 规则 id 变更检测失败, 走全量重建 - error={}", e.getMessage());
+        }
         rebuild();
     }
 
@@ -59,6 +74,9 @@ public class AlertRuleCache {
         try {
             // 全量 enabled 规则按 appid 预分组
             List<AlertRule> all = repository.findByStatus("enabled");
+            lastEnabledIds = all.stream()
+                    .map(AlertRule::getId)
+                    .collect(java.util.stream.Collectors.toSet());
             long total = all.size();
             Map<Long, List<AlertRule>> grouped = all.stream()
                     .filter(r -> r.getApp() != null && r.getApp().getAppid() != null)
@@ -83,9 +101,9 @@ public class AlertRuleCache {
         }
     }
 
-    /** 兼容旧接口（AlertRuleService.create/update/delete 后调用） */
+    /** 兼容旧接口（AlertRuleService.create/update/delete 后调用）: 写路径强制全量重建 */
     public void refresh() {
-        scheduledRefresh();
+        rebuild();
     }
 
     public List<AlertRule> rulesFor(Long appid) {
