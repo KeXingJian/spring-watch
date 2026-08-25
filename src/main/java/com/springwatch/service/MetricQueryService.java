@@ -20,6 +20,10 @@ import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
@@ -45,6 +49,7 @@ public class MetricQueryService {
     private Timer histogramTimer;
     private Counter emptyCounter;
     private Counter failCounter;
+    private ExecutorService batchQueryPool;
 
     @PostConstruct
     void init() {
@@ -60,6 +65,14 @@ public class MetricQueryService {
                 .description("指标查询返回空集").register(meterRegistry);
         this.failCounter = Counter.builder("spring.watch.metric.query.fail")
                 .description("指标查询失败").register(meterRegistry);
+        // kxj: batch 并发查询限流 - 固定 4 线程,防止一次 batch 几十个 parallelStream 查询
+        // 打爆 InfluxDB 查询队列(query-concurrency + query-queue-size)导致 400 queue length exceeded
+        this.batchQueryPool = Executors.newFixedThreadPool(4, r -> {
+            Thread t = new Thread(r, "sw-metric-batch");
+            t.setDaemon(true);
+            return t;
+        });
+        log.info("[kxj: batch 查询线程池初始化 - poolSize=4]");
     }
 
     public List<MetricDescriptor> listAvailable(Long appid) {
@@ -504,13 +517,20 @@ public class MetricQueryService {
             return resp;
         }
         String every = (defaultEvery == null || defaultEvery.isBlank()) ? "30s" : defaultEvery;
-        Map<String, Map<String, Object>> parallel = specs.parallelStream()
-                .collect(Collectors.toMap(
-                        AppViewSpec::key,
-                        spec -> runSpec(appid, from, to, every, spec),
-                        (a, _) -> a,
-                        LinkedHashMap::new
-                ));
+        List<Callable<Map.Entry<String, Map<String, Object>>>> tasks = new ArrayList<>(specs.size());
+        for (AppViewSpec spec : specs) {
+            tasks.add(() -> Map.entry(spec.key(), runSpec(appid, from, to, every, spec)));
+        }
+        Map<String, Map<String, Object>> parallel = new LinkedHashMap<>();
+        try {
+            for (Future<Map.Entry<String, Map<String, Object>>> f : batchQueryPool.invokeAll(tasks)) {
+                Map.Entry<String, Map<String, Object>> e = f.get();
+                parallel.putIfAbsent(e.getKey(), e.getValue());
+            }
+        } catch (Exception e) {
+            failCounter.increment();
+            log.warn("[kxj: batch 并发查询中断 - appid={}, specs={}, error={}]", appid, specs.size(), e.getMessage());
+        }
         Map<String, Object> results = new LinkedHashMap<>();
         List<String> errors = new ArrayList<>();
         for (AppViewSpec s : specs) {

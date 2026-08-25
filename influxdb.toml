@@ -11,8 +11,8 @@ storage-max-concurrent-compactions = 1
 storage-max-index-log-file-size = 1048576
 storage-compact-throughput-burst = 4194304
 
-query-concurrency = 2
-query-queue-size = 4
+query-concurrency = 8
+query-queue-size = 32
 query-memory-bytes = 33554432
 query-initial-memory-bytes = 262144
 query-max-memory-bytes = 16777216
