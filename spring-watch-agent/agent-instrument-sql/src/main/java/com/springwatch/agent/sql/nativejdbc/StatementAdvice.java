@@ -16,7 +16,7 @@ public final class StatementAdvice {
     }
 
     @Advice.OnMethodEnter(suppress = Throwable.class)
-    public static void onEnter(@Advice.Argument(0) Object sqlArg) {
+    public static void onEnter(@Advice.Argument(value = 0, optional = true) Object sqlArg) {
         try {
             JdbcStorage.onStart(Thread.currentThread().getName(), System.nanoTime());
         } catch (Throwable ignore) {
@@ -24,7 +24,8 @@ public final class StatementAdvice {
     }
 
     @Advice.OnMethodExit(suppress = Throwable.class, onThrowable = Throwable.class)
-    public static void onExit(@Advice.Argument(0) Object sqlArg, @Advice.Thrown Throwable thrown) {
+    public static void onExit(@Advice.Argument(value = 0, optional = true) Object sqlArg,
+                              @Advice.Thrown Throwable thrown) {
         try {
             String sql = sqlArg == null ? null : sqlArg.toString();
             JdbcStorage.onEnd(sql, thrown, System.nanoTime());

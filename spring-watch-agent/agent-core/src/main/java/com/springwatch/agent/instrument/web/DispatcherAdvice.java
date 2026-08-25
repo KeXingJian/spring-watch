@@ -27,10 +27,6 @@ public final class DispatcherAdvice {
     private static final String ATTR_BEST_PATTERN =
             "org.springframework.web.servlet.HandlerMapping.bestMatchingPattern";
 
-    static final double[] BOUNDS_SEC = {
-            0.005d, 0.01d, 0.025d, 0.05d, 0.1d, 0.25d, 0.5d, 1d, 2.5d, 5d, 10d
-    };
-
     private static final ConcurrentHashMap<MethodKey, Method> METHOD_CACHE = new ConcurrentHashMap<>();
 
     private DispatcherAdvice() {
@@ -38,7 +34,7 @@ public final class DispatcherAdvice {
 
     @Advice.OnMethodEnter(suppress = Throwable.class)
     public static long onEnter() {
-        HttpServerInstrumentation.ActiveRequests.INSTANCE.inc();
+        ActiveRequests.INSTANCE.inc();
         return System.nanoTime();
     }
 
@@ -48,7 +44,7 @@ public final class DispatcherAdvice {
                               @Advice.Enter long startNanos,
                               @Advice.Thrown Throwable thrown) {
         try {
-            HttpServerInstrumentation.ActiveRequests.INSTANCE.dec();
+            ActiveRequests.INSTANCE.dec();
 
             long durationNanos = System.nanoTime() - startNanos;
             if (durationNanos < 0L) durationNanos = 0L;
@@ -73,7 +69,7 @@ public final class DispatcherAdvice {
         }
     }
 
-    private static String invokeString(Object target, String name) {
+    public static String invokeString(Object target, String name) {
         try {
             Method m = lookup(target, name);
             if (m == null) return null;
@@ -84,7 +80,7 @@ public final class DispatcherAdvice {
         }
     }
 
-    private static String invokeStringAttr(Object target, String attr) {
+    public static String invokeStringAttr(Object target, String attr) {
         try {
             Method m = lookup(target, "getAttribute", String.class);
             if (m == null) return null;
@@ -95,7 +91,7 @@ public final class DispatcherAdvice {
         }
     }
 
-    private static int invokeInt(Object target, String name) {
+    public static int invokeInt(Object target, String name) {
         try {
             Method m = lookup(target, name);
             if (m == null) return 0;
@@ -106,7 +102,7 @@ public final class DispatcherAdvice {
         }
     }
 
-    private static Method lookup(Object target, String name, Class<?>... paramTypes) {
+    public static Method lookup(Object target, String name, Class<?>... paramTypes) {
         MethodKey k = new MethodKey(target.getClass(), name, paramTypes);
         Method m = METHOD_CACHE.get(k);
         if (m != null) return m;
@@ -119,21 +115,5 @@ public final class DispatcherAdvice {
         }
     }
 
-    private record MethodKey(Class<?> klass, String name, Class<?>[] paramTypes) {}
-
-    /**
-     * 注册一次,所有线程访问同一个 Histogram 实例。
-     */
-    static final class HttpHistogramHolder {
-        private static volatile Histogram INSTANCE;
-
-        static Histogram get() {
-            return INSTANCE;
-        }
-
-        static synchronized void bind(MetricRegistry registry, String name, String help, double[] bounds) {
-            if (INSTANCE != null) return;
-            INSTANCE = registry.histogram(name, help, bounds);
-        }
-    }
+    public record MethodKey(Class<?> klass, String name, Class<?>[] paramTypes) {}
 }

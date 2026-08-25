@@ -41,7 +41,36 @@ public final class Agent {
 
     private static final Logger LOG = LoggerFactory.getLogger(Agent.class);
 
-    private static final String BOOT_PACKAGE_PATH = "com/springwatch/agent/boot/";
+    /**
+     * 需追加到 bootstrap classloader 的类前缀白名单。
+     * <p>
+     * 必须是"织入业务类后可被业务类(classloader)直接引用的零依赖类":
+     * <ul>
+     *   <li>boot 包:JdbcStorage(java.sql advice 内联引用)</li>
+     *   <li>metric 核心:Counter/Histogram/Gauge/Labels/MetricRegistry(所有 advice 共享)</li>
+     *   <li>web 持有器:ActiveRequests/HttpHistogramHolder(DispatcherAdvice 内联引用)</li>
+     *   <li>sql 持有器:SqlDigest/HikariPoolProbe(SqlAdvice/Hikari 系列 advice 内联引用)</li>
+     * </ul>
+     * <b>Advice 类本身(DispatcherAdvice/SqlAdvice/MethodAdvice/StatementAdvice 等)不进
+     * bootstrap</b>:ByteBuddy {@code Advice.to()} 通过反射读取 advice 类上的 {@code @Advice}
+     * 注解(relocated 的 bytebuddy 注解类仅存在于 app classloader 可见的 agent jar 里),
+     * 放进 bootstrap 后注解类不可解析,反射拿不到注解,直接抛
+     * {@code "No advice defined by class ..."};而 advice 是内联进业务方法,运行时业务类
+     * 并不引用 advice 类本身。带 slf4j 的类(Agent/AppContext/HTTP/Log/Instrumentation 装配)
+     * 也不在白名单,由 app classloader 加载以共享业务 logback。
+     */
+    private static final String[] BOOT_PREFIXES = {
+            "com/springwatch/agent/boot/",
+            "com/springwatch/agent/metric/Counter",
+            "com/springwatch/agent/metric/Gauge",
+            "com/springwatch/agent/metric/Histogram",
+            "com/springwatch/agent/metric/Labels",
+            "com/springwatch/agent/metric/MetricRegistry",
+            "com/springwatch/agent/instrument/web/ActiveRequests",
+            "com/springwatch/agent/instrument/web/HttpHistogramHolder",
+            "com/springwatch/agent/sql/SqlDigest",
+            "com/springwatch/agent/sql/pool/HikariPoolProbe",
+    };
 
     private Agent() {
     }
@@ -97,7 +126,7 @@ public final class Agent {
                 while (entries.hasMoreElements()) {
                     JarEntry e = entries.nextElement();
                     String name = e.getName();
-                    if (!name.startsWith(BOOT_PACKAGE_PATH) || e.isDirectory()) {
+                    if (e.isDirectory() || !matchesBootPrefix(name)) {
                         continue;
                     }
                     try (InputStream in = src.getInputStream(e)) {
@@ -112,6 +141,15 @@ public final class Agent {
             LOG.warn("[kxj: 提取 boot jar 异常 - error={}]", e.getMessage());
             return null;
         }
+    }
+
+    private static boolean matchesBootPrefix(String entryName) {
+        for (String prefix : BOOT_PREFIXES) {
+            if (entryName.startsWith(prefix)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static File locateAgentJar() {

@@ -40,11 +40,11 @@ public final class HikariPoolProbe {
         REGISTRY = registry;
     }
 
-    static Map<Long, ConnMark> openStarts() {
+    public static Map<Long, ConnMark> openStarts() {
         return OPEN_STARTS;
     }
 
-    static MetricRegistry registry() {
+    public static MetricRegistry registry() {
         return REGISTRY;
     }
 
@@ -76,6 +76,12 @@ public final class HikariPoolProbe {
 
         registry.histogram("db_client_connections_use_time_milliseconds",
                 "Time an application held a DB connection (ms).",
+                USE_TIME_BOUNDS_MS);
+        registry.histogram("db_client_connections_wait_time_milliseconds",
+                "Time spent waiting to acquire a connection from the pool (ms).",
+                USE_TIME_BOUNDS_MS);
+        registry.histogram("db_client_connections_create_time_milliseconds",
+                "Time taken to create a new connection (ms).",
                 USE_TIME_BOUNDS_MS);
     }
 
@@ -128,5 +134,5 @@ public final class HikariPoolProbe {
         }
     }
 
-    record ConnMark(String poolName, long startNanos) {}
+    public record ConnMark(String poolName, long startNanos) {}
 }

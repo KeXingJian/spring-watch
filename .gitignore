@@ -57,4 +57,5 @@ Thumbs.db
 .env
 .interview
 
-D
+.claude
+.agents

@@ -53,11 +53,60 @@ public final class LogAppenderInstaller {
             start.invoke(appender);
             addAppender.invoke(rootLogger, appender);
 
+            startReattachGuard(contextBaseClazz, appenderBaseClazz, loggerClazz,
+                    appenderInterfaceClazz, context, rootLogger, appender);
+
             LOG.info("[kxj: logback appender 已挂载 - capacity={}, appender={}]", buffer.capacity(), APPENDER_NAME);
         } catch (ClassNotFoundException e) {
             LOG.warn("[kxj: logback 未在 classpath,日志能力降级 - 业务可能用 log4j2]");
         } catch (Exception e) {
             LOG.warn("[kxj: logback appender 安装失败 - 业务线程不受影响 - error={}]", e.getMessage());
+        }
+    }
+
+    /**
+     * 重挂守护线程:应用侧 logback-spring.xml 加载时 {@code LoggerContext.reset()} +
+     * Joran 处理 {@code <root>} 会 detachAndStop 全部 appender(编程挂载的
+     * spring-watch appender 被清掉),5s 轮询 root 上是否还挂着 appender,
+     * 没了就 setContext + start + addAppender 重挂。幂等,且对运行期任意
+     * 日志配置重载(devtools 等)同样生效。
+     * <p>
+     * 全部反射调用,不直接 import logback,保持降级能力。
+     */
+    private static void startReattachGuard(Class<?> contextBaseClazz, Class<?> appenderBaseClazz,
+                                           Class<?> loggerClazz, Class<?> appenderInterfaceClazz,
+                                           Object context, Object rootLogger, Object appender) {
+        Thread t = new Thread(() -> {
+            while (true) {
+                try {
+                    Thread.sleep(5000L);
+                    Method getAppender = loggerClazz.getMethod("getAppender", String.class);
+                    Object attached = getAppender.invoke(rootLogger, APPENDER_NAME);
+                    if (attached == null) {
+                        reattach(contextBaseClazz, appenderBaseClazz, loggerClazz,
+                                appenderInterfaceClazz, context, rootLogger, appender);
+                        LOG.info("[kxj: logback appender 自动重挂 - 应用日志配置重载后已恢复]");
+                    }
+                } catch (Throwable ignore) {
+                }
+            }
+        }, "sw-log-reattach");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    private static void reattach(Class<?> contextBaseClazz, Class<?> appenderBaseClazz,
+                                 Class<?> loggerClazz, Class<?> appenderInterfaceClazz,
+                                 Object context, Object rootLogger, Object appender) {
+        try {
+            Method setContext = appenderBaseClazz.getMethod("setContext", contextBaseClazz);
+            Method start = appenderBaseClazz.getMethod("start");
+            Method addAppender = loggerClazz.getMethod("addAppender", appenderInterfaceClazz);
+            setContext.invoke(appender, context);
+            start.invoke(appender);
+            addAppender.invoke(rootLogger, appender);
+        } catch (Throwable t) {
+            LOG.warn("[kxj: logback appender 重挂失败 - error={}]", t.getMessage());
         }
     }
 }

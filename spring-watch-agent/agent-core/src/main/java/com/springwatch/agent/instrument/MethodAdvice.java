@@ -73,7 +73,7 @@ public final class MethodAdvice {
         }
     }
 
-    private static long observedKeys(MetricRegistry registry) {
+    public static long observedKeys(MetricRegistry registry) {
         Counter c = registry.counters().get(COUNTER_NAME);
         return c == null ? 0L : c.cells().size();
     }

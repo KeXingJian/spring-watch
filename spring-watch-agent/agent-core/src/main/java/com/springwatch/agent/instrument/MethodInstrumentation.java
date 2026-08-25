@@ -48,6 +48,8 @@ public final class MethodInstrumentation implements InstrumentDefinition {
         return builder
                 .type(typeMatcher())
                 .transform((builder1, typeDescription, classLoader, module, protectionDomain) ->
-                        builder1.visit(Advice.to(MethodAdvice.class).on(ElementMatchers.any())));
+                        builder1.visit(Advice.to(MethodAdvice.class)
+                                .on(ElementMatchers.any()
+                                        .and(ElementMatchers.not(ElementMatchers.isConstructor())))));
     }
 }

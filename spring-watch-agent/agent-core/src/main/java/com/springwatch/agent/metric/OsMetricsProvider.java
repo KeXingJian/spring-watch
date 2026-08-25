@@ -22,7 +22,8 @@ import java.util.concurrent.ConcurrentHashMap;
  *   <li>{@code runtime_java_memory_bytes{type=rss|vms}}</li>
  *   <li>{@code runtime_java_cpu_time_milliseconds{type=user|system}}</li>
  *   <li>{@code process_cpu_utilization} / {@code process_cpu_time_seconds_total} / {@code process_uptime_seconds}</li>
- *   <li>{@code system_load_average_1m} / {@code 5m} / {@code 15m} (仅 Linux)</li>
+ *   <li>{@code process_memory_usage} / {@code process_virtual_memory_usage} / {@code process_open_fds} / {@code process_max_fds}(仅 Linux)</li>
+ *   <li>{@code system_cpu_utilization} / {@code system_load_average_1m} / {@code 5m} / {@code 15m} (load 仅 Linux)</li>
  *   <li>{@code system_disk_io_bytes_total{device,direction=read|write}} 与 {@code system_disk_operations_total}</li>
  *   <li>{@code system_network_io_bytes_total{device,direction=receive|transmit}} + packets + errors</li>
  * </ul>
@@ -47,6 +48,7 @@ public final class OsMetricsProvider {
 
     public void register() {
         registerMemoryMetrics();
+        registerSystemCpuMetrics();
         registerRuntimeMemoryMetrics();
         registerRuntimeCpuMetrics();
         registerProcessMetrics();
@@ -77,6 +79,15 @@ public final class OsMetricsProvider {
                         return t > 0 ? Math.min(1d, (double) (t - f) / t) : 0d;
                     });
         }
+    }
+
+    private void registerSystemCpuMetrics() {
+        if (osSun == null) return;
+        Gauge sysCpu = registry.gauge("system_cpu_utilization", "System CPU utilization (0..1).");
+        sysCpu.register(Labels.EMPTY, () -> {
+            double v = osSun.getSystemCpuLoad();
+            return Double.isNaN(v) || Double.isInfinite(v) ? 0d : Math.clamp(v, 0d, 1d);
+        });
     }
 
     private void registerRuntimeMemoryMetrics() {
@@ -111,6 +122,22 @@ public final class OsMetricsProvider {
         Gauge uptime = registry.gauge("process_uptime_seconds",
                 "Process uptime in seconds.");
         uptime.register(Labels.EMPTY, () -> ManagementFactory.getRuntimeMXBean().getUptime() / 1000.0);
+
+        Gauge memUsage = registry.gauge("process_memory_usage", "Process physical memory usage in bytes.");
+        memUsage.register(Labels.EMPTY, this::readRssBytes);
+
+        Gauge virtUsage = registry.gauge("process_virtual_memory_usage", "Process virtual memory usage in bytes.");
+        if (osSun != null) {
+            virtUsage.register(Labels.EMPTY, () -> safeLong(() -> osSun.getCommittedVirtualMemorySize()));
+        }
+
+        if (IS_LINUX) {
+            FdSnapshotCache fdCache = new FdSnapshotCache();
+            Gauge openFds = registry.gauge("process_open_fds", "Process open file descriptor count.");
+            openFds.register(Labels.EMPTY, () -> fdCache.cached().open);
+            Gauge maxFds = registry.gauge("process_max_fds", "Process max open file descriptor limit.");
+            maxFds.register(Labels.EMPTY, () -> fdCache.cached().max);
+        }
     }
 
     private void registerLoadAvgMetrics() {
@@ -351,6 +378,44 @@ public final class OsMetricsProvider {
         }
 
         private record Snapshot(long userJiffies, long systemJiffies, long at, boolean valid) {}
+    }
+
+    /**
+     * {@code /proc/self/fd} 打开数 + {@code /proc/self/limits} 上限的 1s 缓存,
+     * 填充 {@code process_open_fds} / {@code process_max_fds}(仅 Linux)。
+     */
+    private static final class FdSnapshotCache {
+        private volatile Snapshot cached = new Snapshot(0, 0L, 0L, false);
+
+        Snapshot cached() {
+            Snapshot s = cached;
+            long now = System.currentTimeMillis();
+            if (s.valid && now - s.at < 1000L) return s;
+            cached = new Snapshot(countFds(), readMaxFds(), now, true);
+            return cached;
+        }
+
+        private static int countFds() {
+            File[] fds = new File("/proc/self/fd").listFiles();
+            return fds == null ? 0 : fds.length;
+        }
+
+        private static long readMaxFds() {
+            try (BufferedReader r = new BufferedReader(new FileReader("/proc/self/limits"))) {
+                String line;
+                while ((line = r.readLine()) != null) {
+                    if (!line.startsWith("Max open files")) continue;
+                    String[] parts = line.trim().split("\\s+");
+                    if (parts.length < 5) return 0L;
+                    String soft = parts[3];
+                    return "unlimited".equals(soft) ? Long.MAX_VALUE : Long.parseLong(soft);
+                }
+            } catch (Throwable ignore) {
+            }
+            return 0L;
+        }
+
+        private record Snapshot(int open, long max, long at, boolean valid) {}
     }
 
     /**

@@ -26,10 +26,10 @@ public final class SqlAdvice {
     public static final String DURATION_NAME = "sw_sql_duration_seconds";
     public static final String SLOW_NAME = "sw_sql_slow_total";
 
-    private static volatile MetricRegistry REGISTRY;
-    private static volatile long SLOW_MS = 500L;
-    private static volatile int DIGEST_LIMIT = 2000;
-    private static final ConcurrentHashMap<String, LongAdder> EVICTED = new ConcurrentHashMap<>();
+    public static volatile MetricRegistry REGISTRY;
+    public static volatile long SLOW_MS = 500L;
+    public static volatile int DIGEST_LIMIT = 2000;
+    public static final ConcurrentHashMap<String, LongAdder> EVICTED = new ConcurrentHashMap<>();
 
     public static void bind(MetricRegistry registry, long slowMs, int digestLimit) {
         REGISTRY = registry;
@@ -80,7 +80,7 @@ public final class SqlAdvice {
         }
     }
 
-    private static long observedKeys(MetricRegistry registry) {
+    public static long observedKeys(MetricRegistry registry) {
         Counter c = registry.counters().get(CALLS_NAME);
         return c == null ? 0L : c.cells().size();
     }

@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "grill-me": {
+      "source": "chris-hendrix/ai-hub",
+      "sourceType": "github",
+      "skillPath": "skills/grill-me/SKILL.md",
+      "computedHash": "181c87e80f09dfaaa92810156637d8872d58be7cc04853b79db4c43634875f10"
+    }
+  }
+}

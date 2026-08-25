@@ -34,6 +34,8 @@ import static net.bytebuddy.matcher.ElementMatchers.takesArguments;
  * db_client_connections_usage{gauge, pool.name, state="used|idle"}
  * db_client_connections_pending_requests{gauge, pool.name}
  * db_client_connections_use_time_milliseconds{histogram, pool.name}
+ * db_client_connections_wait_time_milliseconds{histogram, pool.name}
+ * db_client_connections_create_time_milliseconds{histogram, pool.name}
  * </pre>
  * 不织入时(无 Hikari 依赖):指标不注册,前端空数据。
  * <p>
@@ -44,6 +46,7 @@ public final class HikariPoolInstrumentation implements InstrumentDefinition {
 
     private static final String DESC_HIKARI_DS = "com.zaxxer.hikari.HikariDataSource";
     private static final String DESC_HIKARI_PROXY = "com.zaxxer.hikari.proxy.HikariProxyConnection";
+    private static final String DESC_HIKARI_POOL = "com.zaxxer.hikari.pool.HikariPool";
 
     private final MetricRegistry registry;
 
@@ -81,6 +84,10 @@ public final class HikariPoolInstrumentation implements InstrumentDefinition {
                         b.visit(Advice.to(HikariPoolOpenAdvice.class).on(named("getConnection").and(takesArguments(0)))))
                 .type(named(DESC_HIKARI_PROXY))
                 .transform((b, td, cl, m, pd) ->
-                        b.visit(Advice.to(HikariPoolCloseAdvice.class).on(named("close").and(takesArguments(0)))));
+                        b.visit(Advice.to(HikariPoolCloseAdvice.class).on(named("close").and(takesArguments(0)))))
+                .type(named(DESC_HIKARI_POOL))
+                .transform((b, td, cl, m, pd) ->
+                        b.visit(Advice.to(HikariPoolCreateAdvice.class)
+                                .on(named("createConnection").and(takesArguments(0)))));
     }
 }

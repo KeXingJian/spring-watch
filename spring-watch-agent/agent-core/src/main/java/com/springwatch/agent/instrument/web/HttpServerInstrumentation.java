@@ -62,39 +62,15 @@ public final class HttpServerInstrumentation implements InstrumentDefinition {
             return builder;
         }
         ActiveRequests.INSTANCE.bind(registry);
-        DispatcherAdvice.HttpHistogramHolder.bind(registry,
+        HttpHistogramHolder.bind(registry,
                 "http_server_request_duration_seconds",
                 "HTTP server request duration in seconds.",
-                DispatcherAdvice.BOUNDS_SEC);
+                HttpHistogramHolder.BOUNDS_SEC);
         LOG.info("[kxj: HttpServerInstrumentation 启动 - target=DispatcherServlet.doDispatch]");
         return builder
                 .type(typeMatcher())
                 .transform((b, td, cl, m, pd) ->
                         b.visit(Advice.to(DispatcherAdvice.class)
                                 .on(named(DESC_DO_DISPATCH).and(takesArguments(2)))));
-    }
-
-    /**
-     * 全局活跃请求计数(并发 in-flight)。在 Advice onEnter / onExit 各加减 1,
-     * scrape 时取当快照。
-     */
-    static final class ActiveRequests {
-        static final ActiveRequests INSTANCE = new ActiveRequests();
-        private final LongAdder inflight = new LongAdder();
-        private volatile MetricRegistry registry;
-
-        void bind(MetricRegistry registry) {
-            this.registry = registry;
-            registry.gauge("http_server_active_requests", "In-flight HTTP server requests.")
-                    .register(com.springwatch.agent.metric.Labels.EMPTY, inflight::longValue);
-        }
-
-        void inc() {
-            inflight.increment();
-        }
-
-        void dec() {
-            inflight.decrement();
-        }
     }
 }

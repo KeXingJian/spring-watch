@@ -2,6 +2,8 @@ package com.springwatch.agent.metric;
 
 import com.springwatch.agent.config.AgentConfig;
 import com.sun.management.OperatingSystemMXBean;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.lang.management.GarbageCollectorMXBean;
 import java.lang.management.ManagementFactory;
@@ -11,6 +13,12 @@ import java.lang.management.MemoryType;
 import java.lang.management.MemoryUsage;
 import java.lang.management.RuntimeMXBean;
 import java.lang.management.ThreadMXBean;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.LongAdder;
 
 /**
  * JVM / 系统级指标(零依赖,纯 JDK API)。
@@ -26,7 +34,13 @@ import java.lang.management.ThreadMXBean;
  */
 public final class JvmMetricsProvider {
 
+    private static final Logger LOG = LoggerFactory.getLogger(JvmMetricsProvider.class);
+
     private static final String NS = "sw_jvm_";
+
+    private static final double[] GC_BOUNDS_SEC = {
+            0.001d, 0.005d, 0.01d, 0.025d, 0.05d, 0.1d, 0.25d, 0.5d, 1d, 2.5d, 5d, 10d
+    };
 
     private final MetricRegistry registry;
     private final MemoryMXBean memory;
@@ -34,6 +48,8 @@ public final class JvmMetricsProvider {
     private final RuntimeMXBean runtime;
     private final java.lang.management.OperatingSystemMXBean osJdk;
     private final OperatingSystemMXBean osSun;
+    private final ConcurrentHashMap<String, GcState> gcStates = new ConcurrentHashMap<>();
+    private volatile ScheduledExecutorService gcScheduler;
 
     public JvmMetricsProvider(MetricRegistry registry) {
         this.registry = registry;
@@ -103,23 +119,31 @@ public final class JvmMetricsProvider {
         registerClassMetrics();
         registerCpuMetrics();
         registerUptimeMetrics();
+        registerInfoMetrics();
+        startGcObserver();
     }
 
     private void registerMemoryMetrics() {
-        long max = memory.getHeapMemoryUsage().getMax();
-
         Gauge used = registry.gauge("jvm_memory_used_bytes", "Used bytes of a JVM memory area.");
         Gauge committed = registry.gauge("jvm_memory_committed_bytes", "Committed bytes of a JVM memory area.");
         Gauge limit = registry.gauge("jvm_memory_limit_bytes", "Max bytes of a JVM memory area (-1 if undefined).");
+        Gauge maxGauge = registry.gauge("jvm_memory_max_bytes", "Max bytes of a JVM memory area (-1 if undefined).");
 
+        registerMemoryCells(used, committed, limit, maxGauge);
+        registerAfterLastGc();
+    }
+
+    private void registerMemoryCells(Gauge used, Gauge committed, Gauge limit, Gauge maxGauge) {
         used.register(Labels.of("jvm_memory_type", "heap"), () -> memory.getHeapMemoryUsage().getUsed());
         committed.register(Labels.of("jvm_memory_type", "heap"), () -> memory.getHeapMemoryUsage().getCommitted());
-        limit.register(Labels.of("jvm_memory_type", "heap"), () -> max < 0 ? -1d : (double) max);
+        limit.register(Labels.of("jvm_memory_type", "heap"), () -> maxOf(memory.getHeapMemoryUsage().getMax()));
+        maxGauge.register(Labels.of("jvm_memory_type", "heap"), () -> maxOf(memory.getHeapMemoryUsage().getMax()));
 
         used.register(Labels.of("jvm_memory_type", "non_heap"), () -> memory.getNonHeapMemoryUsage().getUsed());
         committed.register(Labels.of("jvm_memory_type", "non_heap"), () -> memory.getNonHeapMemoryUsage().getCommitted());
         long nhMax = memory.getNonHeapMemoryUsage().getMax();
-        limit.register(Labels.of("jvm_memory_type", "non_heap"), () -> nhMax < 0 ? -1d : (double) nhMax);
+        limit.register(Labels.of("jvm_memory_type", "non_heap"), () -> maxOf(nhMax));
+        maxGauge.register(Labels.of("jvm_memory_type", "non_heap"), () -> maxOf(nhMax));
 
         for (MemoryPoolMXBean pool : ManagementFactory.getMemoryPoolMXBeans()) {
             String poolName = pool.getName();
@@ -127,28 +151,146 @@ public final class JvmMetricsProvider {
             MemoryUsage u = pool.getUsage();
             if (u == null) continue;
             String type = pool.getType() == MemoryType.HEAP ? "heap" : "non_heap";
+            Labels key = Labels.of("jvm_memory_type", type, "jvm_memory_pool_name", poolName);
 
-            used.register(Labels.of("jvm_memory_type", type, "jvm_memory_pool_name", poolName), u::getUsed);
-            committed.register(Labels.of("jvm_memory_type", type, "jvm_memory_pool_name", poolName), u::getCommitted);
+            used.register(key, u::getUsed);
+            committed.register(key, u::getCommitted);
             long pMax = u.getMax();
-            limit.register(Labels.of("jvm_memory_type", type, "jvm_memory_pool_name", poolName),
-                    () -> pMax < 0 ? -1d : (double) pMax);
+            limit.register(key, () -> maxOf(pMax));
+            maxGauge.register(key, () -> maxOf(pMax));
         }
     }
 
-    private void registerGcMetrics() {
-        Gauge countGauge = registry.gauge("jvm_gc_duration_seconds_count",
-                "Number of JVM garbage collection operations.");
-        Gauge sumGauge = registry.gauge("jvm_gc_duration_seconds_sum",
-                "Sum of JVM garbage collection pause durations in seconds.");
+    private static double maxOf(long v) {
+        return v < 0 ? -1d : (double) v;
+    }
 
-        for (GarbageCollectorMXBean gc : ManagementFactory.getGarbageCollectorMXBeans()) {
-            String name = safeGcName(gc.getName());
-            String action = inferGcAction(gc.getName());
-            Labels key = Labels.of("jvm_gc_name", name, "jvm_gc_action", action);
-            countGauge.register(key, gc::getCollectionCount);
-            sumGauge.register(key, () -> gc.getCollectionTime() / 1000.0);
+    /**
+     * 各内存池上一次 GC 后的已用字节数(OTel {@code jvm.memory.used_after_last_gc})。
+     * 仅支持 {@code collectionUsage} 的池注册(如 G1 heap 池),其余自动跳过。
+     */
+    private void registerAfterLastGc() {
+        Gauge afterGc = registry.gauge("jvm_memory_used_after_last_gc_bytes",
+                "Memory used by a JVM memory pool after the last GC.");
+        for (MemoryPoolMXBean pool : ManagementFactory.getMemoryPoolMXBeans()) {
+            String poolName = pool.getName();
+            if (poolName == null || poolName.isBlank()) continue;
+            MemoryUsage u = pool.getCollectionUsage();
+            if (u == null) continue;
+            String type = pool.getType() == MemoryType.HEAP ? "heap" : "non_heap";
+            afterGc.register(Labels.of("jvm_memory_pool_name", poolName, "jvm_memory_type", type), u::getUsed);
         }
+    }
+
+    private void registerInfoMetrics() {
+        Gauge info = registry.gauge("jvm_info", "JVM version and vendor information.");
+        info.register(Labels.of(
+                new String[]{"java_version", "java_vendor", "runtime_name", "runtime_version"},
+                new String[]{
+                        System.getProperty("java.version", "unknown"),
+                        System.getProperty("java.vendor", "unknown"),
+                        System.getProperty("java.runtime.name", "unknown"),
+                        System.getProperty("java.runtime.version", "unknown")}), () -> 1d);
+    }
+
+    private void registerGcMetrics() {
+        registry.histogram("jvm_gc_duration_seconds",
+                "GC pause duration distribution in seconds.", GC_BOUNDS_SEC);
+        registry.gauge("jvm_gc_memory_allocated_bytes_total",
+                "Total memory allocated by the JVM after each GC event, per pool (cumulative).");
+        registry.gauge("jvm_gc_memory_promoted_bytes_total",
+                "Total memory promoted to old generation after each GC event, per pool (cumulative).");
+    }
+
+    /**
+     * GC 增量观察器:每 5s 读取各收集器的累计 count/time,把增量按均值喂进
+     * {@code jvm_gc_duration_seconds} 直方图(供平台分位面板),同时用
+     * {@code GcInfo.getId()} 去重累计 allocated / promoted 字节数。
+     * <p>
+     * MXBean 只有累计值、无逐次停顿明细,均值近似是零依赖下的最佳口径;
+     * count/sum 与旧 gauge 完全一致,前端 grouped 查询零回归。
+     */
+    private void startGcObserver() {
+        if (gcScheduler != null) return;
+        ScheduledExecutorService s = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "sw-jvm-gc-observe");
+            t.setDaemon(true);
+            return t;
+        });
+        this.gcScheduler = s;
+        s.scheduleWithFixedDelay(this::observeGc, 5, 5, TimeUnit.SECONDS);
+        LOG.info("[kxj: JVM GC 观察器启动 - interval=5s - jvm_gc_duration_seconds 分位直方图 + gc_memory_allocated/promoted]");
+    }
+
+    private void observeGc() {
+        try {
+            for (GarbageCollectorMXBean bean : ManagementFactory.getGarbageCollectorMXBeans()) {
+                String name = safeGcName(bean.getName());
+                GcState st = gcStates.computeIfAbsent(name, k -> new GcState());
+
+                long count = bean.getCollectionCount();
+                long timeMs = bean.getCollectionTime();
+                long dCount = count - st.lastCount;
+                long dTimeMs = timeMs - st.lastTimeMillis;
+                if (dCount > 0 && dCount < 100_000L) {
+                    double avgSec = dTimeMs / 1000.0 / dCount;
+                    Histogram hist = registry.histograms().get("jvm_gc_duration_seconds");
+                    if (hist != null) {
+                        Labels key = Labels.of("jvm_gc_name", name, "jvm_gc_action", inferGcAction(bean.getName()));
+                        for (long i = 0; i < dCount; i++) {
+                            hist.observe(key, avgSec);
+                        }
+                    }
+                    st.lastCount = count;
+                    st.lastTimeMillis = timeMs;
+                }
+                accumulateGcMemory(st, bean, name);
+            }
+        } catch (Throwable t) {
+            LOG.debug("[kxj: JVM GC 观察异常 - error={}]", t.getMessage());
+        }
+    }
+
+    private void accumulateGcMemory(GcState st, GarbageCollectorMXBean bean, String gcName) {
+        if (!(bean instanceof com.sun.management.GarbageCollectorMXBean sunBean)) return;
+        com.sun.management.GcInfo gi = sunBean.getLastGcInfo();
+        if (gi == null) return;
+        long id = gi.getId();
+        if (id == st.lastGcInfoId) return;
+        st.lastGcInfoId = id;
+        Map<String, MemoryUsage> before = gi.getMemoryUsageBeforeGc();
+        Map<String, MemoryUsage> after = gi.getMemoryUsageAfterGc();
+        if (before == null || after == null) return;
+        for (Map.Entry<String, MemoryUsage> e : after.entrySet()) {
+            String pool = e.getKey();
+            MemoryUsage uBefore = before.get(pool);
+            MemoryUsage uAfter = e.getValue();
+            if (uBefore == null || uAfter == null) continue;
+            long delta = uAfter.getUsed() - uBefore.getUsed();
+            if (delta > 0) {
+                LongAdder adder = st.allocated.computeIfAbsent(pool, k -> new LongAdder());
+                adder.add(delta);
+                registerGcMemoryCell("jvm_gc_memory_allocated_bytes_total", gcName, pool, adder);
+            } else if (delta < 0) {
+                LongAdder adder = st.promoted.computeIfAbsent(pool, k -> new LongAdder());
+                adder.add(-delta);
+                registerGcMemoryCell("jvm_gc_memory_promoted_bytes_total", gcName, pool, adder);
+            }
+        }
+    }
+
+    private void registerGcMemoryCell(String metric, String gcName, String pool, LongAdder adder) {
+        Gauge g = registry.gauges().get(metric);
+        if (g == null) return;
+        g.register(Labels.of("jvm_gc_name", gcName, "jvm_memory_pool_name", pool), adder::sum);
+    }
+
+    private static final class GcState {
+        long lastCount;
+        long lastTimeMillis;
+        long lastGcInfoId = -1L;
+        final Map<String, LongAdder> allocated = new ConcurrentHashMap<>();
+        final Map<String, LongAdder> promoted = new ConcurrentHashMap<>();
     }
 
     private static String safeGcName(String raw) {

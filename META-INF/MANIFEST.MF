@@ -1,0 +1,10 @@
+Manifest-Version: 1.0
+Created-By: Maven JAR Plugin 3.5.0
+Java-Version: 25
+Build-Jdk-Spec: 25
+Can-Redefine-Classes: true
+Can-Retransform-Classes: true
+Implementation-Title: agent-shade
+Implementation-Version: 1.0.0
+Premain-Class: com.springwatch.agent.Agent
+

@@ -15,7 +15,7 @@ import java.lang.reflect.Field;
  */
 public final class PreparedStatementAdvice {
 
-    private static final String PLACEHOLDER = "<prepared>";
+    public static final String PLACEHOLDER = "<prepared>";
 
     private PreparedStatementAdvice() {
     }
@@ -37,7 +37,7 @@ public final class PreparedStatementAdvice {
         }
     }
 
-    private static String extractSql(Object statement) {
+    public static String extractSql(Object statement) {
         if (statement == null) return PLACEHOLDER;
         Class<?> c = statement.getClass();
         for (String name : new String[]{"sql", "originalSql", "nativeSql", "preparedStatement"}) {

@@ -9,7 +9,7 @@
         </encoder>
     </appender>
 
-    <logger name="com.mock.test" level="INFO" additivity="false">
+    <logger name="com.mock.test" level="INFO">
         <appender-ref ref="CONSOLE"/>
     </logger>
 

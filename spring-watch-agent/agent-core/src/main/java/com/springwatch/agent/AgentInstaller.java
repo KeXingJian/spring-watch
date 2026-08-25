@@ -45,9 +45,17 @@ public final class AgentInstaller {
                             c.inc(Labels.of("type", typeName, "error_type", errType));
                         } catch (Throwable ignore) {
                         }
-                        if (LOG.isDebugEnabled()) {
-                            LOG.debug("[kxj: Instrumentation 错误 - type={}, error={}]", typeName, throwable == null ? "null" : throwable.getMessage());
-                        }
+                        System.err.println("[kxj-diag] instrumentation error type=" + typeName
+                                + " loaded=" + loaded + " err=" + throwable);
+                    }
+                })
+                .with(new AgentBuilder.Listener.Adapter() {
+                    public void onDiscovery(String typeName, ClassLoader classLoader, net.bytebuddy.utility.JavaModule module, boolean loaded) {
+                        System.err.println("[kxj-diag] discovery type=" + typeName + " loader=" + classLoader + " loaded=" + loaded);
+                    }
+
+                    public void onError(String typeName, ClassLoader classLoader, net.bytebuddy.utility.JavaModule module, boolean loaded, Throwable throwable) {
+                        System.err.println("[kxj-diag] transform error type=" + typeName + " loaded=" + loaded + " err=" + throwable);
                     }
                 });
     }
