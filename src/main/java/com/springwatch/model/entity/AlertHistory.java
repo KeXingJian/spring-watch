@@ -40,6 +40,25 @@ public class AlertHistory {
 
     private Instant resolvedAt;
 
+    @Column(name = "agg_group_id", length = 32)
+    private String aggGroupId;
+
+    @Column(name = "agg_role", length = 16)
+    @Builder.Default
+    private String aggRole = "leader";
+
+    @Column(name = "agg_suppressed")
+    @Builder.Default
+    private Boolean aggSuppressed = false;
+
+    @Column(name = "agg_group_count")
+    @Builder.Default
+    private Integer aggGroupCount = 1;
+
+    @Column(name = "agg_suppressed_count")
+    @Builder.Default
+    private Integer aggSuppressedCount = 0;
+
     @Column(updatable = false)
     private Instant createdAt;
 

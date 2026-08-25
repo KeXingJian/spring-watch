@@ -249,6 +249,73 @@ public class AlertNotifier {
                 .replace("{{expression}}", rule.getExpression() != null ? rule.getExpression() : "");
     }
 
+    /**
+     * P1 告警收敛 - 风暴摘要邮件推送。
+     * 汇总某收敛组的累计触发次数与被抑制次数,仅发一次。
+     */
+    public void notifyStormSummary(long appid, String appName, String groupId,
+                                   int groupCount, int suppressedCount, Instant firstAt) {
+        if (!alertEnabled) {
+            log.debug("[Alerter] 风暴摘要跳过 - alert.enabled=false, groupId={}", groupId);
+            return;
+        }
+        String email = lookupConfigTargets(appid);
+        if (email == null || email.isBlank()) {
+            log.debug("[Alerter] 风暴摘要未配置email渠道 - appid={}, groupId={}", appid, groupId);
+            return;
+        }
+        String subject = String.format("[告警风暴摘要] %s 同类告警 %d 次", appName, groupCount);
+        String body = String.format("""
+                告警风暴摘要(收敛组 %s)
+                应用: %s (appid=%s)
+                同类告警累计: %d 次
+                其中抑制重复通知: %d 次
+                首报时间: %s
+                说明: 风暴期相似告警已聚类抑制,本条为汇总推送。""",
+                groupId, appName, appid, groupCount, suppressedCount,
+                firstAt != null ? firstAt : "-");
+        mailExecutor.submit(() -> sendEmail(email, subject, body));
+        log.info("[kxj: 风暴摘要邮件已提交 - appid={}, groupId={}, count={}, suppressed={}]",
+                appid, groupId, groupCount, suppressedCount);
+    }
+
+    private void sendEmail(String to, String subject, String body) {
+        String[] toArr = Arrays.stream(to.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .toArray(String[]::new);
+        if (toArr.length == 0) {
+            log.warn("[Alerter] 邮件收件人解析为空 - to={}", to);
+            return;
+        }
+        int attempt = 0;
+        while (attempt < 2) {
+            attempt++;
+            try {
+                SimpleMailMessage msg = new SimpleMailMessage();
+                msg.setFrom(from);
+                msg.setTo(toArr);
+                msg.setSubject(subject);
+                msg.setText(body);
+                mailSender.send(msg);
+                log.info("[Alerter] 邮件发送成功 - to={}, subject={}, attempt={}",
+                        Arrays.toString(toArr), subject, attempt);
+                return;
+            } catch (Exception e) {
+                log.warn("[Alerter] 邮件发送失败 - to={}, attempt={}, error={}",
+                        Arrays.toString(toArr), attempt, e.getMessage());
+                if (attempt == 1) {
+                    try {
+                        Thread.sleep(1000L * attempt);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
     private String resolveLevel(AlertRule rule) {
         String level = rule.getLevel();
         if (level == null || level.isBlank()) {

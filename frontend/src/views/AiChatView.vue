@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
+import { useAppStore } from '@/stores/app'
 
 interface ChatMsg {
   id?: number
@@ -14,16 +15,57 @@ interface Conversation {
   createdAt?: string
 }
 
+interface DiagnosisReport {
+  id: number
+  ruleName?: string
+  alertLevel?: string
+  triggerMetric?: string
+  triggerValue?: number
+  status?: string
+  errorMsg?: string
+  report?: string
+  createdAt?: string
+}
+
+const appStore = useAppStore()
 const conversations = ref<Conversation[]>([])
 const currentConv = ref<number | null>(null)
 const messages = ref<ChatMsg[]>([])
 const input = ref('')
 const streaming = ref(false)
 const error = ref('')
+const activeTab = ref<'chat' | 'diagnosis'>('chat')
+const reports = ref<DiagnosisReport[]>([])
+const reportsLoading = ref(false)
 
 onMounted(() => {
   loadConversations()
 })
+
+watch(
+  () => [activeTab.value, appStore.currentAppid],
+  () => {
+    if (activeTab.value === 'diagnosis') loadDiagnosis()
+  }
+)
+
+async function loadDiagnosis() {
+  const appid = appStore.currentAppid
+  if (!appid) {
+    reports.value = []
+    return
+  }
+  reportsLoading.value = true
+  try {
+    const res = await fetch(`/api/ai/diagnosis?appid=${appid}&size=20`)
+    const json = await res.json()
+    reports.value = json.data?.rows ?? []
+  } catch (e: any) {
+    error.value = '诊断报告加载失败: ' + e.message
+  } finally {
+    reportsLoading.value = false
+  }
+}
 
 async function loadConversations() {
   try {
@@ -140,19 +182,25 @@ function scrollToBottom() {
   <div class="ai-panel h-full flex flex-col">
     <div class="flex items-center gap-2 p-3 border-b border-base-300">
       <h2 class="text-lg font-bold">AI 运维助手</h2>
-      <span class="badge badge-primary badge-sm">工具调用</span>
+      <div class="tabs tabs-boxed tabs-sm">
+        <a :class="['tab', activeTab === 'chat' ? 'tab-active' : '']" @click="activeTab = 'chat'">对话</a>
+        <a :class="['tab', activeTab === 'diagnosis' ? 'tab-active' : '']" @click="activeTab = 'diagnosis'">诊断报告</a>
+      </div>
       <span class="flex-1" />
-      <select
-        class="select select-sm select-bordered max-w-64"
-        :value="currentConv ?? ''"
-        @change="switchConv(Number(($event.target as HTMLSelectElement).value))"
-      >
-        <option v-for="c in conversations" :key="c.id" :value="c.id">{{ c.title }} (#{{ c.id }})</option>
-      </select>
-      <button class="btn btn-sm btn-outline" @click="newConversation">新会话</button>
+      <template v-if="activeTab === 'chat'">
+        <select
+          class="select select-sm select-bordered max-w-64"
+          :value="currentConv ?? ''"
+          @change="switchConv(Number(($event.target as HTMLSelectElement).value))"
+        >
+          <option v-for="c in conversations" :key="c.id" :value="c.id">{{ c.title }} (#{{ c.id }})</option>
+        </select>
+        <button class="btn btn-sm btn-outline" @click="newConversation">新会话</button>
+      </template>
     </div>
 
-    <div ref="scrollBox" class="flex-1 overflow-y-auto p-4 space-y-3 bg-base-200/40">
+    <template v-if="activeTab === 'chat'">
+      <div ref="scrollBox" class="flex-1 overflow-y-auto p-4 space-y-3 bg-base-200/40">
       <div v-if="!messages.length" class="text-center text-sm text-base-content/50 mt-10">
         询问应用运行状态,例如:
         <div class="mt-2 space-y-1">
@@ -169,21 +217,53 @@ function scrollToBottom() {
     </div>
 
     <div class="p-3 border-t border-base-300">
-      <div v-if="error" class="text-sm text-error mb-2">{{ error }}</div>
-      <div class="flex gap-2">
-        <textarea
-          v-model="input"
-          class="textarea textarea-bordered flex-1 resize-none"
-          rows="2"
-          placeholder="输入问题,回车发送(Shift+Enter 换行)"
-          :disabled="streaming"
-          @keydown.enter.exact.prevent="send"
-        />
-        <button class="btn btn-primary" :disabled="streaming || !input.trim()" @click="send">
-          {{ streaming ? '生成中...' : '发送' }}
-        </button>
+        <div v-if="error" class="text-sm text-error mb-2">{{ error }}</div>
+        <div class="flex gap-2">
+          <textarea
+            v-model="input"
+            class="textarea textarea-bordered flex-1 resize-none"
+            rows="2"
+            placeholder="输入问题,回车发送(Shift+Enter 换行)"
+            :disabled="streaming"
+            @keydown.enter.exact.prevent="send"
+          />
+          <button class="btn btn-primary" :disabled="streaming || !input.trim()" @click="send">
+            {{ streaming ? '生成中...' : '发送' }}
+          </button>
+        </div>
       </div>
-    </div>
+    </template>
+
+    <template v-else>
+      <div class="flex-1 overflow-y-auto p-4 space-y-3 bg-base-200/40">
+        <div v-if="!appStore.currentAppid" class="text-center text-sm text-base-content/50 mt-10">
+          请先在顶部选择要查看诊断报告的应用
+        </div>
+        <div v-else-if="reportsLoading" class="text-center text-sm text-base-content/50 mt-10">加载中...</div>
+        <div v-else-if="!reports.length" class="text-center text-sm text-base-content/50 mt-10">
+          暂无诊断报告(告警 FIRING 时自动生成)
+        </div>
+        <div v-for="r in reports" :key="r.id" class="card bg-base-100 shadow-sm">
+          <div class="card-body p-4">
+            <div class="flex items-center gap-2">
+              <span class="font-bold text-sm">{{ r.ruleName }}</span>
+              <span v-if="r.alertLevel" class="badge badge-sm" :class="r.alertLevel === 'CRITICAL' ? 'badge-error' : r.alertLevel === 'WARNING' ? 'badge-warning' : 'badge-info'">
+                {{ r.alertLevel }}
+              </span>
+              <span class="badge badge-sm" :class="r.status === 'success' ? 'badge-success' : 'badge-warning'">
+                {{ r.status === 'success' ? '已诊断' : '降级' }}
+              </span>
+              <span class="flex-1" />
+              <span class="text-xs text-base-content/50">{{ r.createdAt }}</span>
+            </div>
+            <div v-if="r.triggerMetric" class="text-xs text-base-content/50">
+              指标: {{ r.triggerMetric }} = {{ r.triggerValue }}
+            </div>
+            <div class="text-sm whitespace-pre-wrap mt-1">{{ r.report }}</div>
+          </div>
+        </div>
+      </div>
+    </template>
   </div>
 </template>
 

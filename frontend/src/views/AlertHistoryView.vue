@@ -164,13 +164,14 @@ onBeforeUnmount(() => {
                 <th class="w-20">状态</th>
                 <th class="w-44">应用</th>
                 <th class="w-36">规则</th>
+                <th class="w-24">收敛</th>
                 <th>消息</th>
                 <th class="w-16">详情</th>
               </tr>
             </thead>
             <tbody>
               <tr v-if="filtered.length === 0">
-                <td colspan="8"><EmptyState inline>无告警历史</EmptyState></td>
+                <td colspan="9"><EmptyState inline>无告警历史</EmptyState></td>
               </tr>
               <template v-for="r in filtered" :key="r.id">
                 <tr>
@@ -184,14 +185,23 @@ onBeforeUnmount(() => {
                   </td>
                   <td>{{ appLabel(r) }}</td>
                   <td>{{ r.ruleName || '-' }}</td>
+                  <td>
+                    <span v-if="r.aggGroupId" :class="['badge badge-sm', r.aggSuppressed ? 'badge-ghost' : 'badge-primary']">
+                      {{ r.aggSuppressed ? `抑制 #${r.aggGroupCount}` : `首报 ×${r.aggGroupCount}` }}
+                    </span>
+                    <span v-else class="text-muted text-xs">-</span>
+                  </td>
                   <td class="truncate max-w-md" :title="r.alertMessage">{{ r.alertMessage || '-' }}</td>
                   <td>
                     <button class="btn btn-ghost btn-xs" @click="toggleDetail(r.id)">{{ expanded[r.id] ? '收起' : '查看' }}</button>
                   </td>
                 </tr>
                 <tr v-if="expanded[r.id]">
-                  <td colspan="8" class="bg-base-200 p-3">
+                  <td colspan="9" class="bg-base-200 p-3">
                     <pre class="code !max-h-48">{{ r.notifyResult || r.alertMessage || '(无详情)' }}</pre>
+                    <div v-if="r.aggGroupId" class="text-xs text-muted mt-2">
+                      收敛组: {{ r.aggGroupId }} · 累计 {{ r.aggGroupCount }} 次 · 抑制 {{ r.aggSuppressedCount || 0 }} 次
+                    </div>
                     <div v-if="r.resolvedAt" class="text-xs text-muted mt-2">恢复时间: {{ formatTime(r.resolvedAt) }}</div>
                   </td>
                 </tr>

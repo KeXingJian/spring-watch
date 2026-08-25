@@ -25,6 +25,11 @@ public class AlertHistoryView {
     private String alertMessage;
     private String notifyResult;
     private Instant resolvedAt;
+    private String aggGroupId;
+    private String aggRole;
+    private Boolean aggSuppressed;
+    private Integer aggGroupCount;
+    private Integer aggSuppressedCount;
     private Instant createdAt;
 
     public static AlertHistoryView from(AlertHistory h) {
@@ -41,6 +46,11 @@ public class AlertHistoryView {
                 .alertMessage(h.getAlertMessage())
                 .notifyResult(h.getNotifyResult())
                 .resolvedAt(h.getResolvedAt())
+                .aggGroupId(h.getAggGroupId())
+                .aggRole(h.getAggRole())
+                .aggSuppressed(h.getAggSuppressed())
+                .aggGroupCount(h.getAggGroupCount())
+                .aggSuppressedCount(h.getAggSuppressedCount())
                 .createdAt(h.getCreatedAt())
                 .build();
     }

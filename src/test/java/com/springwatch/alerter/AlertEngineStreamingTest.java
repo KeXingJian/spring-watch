@@ -124,8 +124,16 @@ class AlertEngineStreamingTest {
         ReflectionTestUtils.setField(anomalyDetector, "maxPatternsPerAppid", 1000);
         anomalyDetector.init();
 
+        AlertAggregationService aggregationService = new AlertAggregationService();
+        ReflectionTestUtils.setField(aggregationService, "aggregationEnabled", true);
+        ReflectionTestUtils.setField(aggregationService, "silenceMinutes", 5L);
+        ReflectionTestUtils.setField(aggregationService, "minStormCount", 3);
+        aggregationService.init();
+
         engine = new AlertEngine(evaluator, stateStore, ruleCache, anomalyDetector,
-                new AlertLifecycleService(stateStore, notifier, historyRepository));
+                new AlertLifecycleService(stateStore, notifier, historyRepository,
+                        mock(org.springframework.context.ApplicationEventPublisher.class),
+                        aggregationService));
         ReflectionTestUtils.setField(engine, "alertEnabled", true);
         ReflectionTestUtils.setField(engine, "logRecoverGraceSeconds", 5L);
 

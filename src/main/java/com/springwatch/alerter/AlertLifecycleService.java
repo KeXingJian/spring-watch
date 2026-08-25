@@ -2,10 +2,12 @@ package com.springwatch.alerter;
 
 import com.springwatch.model.entity.AlertHistory;
 import com.springwatch.model.entity.AlertRule;
+import com.springwatch.model.event.AlertTriggeredEvent;
 import com.springwatch.model.event.MetricEvent;
 import com.springwatch.repository.AlertHistoryRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -25,6 +27,8 @@ public class AlertLifecycleService {
     private final AlertStateStore stateStore;
     private final AlertNotifier notifier;
     private final AlertHistoryRepository historyRepository;
+    private final ApplicationEventPublisher eventPublisher;
+    private final AlertAggregationService aggregationService;
 
     @Transactional
     public void fire(AlertRule rule, MetricEvent event) {
@@ -36,18 +40,38 @@ public class AlertLifecycleService {
                     event.getValue(), event.getMetricName(), null);
         }
 
+        // P1 告警收敛:同一相似指纹在静默窗口内聚为收敛组,仅首报通知
+        AlertAggregationService.Decision agg = aggregationService.decide(rule, event);
+
         AlertHistory history = AlertHistory.builder()
                 .rule(rule)
                 .app(rule.getApp())
                 .alertLevel(determineLevel(rule))
                 .alertMessage(buildMessage(rule, event))
+                .aggGroupId(agg.groupId())
+                .aggRole(agg.leader() ? "leader" : "member")
+                .aggSuppressed(!agg.leader())
+                .aggGroupCount(agg.groupCount())
+                .aggSuppressedCount(agg.groupCount() - 1)
                 .build();
         AlertHistory saved = historyRepository.save(history);
 
-        String notifyResult = notifier.notify(rule, event, "firing");
-        saved.setNotifyResult(notifyResult);
-        historyRepository.save(saved);
-        log.info("[Alerter] 告警历史持久化 - historyId={}, notifyResult={}", saved.getId(), notifyResult);
+        if (agg.leader()) {
+            String notifyResult = notifier.notify(rule, event, "firing");
+            saved.setNotifyResult(notifyResult);
+            historyRepository.save(saved);
+            log.info("[Alerter] 告警首报通知 - historyId={}, aggGroupId={}, notifyResult={}",
+                    saved.getId(), agg.groupId(), notifyResult);
+            eventPublisher.publishEvent(new AlertTriggeredEvent(
+                    rule, event.getAppid(), event.getMetricName(), event.getValue(),
+                    saved.getId(), Instant.now()));
+        } else {
+            saved.setNotifyResult("{\"status\":\"suppressed\",\"reason\":\"converged_similar\",\"group\":\""
+                    + agg.groupId() + "\",\"count\":" + agg.groupCount() + "}");
+            historyRepository.save(saved);
+            log.info("[Alerter] 告警被收敛抑制(同类静默) - historyId={}, aggGroupId={}, count={}",
+                    saved.getId(), agg.groupId(), agg.groupCount());
+        }
     }
 
     @Transactional

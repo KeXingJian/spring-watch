@@ -20,6 +20,12 @@ spring-watch:
       recover-grace-seconds: 30 # 日志规则触发后,连续无命中该时长才允许恢复,防普通日志闪断告警
     history:
       retention-days: 90 # 告警历史保留天数（P0-5）
+    aggregation:
+      enabled: true          # P1 告警收敛总开关
+      silence-minutes: 5     # 同类静默窗口（分钟），窗口内相似告警聚为一组
+      min-storm-count: 3     # 被抑制数达到该值才推送风暴摘要
+      summary-push-enabled: true   # 是否推送风暴摘要邮件
+      summary-interval-ms: 60000   # 风暴摘要扫描推送周期（毫秒）
   infra-alerts:
     enabled: true
     appid: -1 # 基础设施告警复用的 MonitorApp.appid（负数为 sentinel, CollectScheduleRegistry 会跳过）

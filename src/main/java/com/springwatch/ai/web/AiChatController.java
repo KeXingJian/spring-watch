@@ -4,7 +4,9 @@ import com.springwatch.ai.service.AiChatService;
 import com.springwatch.model.dto.ApiResponse;
 import com.springwatch.model.entity.ChatConversation;
 import com.springwatch.model.entity.ChatMessage;
+import com.springwatch.model.entity.DiagnosisReport;
 import com.springwatch.repository.ChatConversationRepository;
+import com.springwatch.repository.DiagnosisReportRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.PageRequest;
@@ -24,6 +26,7 @@ public class AiChatController {
 
     private final AiChatService aiChatService;
     private final ChatConversationRepository conversationRepository;
+    private final DiagnosisReportRepository diagnosisReportRepository;
 
     /**
      * 流式对话(SSE)。
@@ -67,6 +70,25 @@ public class AiChatController {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("count", messages.size());
         out.put("rows", messages);
+        return ApiResponse.ok(out);
+    }
+
+    /**
+     * 告警智能诊断报告查询(按 appid 分页,倒序)。
+     * GET /api/ai/diagnosis?appid=1&page=0&size=10
+     */
+    @GetMapping("/diagnosis")
+    public ApiResponse<Map<String, Object>> listDiagnosis(
+            @RequestParam("appid") Long appid,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "10") int size) {
+        int safeSize = Math.min(Math.max(size, 1), 50);
+        List<DiagnosisReport> reports = diagnosisReportRepository
+                .findByAppidOrderByCreatedAtDesc(appid, PageRequest.of(Math.max(page, 0), safeSize)).getContent();
+        log.info("[kxj: AI诊断报告查询 - appid={}, page={}, size={}, count={}]", appid, page, safeSize, reports.size());
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("count", reports.size());
+        out.put("rows", reports);
         return ApiResponse.ok(out);
     }
 

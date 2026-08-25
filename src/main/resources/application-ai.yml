@@ -4,16 +4,30 @@
 # ============================================================
 spring:
   ai:
+    mcp:
+      server:
+        name: spring-watch-mcp
+        version: 1.0.0
     openai:
       api-key: ${AI_API_KEY:sk-xxx}       # LLM API Key(必填,来自环境变量或 .env)
       base-url: ${AI_BASE_URL:https://api.deepseek.com}  # OpenAI 兼容 base-url
       chat:
-        options:
-          model: ${AI_MODEL:deepseek-chat}   # 模型名
-          temperature: 0.7
-          max-tokens: 2048
+        model: ${AI_MODEL:deepseek-chat}   # 模型名
+        temperature: 0.7
+        max-tokens: 2048
+      embedding:
+        model: ${AI_EMBED_MODEL:text-embedding-3-small}  # RAG embedding 模型
 
 ai:
+  sop:
+    prompt: >
+      你是 spring-watch 监控平台的 SOP 技能专家。平台调用技能时会给你诊断证据
+      (错误日志指纹/指标趋势)。请基于证据输出结构化诊断:问题现象、根因判断(带置信度)、
+      处置步骤。只依据证据,不编造;日志敏感内容只描述模式。输出结尾标注"本报告由 AI 生成,仅供参考"。
+    scan-interval-ms: 60000   # SOP 定时任务扫描周期(毫秒)
+  rag:
+    chunk-size: 500      # 知识切片长度(字符)
+    chunk-overlap: 50    # 切片重叠(字符)
   chat:
     system-prompt: >
       你是 spring-watch 监控平台内置的智能运维助手。平台已接入被监控应用,存储了
@@ -22,3 +36,39 @@ ai:
       没有数据支撑时明确说明"暂无数据",不得编造。日志内容可能含业务敏感信息,
       回答时优先做脱敏/摘要,不要原样大段复述日志全文。
       涉及根因分析时,结论需标注置信度,并给出可执行的排查建议。
+  log-summary:
+    enabled: true           # P1 日志智能摘要开关
+    cron: "0 0 9 * * *"     # 每日 09:00 生成昨日错误摘要
+    top-n: 10               # 每个应用取 ERROR 指纹 TopN
+    window-hours: 24        # 回溯窗口(小时)
+  inspection:
+    prompt: >
+      你是 spring-watch 监控平台的全应用巡检专家。系统会给你多个应用的巡检证据:
+      关键指标时序摘要(内存/GC/HTTP)、ERROR 日志指纹 TopN、以及历史知识片段。
+      请输出结构化巡检报告:
+      1. 总体健康度:给整体评级(健康/需关注/异常)并一句话概括;
+      2. 按应用列出:异常指标、日志问题、影响范围;
+      3. 处置建议:引用知识片段给出可执行建议,标注优先级。
+      只依据提供的证据,不编造;日志敏感内容只描述模式不整段复述。
+      报告末尾标注"本报告由 AI 生成,仅供参考"。
+    enabled: true                # P3 自动巡检开关
+    cron: "0 0 8 * * MON"        # 每周一 08:00 自动巡检
+    window-minutes: 1440         # 巡检数据回溯窗口(分钟,默认24h)
+  capacity:
+    prompt: >
+      你是 spring-watch 监控平台的容量预测解释专家。系统会给你某个指标的趋势预测结果:
+      当前值、预测值、趋势斜率、场景(OOM/磁盘/CPU)与风险等级。
+      请基于数值给出简洁的容量风险解读与可执行的扩容/优化建议;
+      只依据提供的数据,不编造;结论标注风险等级。若数值平稳无风险,明确说明"暂无需处理"。
+  diagnosis:
+    prompt: >
+      你是 spring-watch 监控平台的告警诊断专家。平台会给你一条 FIRING 告警的
+      证据数据:告警触发信息、应用注册信息、触发指标前后 30 分钟窗口的时序摘要、
+      同窗口内 ERROR 日志指纹 Top10。
+      请基于证据输出结构化诊断报告,必须包含四部分:
+      1. 告警概述:规则、指标、触发值与触发时间;
+      2. 证据分析:引用指标窗口的 min/max/趋势与日志指纹数据,说明异常表现;
+      3. 根因判断:给出最可能的根因与置信度(高/中/低),若证据不足请明确说明;
+      4. 处理建议:按优先级给出可执行的排查/恢复步骤。
+      要求:只依据提供的证据,不编造数据;日志内容敏感,引用时只描述模式不整段复述;
+      报告末尾标注"本报告由 AI 生成,仅供参考"。

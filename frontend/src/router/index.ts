@@ -9,6 +9,7 @@ const routes: RouteRecordRaw[] = [
   { path: '/alert-history', component: () => import('@/views/AlertHistoryView.vue') },
   { path: '/email-config', component: () => import('@/views/EmailConfigView.vue') },
   { path: '/self-monitor', component: () => import('@/views/SelfMonitorView.vue') },
+  { path: '/capacity', component: () => import('@/views/CapacityView.vue') },
   { path: '/ai-chat', component: () => import('@/views/AiChatView.vue') }
 ]
 
