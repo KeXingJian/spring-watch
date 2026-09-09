@@ -1,5 +1,6 @@
 package com.springwatch.ai.agent;
 
+import com.springwatch.model.dto.ChatStreamChunk;
 import com.springwatch.model.entity.ChatConversation;
 import com.springwatch.model.entity.ChatMessage;
 import com.springwatch.repository.ChatConversationRepository;
@@ -49,10 +50,11 @@ public class AgentExecutor {
     }
 
     /**
-     * 流式对话:保存 user 消息 → 分层记忆组装 → LLM 流式输出(带工具/技能) → 落库 assistant 回复。
-     * LLM 异常时降级返回错误提示,不阻塞。
+     * 流式对话(SSE 事件流):保存 user 消息 → 分层记忆组装 → LLM 流式输出(带工具/技能) → 落库 assistant 回复。
+     * 事件类型参考 HertzBeat ChatResponseChunk:message 增量 / complete 完成(回传 assistantMessageId) / error 失败。
+     * LLM 异常时降级返回错误事件,不阻塞。
      */
-    public Flux<String> chat(Long conversationId, String userMessage) {
+    public Flux<ChatStreamChunk> chat(Long conversationId, String userMessage) {
         ChatConversation conv = conversationRepository.findById(conversationId)
                 .orElseGet(() -> createConversation(null));
         ChatMessage userMsg = saveMessage(conv, "user", userMessage);
@@ -68,15 +70,19 @@ public class AgentExecutor {
                 .stream()
                 .content()
                 .doOnNext(full::append)
-                .doOnComplete(() -> {
-                    saveMessage(conv, "assistant", full.toString());
-                    log.info("[kxj: AI对话完成 - conversationId={}, replyLen={}]", conv.getId(), full.length());
-                })
+                .map(chunk -> ChatStreamChunk.message(conv.getId(), chunk))
+                .concatWith(Flux.defer(() -> {
+                    ChatMessage saved = saveMessage(conv, "assistant", full.toString());
+                    log.info("[kxj: AI对话完成 - conversationId={}, replyLen={}, assistantMessageId={}]",
+                            conv.getId(), full.length(), saved == null ? null : saved.getId());
+                    return Flux.just(ChatStreamChunk.complete(conv.getId(), saved == null ? null : saved.getId()));
+                }))
                 .doOnError(e -> {
                     log.warn("[kxj: AI对话失败 - conversationId={}, error={}]", conv.getId(), e.getMessage());
                     saveMessage(conv, "assistant", "诊断失败:" + e.getMessage() + "(LLM 服务不可用,可稍后重试)");
                 })
-                .onErrorResume(e -> Flux.just("\n\n[诊断失败]" + e.getMessage() + " (LLM 服务不可用,可稍后重试)"));
+                .onErrorResume(e -> Flux.just(ChatStreamChunk.error(conv.getId(),
+                        "诊断失败:" + e.getMessage() + " (LLM 服务不可用,可稍后重试)")));
     }
 
     /** 技能注册表透传:SOP 定时/手动执行、HTTP 技能接口共用 */

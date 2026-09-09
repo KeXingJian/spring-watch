@@ -11,6 +11,12 @@ spring:
     openai:
       api-key: ${AI_API_KEY:sk-xxx}       # LLM API Key(必填,来自环境变量或 .env)
       base-url: ${AI_BASE_URL:https://api.deepseek.com}  # OpenAI 兼容 base-url
+      # 单个 LLM 请求超时。spring-ai-openai 仅把它映射为 openai-java SDK 的 request 超时
+      # (整体 HTTP 调用上限),SSE 流式分片空闲(read)超时未单独设置时回退跟随 request。
+      # SDK 默认 request 本就是 10m,故旧值 10m 等于没放宽;现放大到 30m 覆盖
+      # 大模型思考/工具调用期间的长分片间隔与长整体调用。
+      timeout: 30m
+      max-retries: 3
       chat:
         model: ${AI_MODEL:deepseek-chat}   # 模型名
         temperature: 0.7

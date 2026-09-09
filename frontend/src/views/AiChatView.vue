@@ -4,6 +4,7 @@ import { useAppStore } from '@/stores/app'
 import { useToast } from '@/utils/toast'
 import { formatTime } from '@/utils/format'
 import EmptyState from '@/components/EmptyState.vue'
+import Markdown from '@/components/Markdown.vue'
 
 interface ChatMsg {
   id?: number
@@ -167,22 +168,50 @@ async function send() {
     const reader = resp.body.getReader()
     const decoder = new TextDecoder()
     let buf = ''
+
+    // 处理一条 SSE data 行(JSON 事件流,协议同 HertzBeat /api/chat/stream)
+    const applyData = async (raw: string) => {
+      if (!raw || raw === '[DONE]') return
+      let evt: any = null
+      try {
+        evt = JSON.parse(raw)
+      } catch {
+        evt = null
+      }
+      if (evt && typeof evt === 'object') {
+        if (evt.type === 'message' && typeof evt.delta === 'string') {
+          reply.content += evt.delta
+        } else if (evt.type === 'error') {
+          reply.content = (reply.content || '') + (evt.error || '')
+          error.value = evt.error || '对话失败'
+        }
+      } else {
+        reply.content += raw
+      }
+      await scrollToBottom()
+    }
+
+    const processLines = async (lines: string[]) => {
+      for (const line of lines) {
+        const trimmed = line.trim()
+        if (!trimmed || trimmed.startsWith(':')) continue
+        if (trimmed.startsWith('data:')) {
+          await applyData(trimmed.slice(5).trim())
+        }
+      }
+    }
+
     for (;;) {
       const { done, value } = await reader.read()
       if (done) break
       buf += decoder.decode(value, { stream: true })
       const lines = buf.split('\n')
       buf = lines.pop() ?? ''
-      for (const line of lines) {
-        const trimmed = line.trim()
-        if (!trimmed || trimmed.startsWith(':')) continue
-        if (trimmed.startsWith('data:')) {
-          const data = trimmed.slice(5).trim()
-          if (data === '[DONE]') continue
-          reply.content += data
-          await scrollToBottom()
-        }
-      }
+      await processLines(lines)
+    }
+    // 冲刷末尾未换行收尾的残余数据(SSE 最后一帧可能无 \n)
+    if (buf.trim()) {
+      await processLines([buf])
     }
     reader.releaseLock()
     if (!reply.content) {
@@ -291,7 +320,13 @@ async function scrollToBottom() {
                   <span class="dot-pulse" />生成中
                 </span>
               </div>
-              <div class="msg-content">{{ m.content || (streaming && m.role === 'assistant' ? '思考中...' : '') }}</div>
+              <div class="msg-content">
+                <template v-if="m.role === 'assistant'">
+                  <Markdown v-if="m.content" :content="m.content" />
+                  <span v-else-if="streaming && i === messages.length - 1" class="thinking-text">思考中...</span>
+                </template>
+                <template v-else>{{ m.content }}</template>
+              </div>
             </div>
           </div>
         </div>
@@ -350,7 +385,7 @@ async function scrollToBottom() {
               </div>
               <div class="report-body" :class="{ collapsed: !expandedReport[r.id] && (r.report?.length || 0) > 280 }">
                 <pre v-if="r.errorMsg" class="code compact">{{ r.errorMsg }}</pre>
-                <div v-else class="report-text">{{ r.report }}</div>
+                <Markdown v-else :content="r.report || ''" />
               </div>
               <div v-if="(r.report?.length || 0) > 280" class="report-foot">
                 <button class="btn btn-ghost btn-xs" @click="toggleReport(r.id)">
@@ -511,6 +546,7 @@ async function scrollToBottom() {
   font-size: 0.9rem;
   line-height: 1.55;
 }
+.thinking-text { color: oklch(var(--bc) / 0.45); font-style: italic; }
 
 .chat-input-bar {
   border-top: 1px solid oklch(var(--b3));
@@ -618,18 +654,11 @@ async function scrollToBottom() {
 }
 
 .report-body { margin-top: 10px; }
-.report-body.collapsed .report-text {
+.report-body.collapsed :deep(.md-body) {
   display: -webkit-box;
   -webkit-line-clamp: 4;
   -webkit-box-orient: vertical;
   overflow: hidden;
-}
-.report-text {
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-size: 0.88rem;
-  line-height: 1.6;
-  color: var(--c-text);
 }
 .report-foot { margin-top: 8px; text-align: right; }
 </style>

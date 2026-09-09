@@ -33,7 +33,7 @@ const PARTITION_METRICS = [
 
 const perTopicPending = ref<Record<string, LineSeriesItem[]>>({})
 const perTopicCapacity = ref<Record<string, LineSeriesItem[]>>({})
-const summary = ref<{ metric: string; label: string; data: LineSeriesItem[]; key: string }[]>([])
+const summary = ref<{ metric: string; label: string; data: LineSeriesItem[]; key: string; format: 'rate' | 'int' }[]>([])
 const latestValues = ref<Record<string, number | null>>({})
 const loading = ref(false)
 const lastError = ref<string | null>(null)
@@ -193,13 +193,13 @@ async function pollOnce() {
     perTopicCapacity.value = capacityByTopic
 
     // 2) 汇总指标(消费批大小 1 张卡片内展示 p50/p95/p99 三条曲线;latest 用 p50 体现中位批大小)
-    const sumResults: { metric: string; label: string; data: LineSeriesItem[]; key: string }[] = []
+    const sumResults: { metric: string; label: string; data: LineSeriesItem[]; key: string; format: 'rate' | 'int' }[] = []
     const latest: Record<string, number | null> = {}
     for (const m of SUMMARY_METRICS) {
       const data = m.quantiles
         ? await fetchSeriesByQuantiles(m.key, m.meterType || 'summary', m.quantiles)
         : await fetchSeriesByMetric(m.key, m.agg, m.meterType)
-      sumResults.push({ metric: m.key, label: m.label, data, key: m.key })
+      sumResults.push({ metric: m.key, label: m.label, data, key: m.key, format: m.format })
       latest[m.key] = m.quantiles
         ? await fetchLatest(m.key, m.meterType, '0.50')
         : await fetchLatest(m.key, m.meterType)

@@ -101,7 +101,6 @@ public class AppPullTask {
         int timeoutMs = hostLatencyTracker.adaptiveTimeoutMs(host);
         long slowThresholdMs = properties.getCircuitBreaker().getSlowThresholdMs();
         boolean recordable = false;
-        System.out.println(timeoutMs);
         try {
             HostCircuitBreaker.Outcome outcome = doHeavyWork(appid, timeoutMs);
             if (outcome == HostCircuitBreaker.Outcome.TIMEOUT) {

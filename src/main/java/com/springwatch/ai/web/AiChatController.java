@@ -2,6 +2,7 @@ package com.springwatch.ai.web;
 
 import com.springwatch.ai.agent.AgentExecutor;
 import com.springwatch.model.dto.ApiResponse;
+import com.springwatch.model.dto.ChatStreamChunk;
 import com.springwatch.model.entity.ChatConversation;
 import com.springwatch.model.entity.ChatMessage;
 import com.springwatch.model.entity.DiagnosisReport;
@@ -11,6 +12,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.MediaType;
+import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
 
@@ -29,21 +31,24 @@ public class AiChatController {
     private final DiagnosisReportRepository diagnosisReportRepository;
 
     /**
-     * 流式对话(SSE)。
+     * 流式对话(SSE 事件流,协议参考 HertzBeat /api/chat/stream)。
      * POST /api/ai/chat  body: { conversationId?, message }
+     * 每个事件 data 为 ChatStreamChunk JSON:type=message(增量 delta)/complete(assistantMessageId)/error。
      * conversationId 为空时自动新建会话。
      */
     @PostMapping(value = "/chat", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public Flux<String> chat(@RequestBody ChatRequest req) {
+    public Flux<ServerSentEvent<ChatStreamChunk>> chat(@RequestBody ChatRequest req) {
         if (req == null || req.message() == null || req.message().isBlank()) {
-            return Flux.just("消息不能为空");
+            ChatStreamChunk err = ChatStreamChunk.error(null, "消息不能为空");
+            return Flux.just(ServerSentEvent.builder(err).event(err.type()).build());
         }
         log.info("[kxj: AI对话开始 - conversationId={}, message={}]",
                 req.conversationId(), truncate(req.message()));
         Long convId = req.conversationId() == null
                 ? agentExecutor.createConversation(null).getId()
                 : req.conversationId();
-        return agentExecutor.chat(convId, req.message());
+        return agentExecutor.chat(convId, req.message())
+                .map(chunk -> ServerSentEvent.builder(chunk).event(chunk.type()).build());
     }
 
     @PostMapping("/conversations")
