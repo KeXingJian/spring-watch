@@ -1,6 +1,6 @@
 package com.springwatch.ai.web;
 
-import com.springwatch.ai.service.AiChatService;
+import com.springwatch.ai.agent.AgentExecutor;
 import com.springwatch.model.dto.ApiResponse;
 import com.springwatch.model.entity.ChatConversation;
 import com.springwatch.model.entity.ChatMessage;
@@ -24,7 +24,7 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class AiChatController {
 
-    private final AiChatService aiChatService;
+    private final AgentExecutor agentExecutor;
     private final ChatConversationRepository conversationRepository;
     private final DiagnosisReportRepository diagnosisReportRepository;
 
@@ -41,15 +41,15 @@ public class AiChatController {
         log.info("[kxj: AI对话开始 - conversationId={}, message={}]",
                 req.conversationId(), truncate(req.message()));
         Long convId = req.conversationId() == null
-                ? aiChatService.createConversation(null).getId()
+                ? agentExecutor.createConversation(null).getId()
                 : req.conversationId();
-        return aiChatService.chat(convId, req.message());
+        return agentExecutor.chat(convId, req.message());
     }
 
     @PostMapping("/conversations")
     public ApiResponse<ChatConversation> createConversation(@RequestBody(required = false) CreateConversationRequest req) {
         String title = req == null ? null : req.title();
-        ChatConversation conv = aiChatService.createConversation(title);
+        ChatConversation conv = agentExecutor.createConversation(title);
         log.info("[kxj: AI会话创建接口 - id={}, title={}]", conv.getId(), conv.getTitle());
         return ApiResponse.ok(conv);
     }
@@ -66,10 +66,30 @@ public class AiChatController {
 
     @GetMapping("/conversations/{id}/messages")
     public ApiResponse<Map<String, Object>> listMessages(@PathVariable Long id) {
-        List<ChatMessage> messages = aiChatService.listMessages(id);
+        List<ChatMessage> messages = agentExecutor.listMessages(id);
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("count", messages.size());
         out.put("rows", messages);
+        return ApiResponse.ok(out);
+    }
+
+    /**
+     * 运维技能清单(注册表动态返回,前端可展示可调用)。
+     * GET /api/ai/skills
+     */
+    @GetMapping("/skills")
+    public ApiResponse<Map<String, Object>> listSkills() {
+        List<Map<String, Object>> rows = agentExecutor.listSkills().stream()
+                .map(s -> {
+                    Map<String, Object> m = new LinkedHashMap<>();
+                    m.put("name", s.name());
+                    m.put("description", s.description());
+                    return m;
+                })
+                .toList();
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("count", rows.size());
+        out.put("rows", rows);
         return ApiResponse.ok(out);
     }
 

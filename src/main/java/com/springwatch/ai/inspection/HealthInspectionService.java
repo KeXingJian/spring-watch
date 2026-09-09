@@ -1,5 +1,6 @@
 package com.springwatch.ai.inspection;
 
+import com.springwatch.ai.agent.LlmInvoker;
 import com.springwatch.ai.context.LogContextService;
 import com.springwatch.ai.rag.VectorSearchService;
 import com.springwatch.model.entity.ChatConversation;
@@ -12,7 +13,6 @@ import com.springwatch.service.LogQueryService;
 import com.springwatch.service.MetricQueryService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -44,7 +44,7 @@ public class HealthInspectionService {
     private final LogQueryService logQueryService;
     private final LogContextService logContextService;
     private final VectorSearchService vectorSearchService;
-    private final ChatClient aiChatClient;
+    private final LlmInvoker llmInvoker;
     private final ChatConversationRepository conversationRepository;
     private final ChatMessageRepository messageRepository;
 
@@ -96,17 +96,9 @@ public class HealthInspectionService {
         String user = String.format(
                 "请对以下应用巡检数据进行健康评估,输出结构化巡检报告:\n(1) 总体健康度\n(2) 按应用列出异常点与建议\n(3) 引用知识库给出处置建议\n\n%s\n%s",
                 evidence, ragText);
-        try {
-            String content = aiChatClient.prompt()
-                    .system(inspectionPrompt)
-                    .user(user)
-                    .call()
-                    .content();
-            return content == null || content.isBlank() ? evidenceFallback(evidence.toString()) : content;
-        } catch (Exception e) {
-            log.warn("[kxj: 巡检LLM失败,降级证据摘要 - error={}]", e.getMessage());
-            return evidenceFallback(evidence.toString());
-        }
+        String content = llmInvoker.invoke("全应用巡检", inspectionPrompt, user,
+                evidenceFallback(evidence.toString())).content();
+        return content == null || content.isBlank() ? evidenceFallback(evidence.toString()) : content;
     }
 
     private String buildAppEvidence(MonitorApp app, Instant from, Instant to) {

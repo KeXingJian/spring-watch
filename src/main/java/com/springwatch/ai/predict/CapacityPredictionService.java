@@ -3,13 +3,13 @@ package com.springwatch.ai.predict;
 import com.influxdb.client.QueryApi;
 import com.influxdb.query.FluxRecord;
 import com.influxdb.query.FluxTable;
+import com.springwatch.ai.agent.LlmInvoker;
 import com.springwatch.model.entity.CapacityPrediction;
 import com.springwatch.model.entity.MonitorApp;
 import com.springwatch.repository.CapacityPredictionRepository;
 import com.springwatch.service.MonitorAppService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -34,7 +34,7 @@ public class CapacityPredictionService {
     private final QueryApi queryApi;
     private final CapacityPredictionRepository predictionRepository;
     private final MonitorAppService monitorAppService;
-    private final ChatClient aiChatClient;
+    private final LlmInvoker llmInvoker;
 
     @Value("${influxdb.metrics-downsample-bucket}")
     private String bucket;
@@ -167,25 +167,14 @@ public class CapacityPredictionService {
 
     private String explain(String metric, double current, double predicted,
                            double slope, String scenario, String risk, int horizonHours) {
-        try {
-            if (capacityPrompt == null || capacityPrompt.isBlank()) {
-                return statisticalExplanation(metric, current, predicted, slope, scenario, risk, horizonHours);
-            }
-            String user = String.format(
-                    "指标=%s, 当前值=%.2f, 预测值(%.0fh后)=%.2f, 趋势斜率=%.4f/小时, 场景=%s, 风险=%s。请给出简要解释与建议。",
-                    metric, current, horizonHours, predicted, slope, scenario, risk);
-            String content = aiChatClient.prompt()
-                    .system(capacityPrompt)
-                    .user(user)
-                    .call()
-                    .content();
-            return content == null || content.isBlank()
-                    ? statisticalExplanation(metric, current, predicted, slope, scenario, risk, horizonHours)
-                    : content;
-        } catch (Exception e) {
-            log.warn("[kxj: 容量预测LLM解释失败,降级统计 - metric={}, error={}]", metric, e.getMessage());
-            return statisticalExplanation(metric, current, predicted, slope, scenario, risk, horizonHours);
+        String fallback = statisticalExplanation(metric, current, predicted, slope, scenario, risk, horizonHours);
+        if (capacityPrompt == null || capacityPrompt.isBlank()) {
+            return fallback;
         }
+        String user = String.format(
+                "指标=%s, 当前值=%.2f, 预测值(%.0fh后)=%.2f, 趋势斜率=%.4f/小时, 场景=%s, 风险=%s。请给出简要解释与建议。",
+                metric, current, horizonHours, predicted, slope, scenario, risk);
+        return llmInvoker.invoke("容量预测解释", capacityPrompt, user, fallback).content();
     }
 
     private String statisticalExplanation(String metric, double current, double predicted,

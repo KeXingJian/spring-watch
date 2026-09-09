@@ -19,6 +19,9 @@ spring:
         model: ${AI_EMBED_MODEL:text-embedding-3-small}  # RAG embedding 模型
 
 ai:
+  agent:
+    short-term-window: 12    # 分层记忆:短期窗口(最近 N 条 user/assistant 消息)
+    compact-threshold: 24    # 未压缩消息超过该值触发 LLM 摘要压缩(中期记忆)
   sop:
     prompt: >
       你是 spring-watch 监控平台的 SOP 技能专家。平台调用技能时会给你诊断证据

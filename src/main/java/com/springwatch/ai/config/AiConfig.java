@@ -1,5 +1,6 @@
 package com.springwatch.ai.config;
 
+import com.springwatch.ai.agent.SkillInvokeTool;
 import com.springwatch.ai.tool.AlertQueryTool;
 import com.springwatch.ai.tool.AppQueryTool;
 import com.springwatch.ai.tool.LogQueryTool;
@@ -18,11 +19,12 @@ public class AiConfig {
     private final MetricQueryTool metricQueryTool;
     private final LogQueryTool logQueryTool;
     private final AlertQueryTool alertQueryTool;
+    private final SkillInvokeTool skillInvokeTool;
 
     @Bean
     public MethodToolCallbackProvider aiToolCallbackProvider() {
         return MethodToolCallbackProvider.builder()
-                .toolObjects(appQueryTool, metricQueryTool, logQueryTool, alertQueryTool)
+                .toolObjects(appQueryTool, metricQueryTool, logQueryTool, alertQueryTool, skillInvokeTool)
                 .build();
     }
 

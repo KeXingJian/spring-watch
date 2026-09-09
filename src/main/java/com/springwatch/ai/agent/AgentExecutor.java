@@ -1,4 +1,4 @@
-package com.springwatch.ai.service;
+package com.springwatch.ai.agent;
 
 import com.springwatch.model.entity.ChatConversation;
 import com.springwatch.model.entity.ChatMessage;
@@ -7,26 +7,30 @@ import com.springwatch.repository.ChatMessageRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
-import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
-import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 
-import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * 编排层 - Agent 执行器(chat 主入口)。
+ * 会话生命周期 + 分层记忆 + 技能发现 + 工具调用循环(Spring AI 2.0 advisor 链):
+ * 用户消息落库 → MemoryManager 组装上下文(中期摘要+短期窗口) →
+ * ChatClient 携带 defaultTools(数据查询工具+技能调用工具)流式作答 → 回复落库。
+ * 技能列表注入系统提示词,LLM 可自主通过 SkillInvokeTool 调用运维技能。
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor
-public class AiChatService {
-
-    private static final int MAX_HISTORY_MESSAGES = 12;
+public class AgentExecutor {
 
     private final ChatClient aiChatClient;
     private final ChatConversationRepository conversationRepository;
     private final ChatMessageRepository messageRepository;
+    private final AgentRegistry agentRegistry;
+    private final MemoryManager memoryManager;
 
     @Value("${ai.chat.system-prompt}")
     private String systemPrompt;
@@ -45,19 +49,20 @@ public class AiChatService {
     }
 
     /**
-     * 流式对话:保存 user 消息 → 组装历史 → LLM 流式输出 → 结束后落库 assistant 完整回复
-     * LLM 异常时降级返回错误提示,不阻塞
+     * 流式对话:保存 user 消息 → 分层记忆组装 → LLM 流式输出(带工具/技能) → 落库 assistant 回复。
+     * LLM 异常时降级返回错误提示,不阻塞。
      */
     public Flux<String> chat(Long conversationId, String userMessage) {
         ChatConversation conv = conversationRepository.findById(conversationId)
                 .orElseGet(() -> createConversation(null));
-        saveMessage(conv, "user", userMessage);
+        ChatMessage userMsg = saveMessage(conv, "user", userMessage);
+        Long excludeId = userMsg == null ? null : userMsg.getId();
 
-        List<Message> history = buildHistory(conversationId);
+        List<Message> history = memoryManager.buildContext(conversationId, excludeId);
         StringBuilder full = new StringBuilder();
 
         return aiChatClient.prompt()
-                .system(systemPrompt)
+                .system(buildSystemPrompt())
                 .messages(history)
                 .user(userMessage)
                 .stream()
@@ -74,32 +79,33 @@ public class AiChatService {
                 .onErrorResume(e -> Flux.just("\n\n[诊断失败]" + e.getMessage() + " (LLM 服务不可用,可稍后重试)"));
     }
 
-    private void saveMessage(ChatConversation conv, String role, String content) {
+    /** 技能注册表透传:SOP 定时/手动执行、HTTP 技能接口共用 */
+    public String runSkill(String skillName, Long appid) {
+        return agentRegistry.run(skillName, appid);
+    }
+
+    public List<AgentSkill> listSkills() {
+        return agentRegistry.all();
+    }
+
+    private String buildSystemPrompt() {
+        String skillList = agentRegistry.skillListText();
+        return skillList.isBlank()
+                ? systemPrompt
+                : systemPrompt + "\n\n【平台运维技能】可调用技能工具执行:\n" + skillList;
+    }
+
+    private ChatMessage saveMessage(ChatConversation conv, String role, String content) {
         try {
-            messageRepository.save(ChatMessage.builder()
+            ChatMessage saved = messageRepository.save(ChatMessage.builder()
                     .conversation(conv)
                     .role(role)
                     .content(content)
                     .build());
+            return saved;
         } catch (Exception e) {
             log.warn("[kxj: AI消息落库失败 - conversationId={}, role={}, error={}]", conv.getId(), role, e.getMessage());
+            return null;
         }
-    }
-
-    private List<Message> buildHistory(Long conversationId) {
-        List<ChatMessage> recent = messageRepository.findByConversationIdOrderByCreatedAtAsc(conversationId);
-        // 当前 user 消息已落库(最后一条),排除避免重复发送
-        List<ChatMessage> slice = recent.isEmpty() ? recent : recent.subList(0, recent.size() - 1);
-        int from = Math.max(0, slice.size() - MAX_HISTORY_MESSAGES);
-        List<Message> history = new ArrayList<>();
-        for (int i = from; i < slice.size(); i++) {
-            ChatMessage m = slice.get(i);
-            if ("user".equals(m.getRole())) {
-                history.add(new UserMessage(m.getContent()));
-            } else if ("assistant".equals(m.getRole())) {
-                history.add(new AssistantMessage(m.getContent()));
-            }
-        }
-        return history;
     }
 }

@@ -1,6 +1,7 @@
 package com.springwatch.ai.diagnosis;
 
 import tools.jackson.databind.ObjectMapper;
+import com.springwatch.ai.agent.LlmInvoker;
 import com.springwatch.model.entity.AlertRule;
 import com.springwatch.model.entity.MonitorApp;
 import com.springwatch.model.entity.DiagnosisReport;
@@ -11,7 +12,6 @@ import com.springwatch.service.MetricQueryService;
 import com.springwatch.service.MonitorAppService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -33,7 +33,7 @@ public class DiagnosisReportService {
     private final MetricQueryService metricQueryService;
     private final LogQueryService logQueryService;
     private final MonitorAppService monitorAppService;
-    private final ChatClient aiChatClient;
+    private final LlmInvoker llmInvoker;
     private final ObjectMapper objectMapper;
     private final com.springwatch.ai.rag.DocEmbeddingService docEmbeddingService;
 
@@ -65,10 +65,17 @@ public class DiagnosisReportService {
                 .evidence(evidence);
 
         try {
-            String report = generateReport(event, evidence);
-            builder.report(report).status("success");
+            LlmInvoker.LlmResult result = generateReport(event, evidence);
+            if (result.success()) {
+                builder.report(result.content()).status("success");
+            } else {
+                log.warn("[kxj: 告警诊断LLM失败,降级为证据摘要 - historyId={}, error={}]",
+                        event.getHistoryId(), result.errorMsg());
+                builder.report(result.content()).status("degraded")
+                        .errorMsg(truncate(result.errorMsg(), 500));
+            }
         } catch (Exception e) {
-            log.warn("[kxj: 告警诊断LLM失败,降级为证据摘要 - historyId={}, error={}]", event.getHistoryId(), e.getMessage());
+            log.warn("[kxj: 告警诊断降级为证据摘要 - historyId={}, error={}]", event.getHistoryId(), e.getMessage());
             builder.report("LLM 诊断失败,以下为原始证据摘要:\n\n" + evidence)
                     .status("degraded")
                     .errorMsg(truncate(e.getMessage(), 500));
@@ -178,17 +185,13 @@ public class DiagnosisReportService {
         return out;
     }
 
-    private String generateReport(AlertTriggeredEvent event, String evidence) {
+    private LlmInvoker.LlmResult generateReport(AlertTriggeredEvent event, String evidence) {
         String user = String.format(
                 "告警信息:规则=%s, appid=%s, 指标=%s, 触发值=%s, 触发时间=%s\n\n证据数据:\n%s",
                 event.getRule().getRuleName(), event.getAppid(),
                 event.getMetric(), event.getValue(), event.getTriggeredAt(), evidence);
-        String report = aiChatClient.prompt()
-                .system(diagnosisPrompt)
-                .user(user)
-                .call()
-                .content();
-        return report == null ? "(空回复)" : report;
+        return llmInvoker.invoke("告警诊断", diagnosisPrompt, user,
+                "LLM 诊断失败,以下为原始证据摘要:\n\n" + evidence);
     }
 
     private String toJson(Object obj) {
