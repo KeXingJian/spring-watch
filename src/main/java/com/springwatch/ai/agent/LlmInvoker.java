@@ -1,8 +1,8 @@
 package com.springwatch.ai.agent;
 
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 
 /**
@@ -12,12 +12,15 @@ import org.springframework.stereotype.Component;
  */
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class LlmInvoker {
 
     private static final int MAX_ATTEMPTS = 2;
 
     private final ChatClient aiChatClient;
+
+    public LlmInvoker(@Lazy ChatClient aiChatClient) {
+        this.aiChatClient = aiChatClient;
+    }
 
     /**
      * 统一 LLM 调用。
