@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, watch, nextTick } from 'vue'
+import { onMounted, ref, watch, nextTick, reactive } from 'vue'
 import { useAppStore } from '@/stores/app'
 import { useToast } from '@/utils/toast'
 import { formatTime } from '@/utils/format'
@@ -44,6 +44,13 @@ const activeTab = ref<'chat' | 'diagnosis'>('chat')
 const reports = ref<DiagnosisReport[]>([])
 const reportsLoading = ref(false)
 const expandedReport = ref<Record<number, boolean>>({})
+
+// 打字机队列:SSE 分片可能成批到达,先入队再按节奏逐字渲染,保证流式可见
+let pendingText = ''
+let typeTimer: number | null = null
+let typeTarget: ChatMsg | null = null
+let drainResolve: (() => void) | null = null
+let scrollRaf = 0
 
 const examplePrompts = [
   'app-1 过去1小时错误率怎么样?',
@@ -142,6 +149,8 @@ async function send() {
   if (!currentConv.value) {
     try {
       currentConv.value = await createConversation()
+      // 新建会话后立即刷新历史列表,否则下拉框里看不到刚建的会话
+      await loadConversations()
     } catch (e: any) {
       error.value = '创建会话失败: ' + e.message
       return
@@ -149,8 +158,12 @@ async function send() {
   }
 
   messages.value.push({ role: 'user', content: text })
-  const reply: ChatMsg = { role: 'assistant', content: '' }
+  // 必须用 reactive 包装,直接改原始对象不会触发 Vue 渲染(否则流式内容只会在结束时一次性出现)
+  const reply = reactive<ChatMsg>({ role: 'assistant', content: '' })
   messages.value.push(reply)
+  pendingText = ''
+  typeTarget = reply
+  stopTypeTimer()
   streaming.value = true
   await scrollToBottom()
 
@@ -170,7 +183,7 @@ async function send() {
     let buf = ''
 
     // 处理一条 SSE data 行(JSON 事件流,协议同 HertzBeat /api/chat/stream)
-    const applyData = async (raw: string) => {
+    const applyData = (raw: string) => {
       if (!raw || raw === '[DONE]') return
       let evt: any = null
       try {
@@ -180,23 +193,26 @@ async function send() {
       }
       if (evt && typeof evt === 'object') {
         if (evt.type === 'message' && typeof evt.delta === 'string') {
-          reply.content += evt.delta
+          pendingText += evt.delta
+          startTypeTimer()
+          scheduleScroll()
         } else if (evt.type === 'error') {
+          flushPending()
           reply.content = (reply.content || '') + (evt.error || '')
           error.value = evt.error || '对话失败'
         }
       } else {
-        reply.content += raw
+        pendingText += raw
+        startTypeTimer()
       }
-      await scrollToBottom()
     }
 
-    const processLines = async (lines: string[]) => {
+    const processLines = (lines: string[]) => {
       for (const line of lines) {
         const trimmed = line.trim()
         if (!trimmed || trimmed.startsWith(':')) continue
         if (trimmed.startsWith('data:')) {
-          await applyData(trimmed.slice(5).trim())
+          applyData(trimmed.slice(5).trim())
         }
       }
     }
@@ -207,19 +223,23 @@ async function send() {
       buf += decoder.decode(value, { stream: true })
       const lines = buf.split('\n')
       buf = lines.pop() ?? ''
-      await processLines(lines)
+      processLines(lines)
     }
     // 冲刷末尾未换行收尾的残余数据(SSE 最后一帧可能无 \n)
     if (buf.trim()) {
-      await processLines([buf])
+      processLines([buf])
     }
     reader.releaseLock()
+    // 等待打字机把队列渲染完再标记完成
+    await waitForDrain()
     if (!reply.content) {
       reply.content = '(无响应内容)'
     }
   } catch (e: any) {
+    flushPending()
     error.value = '对话出错: ' + e.message
   } finally {
+    flushPending()
     streaming.value = false
     await scrollToBottom()
   }
@@ -248,6 +268,60 @@ async function scrollToBottom() {
   if (scrollBox.value) {
     scrollBox.value.scrollTop = scrollBox.value.scrollHeight
   }
+}
+
+function scheduleScroll() {
+  if (scrollRaf) return
+  scrollRaf = requestAnimationFrame(() => {
+    scrollRaf = 0
+    scrollToBottom()
+  })
+}
+
+function stopTypeTimer() {
+  if (typeTimer !== null) {
+    clearInterval(typeTimer)
+    typeTimer = null
+  }
+}
+
+function resolveDrain() {
+  const done = drainResolve
+  drainResolve = null
+  if (done) done()
+}
+
+function startTypeTimer() {
+  if (typeTimer !== null) return
+  typeTimer = window.setInterval(() => {
+    if (!typeTarget || !pendingText) {
+      stopTypeTimer()
+      resolveDrain()
+      return
+    }
+    // 队列大时多取几个字,队列小时逐字输出,保证节奏稳定可感知
+    const step = Math.min(16, Math.max(1, Math.ceil(pendingText.length / 20)))
+    typeTarget.content += pendingText.slice(0, step)
+    pendingText = pendingText.slice(step)
+    scheduleScroll()
+  }, 28)
+}
+
+function flushPending() {
+  if (typeTarget && pendingText) {
+    typeTarget.content += pendingText
+    pendingText = ''
+  }
+  stopTypeTimer()
+  scheduleScroll()
+  resolveDrain()
+}
+
+function waitForDrain(): Promise<void> {
+  if (!pendingText && typeTimer === null) return Promise.resolve()
+  return new Promise(resolve => {
+    drainResolve = resolve
+  })
 }
 </script>
 
@@ -313,14 +387,14 @@ async function scrollToBottom() {
             <div class="avatar">
               <span class="avatar-dot">{{ m.role === 'user' ? 'U' : 'AI' }}</span>
             </div>
-            <div class="msg-bubble">
+            <div class="msg-bubble" :class="{ 'bubble-streaming': streaming && i === messages.length - 1 && m.role === 'assistant' }">
               <div class="msg-meta">
                 <span class="role">{{ m.role === 'user' ? '我' : 'AI 助手' }}</span>
                 <span v-if="streaming && i === messages.length - 1 && m.role === 'assistant'" class="streaming-tag">
                   <span class="dot-pulse" />生成中
                 </span>
               </div>
-              <div class="msg-content">
+              <div class="msg-content" :class="{ 'is-streaming': streaming && i === messages.length - 1 && m.role === 'assistant' }">
                 <template v-if="m.role === 'assistant'">
                   <Markdown v-if="m.content" :content="m.content" />
                   <span v-else-if="streaming && i === messages.length - 1" class="thinking-text">思考中...</span>
@@ -474,6 +548,11 @@ async function scrollToBottom() {
   gap: 10px;
   align-items: flex-start;
   max-width: 78%;
+  animation: msg-in 0.28s ease-out both;
+}
+@keyframes msg-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 .msg-user { margin-left: auto; flex-direction: row-reverse; }
 .msg-assistant { margin-right: auto; }
@@ -503,6 +582,11 @@ async function scrollToBottom() {
   padding: 10px 14px;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
   min-width: 80px;
+  transition: border-color 0.25s, box-shadow 0.25s;
+}
+.msg-assistant .msg-bubble.bubble-streaming {
+  border-color: oklch(var(--p) / 0.45);
+  box-shadow: 0 0 0 1px oklch(var(--p) / 0.12), 0 3px 16px oklch(var(--p) / 0.13);
 }
 .msg-user .msg-bubble {
   background: oklch(var(--p));
@@ -527,17 +611,19 @@ async function scrollToBottom() {
   align-items: center;
   gap: 4px;
   color: oklch(var(--in));
+  font-weight: 500;
 }
 .dot-pulse {
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: oklch(var(--in));
-  animation: pulse 1.2s ease-in-out infinite;
+  animation: pulse 1.2s ease-out infinite;
 }
 @keyframes pulse {
-  0%, 100% { opacity: 0.35; transform: scale(0.85); }
-  50% { opacity: 1; transform: scale(1.1); }
+  0% { opacity: 0.4; transform: scale(0.8); box-shadow: 0 0 0 0 oklch(var(--in) / 0.5); }
+  70% { opacity: 1; transform: scale(1.05); box-shadow: 0 0 0 5px oklch(var(--in) / 0); }
+  100% { opacity: 0.4; transform: scale(0.8); box-shadow: 0 0 0 0 oklch(var(--in) / 0); }
 }
 
 .msg-content {
@@ -546,7 +632,30 @@ async function scrollToBottom() {
   font-size: 0.9rem;
   line-height: 1.55;
 }
-.thinking-text { color: oklch(var(--bc) / 0.45); font-style: italic; }
+.thinking-text {
+  color: oklch(var(--bc) / 0.45);
+  font-style: italic;
+  animation: thinking-fade 1.4s ease-in-out infinite;
+}
+@keyframes thinking-fade {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+.msg-content.is-streaming :deep(.md-body > *:last-child)::after {
+  content: '';
+  display: inline-block;
+  width: 7px;
+  height: 1.02em;
+  margin-left: 2px;
+  vertical-align: -0.16em;
+  border-radius: 1px;
+  background: oklch(var(--p));
+  animation: caret-blink 0.85s linear infinite;
+}
+@keyframes caret-blink {
+  0%, 45% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
 
 .chat-input-bar {
   border-top: 1px solid oklch(var(--b3));

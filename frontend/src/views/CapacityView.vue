@@ -5,6 +5,7 @@ import { useToast } from '@/utils/toast'
 import { useAppStore } from '@/stores/app'
 import { formatTime } from '@/utils/format'
 import EmptyState from '@/components/EmptyState.vue'
+import Markdown from '@/components/Markdown.vue'
 
 const toast = useToast()
 const appStore = useAppStore()
@@ -44,11 +45,11 @@ async function loadHistory() {
   if (!selectedAppid.value) return
   loadingHistory.value = true
   try {
-    const res = await api.get<any>('/api/capacity/history', {
+    // 后端返回 Spring Data Page(content 数组),用 api.page 自动解包
+    history.value = await api.page<any>('/api/capacity/history', {
       appid: selectedAppid.value,
       size: 20
     })
-    history.value = res?.rows ?? []
   } catch {
     history.value = []
   } finally {
@@ -145,7 +146,7 @@ onMounted(() => {
         </div>
         <div v-if="result.explanation" class="px-4 py-3 border-t border-base-300 text-sm">
           <div class="text-muted text-xs mb-1">解释</div>
-          <pre class="code !max-h-40">{{ result.explanation }}</pre>
+          <div class="explanation-scroll"><Markdown :content="result.explanation" /></div>
         </div>
       </div>
     </div>
@@ -189,3 +190,12 @@ onMounted(() => {
     </div>
   </div>
 </template>
+
+<style scoped>
+.explanation-scroll {
+  max-height: 12rem;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.explanation-scroll :deep(.md-body) { font-size: 0.88rem; }
+</style>

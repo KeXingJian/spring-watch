@@ -172,7 +172,7 @@ public class CapacityPredictionService {
             return fallback;
         }
         String user = String.format(
-                "指标=%s, 当前值=%.2f, 预测值(%.0fh后)=%.2f, 趋势斜率=%.4f/小时, 场景=%s, 风险=%s。请给出简要解释与建议。",
+                "指标=%s, 当前值=%.2f, 预测值(%dh后)=%.2f, 趋势斜率=%.4f/小时, 场景=%s, 风险=%s。请给出简要解释与建议。",
                 metric, current, horizonHours, predicted, slope, scenario, risk);
         return llmInvoker.invoke("容量预测解释", capacityPrompt, user, fallback).content();
     }
@@ -180,7 +180,7 @@ public class CapacityPredictionService {
     private String statisticalExplanation(String metric, double current, double predicted,
                                           double slope, String scenario, String risk, int horizonHours) {
         return String.format(
-                "指标 %s 当前值 %.2f,按近期趋势预测 %.0f 小时后约 %.2f(斜率 %.4f/小时)。场景=%s,风险=%s。",
+                "指标 %s 当前值 %.2f,按近期趋势预测 %d 小时后约 %.2f(斜率 %.4f/小时)。场景=%s,风险=%s。",
                 metric, current, horizonHours, predicted, slope, scenario, risk);
     }
 
