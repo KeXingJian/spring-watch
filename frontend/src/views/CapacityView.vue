@@ -35,6 +35,7 @@ async function loadApps() {
     appStore.setApps(res.items || [])
     if (!selectedAppid.value && apps.value.length) {
       selectedAppid.value = String(apps.value[0].appid)
+      await loadHistory()
     }
   } catch {
     /* ignore */

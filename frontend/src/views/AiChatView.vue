@@ -6,11 +6,18 @@ import { formatTime } from '@/utils/format'
 import EmptyState from '@/components/EmptyState.vue'
 import Markdown from '@/components/Markdown.vue'
 
+interface ReActStep {
+  type: 'tool_call' | 'tool_result'
+  tool: string
+  detail: string
+}
+
 interface ChatMsg {
   id?: number
   role: string
   content: string
   createdAt?: string
+  steps?: ReActStep[]
 }
 
 interface Conversation {
@@ -44,6 +51,7 @@ const activeTab = ref<'chat' | 'diagnosis'>('chat')
 const reports = ref<DiagnosisReport[]>([])
 const reportsLoading = ref(false)
 const expandedReport = ref<Record<number, boolean>>({})
+const expandedTrace = ref<Record<number, boolean>>({})
 
 // 打字机队列:SSE 分片可能成批到达,先入队再按节奏逐字渲染,保证流式可见
 let pendingText = ''
@@ -118,6 +126,7 @@ async function newConversation() {
     const id = await createConversation()
     currentConv.value = id
     messages.value = []
+    expandedTrace.value = {}
     await loadConversations()
     toast.success('已创建新会话')
   } catch (e: any) {
@@ -128,6 +137,7 @@ async function newConversation() {
 async function switchConv(id: number) {
   currentConv.value = id
   messages.value = []
+  expandedTrace.value = {}
   try {
     const res = await fetch(`/api/ai/conversations/${id}/messages`)
     const json = await res.json()
@@ -196,6 +206,10 @@ async function send() {
           pendingText += evt.delta
           startTypeTimer()
           scheduleScroll()
+        } else if (evt.type === 'tool_call' || evt.type === 'tool_result') {
+          if (!reply.steps) reply.steps = []
+          reply.steps.push({ type: evt.type, tool: evt.tool || '', detail: evt.detail || '' })
+          scheduleScroll()
         } else if (evt.type === 'error') {
           flushPending()
           reply.content = (reply.content || '') + (evt.error || '')
@@ -260,6 +274,21 @@ function levelClass(level?: string): string {
 
 function toggleReport(id: number) {
   expandedReport.value[id] = !expandedReport.value[id]
+}
+
+function toggleTrace(index: number) {
+  expandedTrace.value[index] = expandedTrace.value[index] === false
+}
+
+function traceVisible(index: number): boolean {
+  return expandedTrace.value[index] !== false
+}
+
+function thinkingLabel(m: ChatMsg): string {
+  const last = m.steps?.[m.steps.length - 1]
+  if (last?.type === 'tool_call') return `正在执行工具 ${last.tool}...`
+  if (last?.type === 'tool_result') return '工具已返回,继续分析...'
+  return '思考中...'
 }
 
 const scrollBox = ref<HTMLElement | null>(null)
@@ -394,10 +423,29 @@ function waitForDrain(): Promise<void> {
                   <span class="dot-pulse" />生成中
                 </span>
               </div>
+              <div v-if="m.steps?.length" class="react-trace">
+                <div class="trace-head" @click="toggleTrace(i)">
+                  <span class="trace-title">ReAct 思考/执行轨迹</span>
+                  <span class="trace-count">{{ m.steps.length }}</span>
+                  <span class="spacer" />
+                  <span class="trace-toggle">{{ traceVisible(i) ? '收起' : '展开' }}</span>
+                </div>
+                <div v-show="traceVisible(i)" class="trace-body">
+                  <div
+                    v-for="(s, si) in m.steps"
+                    :key="si"
+                    :class="['trace-step', s.type === 'tool_call' ? 'step-action' : 'step-observe']"
+                  >
+                    <span class="step-tag">{{ s.type === 'tool_call' ? '行动' : '观察' }}</span>
+                    <span class="step-tool">{{ s.tool }}</span>
+                    <pre class="step-detail">{{ s.detail }}</pre>
+                  </div>
+                </div>
+              </div>
               <div class="msg-content" :class="{ 'is-streaming': streaming && i === messages.length - 1 && m.role === 'assistant' }">
                 <template v-if="m.role === 'assistant'">
                   <Markdown v-if="m.content" :content="m.content" />
-                  <span v-else-if="streaming && i === messages.length - 1" class="thinking-text">思考中...</span>
+                  <span v-else-if="streaming && i === messages.length - 1" class="thinking-text">{{ thinkingLabel(m) }}</span>
                 </template>
                 <template v-else>{{ m.content }}</template>
               </div>
@@ -624,6 +672,78 @@ function waitForDrain(): Promise<void> {
   0% { opacity: 0.4; transform: scale(0.8); box-shadow: 0 0 0 0 oklch(var(--in) / 0.5); }
   70% { opacity: 1; transform: scale(1.05); box-shadow: 0 0 0 5px oklch(var(--in) / 0); }
   100% { opacity: 0.4; transform: scale(0.8); box-shadow: 0 0 0 0 oklch(var(--in) / 0); }
+}
+
+.react-trace {
+  margin: 6px 0 8px;
+  border: 1px solid oklch(var(--b3));
+  border-radius: 8px;
+  background: oklch(var(--b2) / 0.45);
+  overflow: hidden;
+}
+.trace-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 0.75rem;
+  color: var(--c-text-secondary);
+  user-select: none;
+}
+.trace-head:hover { background: oklch(var(--b2) / 0.8); }
+.trace-head .spacer { flex: 1; }
+.trace-title { font-weight: 600; color: oklch(var(--in)); }
+.trace-count {
+  min-width: 18px;
+  text-align: center;
+  padding: 0 5px;
+  border-radius: 9999px;
+  background: oklch(var(--in) / 0.14);
+  color: oklch(var(--in));
+  font-family: var(--font-mono);
+}
+.trace-toggle { color: var(--c-text-muted); }
+.trace-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 10px 8px;
+}
+.trace-step {
+  border-left: 3px solid oklch(var(--b3));
+  border-radius: 4px;
+  padding: 4px 8px;
+  background: oklch(var(--b1) / 0.7);
+  font-size: 0.78rem;
+}
+.trace-step.step-action { border-left-color: oklch(var(--wa)); }
+.trace-step.step-observe { border-left-color: oklch(var(--su)); }
+.step-tag {
+  display: inline-block;
+  padding: 0 5px;
+  margin-right: 6px;
+  border-radius: 3px;
+  font-size: 0.7rem;
+  color: #fff;
+}
+.step-action .step-tag { background: oklch(var(--wa)); }
+.step-observe .step-tag { background: oklch(var(--su)); }
+.step-tool {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--c-text);
+}
+.step-detail {
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  line-height: 1.45;
+  color: var(--c-text-secondary);
+  max-height: 160px;
+  overflow-y: auto;
 }
 
 .msg-content {

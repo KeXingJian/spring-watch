@@ -33,7 +33,8 @@ public class AiChatController {
     /**
      * 流式对话(SSE 事件流,协议参考 HertzBeat /api/chat/stream)。
      * POST /api/ai/chat  body: { conversationId?, message }
-     * 每个事件 data 为 ChatStreamChunk JSON:type=message(增量 delta)/complete(assistantMessageId)/error。
+     * 每个事件 data 为 ChatStreamChunk JSON:type=message(增量 delta)/tool_call、tool_result(ReAct 轨迹)/
+     * complete(assistantMessageId)/error。
      * conversationId 为空时自动新建会话。
      */
     @PostMapping(value = "/chat", produces = MediaType.TEXT_EVENT_STREAM_VALUE)

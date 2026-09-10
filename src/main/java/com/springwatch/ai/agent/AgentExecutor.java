@@ -12,8 +12,10 @@ import org.springframework.ai.chat.messages.Message;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.Sinks;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * 编排层 - Agent 执行器(chat 主入口)。
@@ -51,8 +53,9 @@ public class AgentExecutor {
 
     /**
      * 流式对话(SSE 事件流):保存 user 消息 → 分层记忆组装 → LLM 流式输出(带工具/技能) → 落库 assistant 回复。
-     * 事件类型参考 HertzBeat ChatResponseChunk:message 增量 / complete 完成(回传 assistantMessageId) / error 失败。
-     * LLM 异常时降级返回错误事件,不阻塞。
+     * 事件类型参考 HertzBeat ChatResponseChunk:message 增量 / tool_call、tool_result(ReAct 轨迹) /
+     * complete 完成(回传 assistantMessageId) / error 失败。
+     * ReAct 工具轨迹经 toolContext 注入的 ToolTraceEmitter 实时汇入本流;LLM 异常时降级返回错误事件,不阻塞。
      */
     public Flux<ChatStreamChunk> chat(Long conversationId, String userMessage) {
         ChatConversation conv = conversationRepository.findById(conversationId)
@@ -63,14 +66,35 @@ public class AgentExecutor {
         List<Message> history = memoryManager.buildContext(conversationId, excludeId);
         StringBuilder full = new StringBuilder();
 
-        return aiChatClient.prompt()
+        Sinks.Many<ChatStreamChunk> trace = Sinks.many().multicast().onBackpressureBuffer();
+        Map<String, Object> toolContext = Map.of(ToolTraceEmitter.KEY, new ToolTraceEmitter() {
+            @Override
+            public void onToolCall(String toolName, String arguments) {
+                log.info("[kxj: ReAct 行动 - conversationId={}, tool={}, args={}]",
+                        conv.getId(), toolName, truncate(arguments, 500));
+                trace.tryEmitNext(ChatStreamChunk.toolCall(conv.getId(), toolName, truncate(arguments, 1000)));
+            }
+
+            @Override
+            public void onToolResult(String toolName, String result) {
+                log.info("[kxj: ReAct 观察 - conversationId={}, tool={}, resultLen={}]",
+                        conv.getId(), toolName, result == null ? 0 : result.length());
+                trace.tryEmitNext(ChatStreamChunk.toolResult(conv.getId(), toolName, truncate(result, 2000)));
+            }
+        });
+
+        Flux<ChatStreamChunk> contentFlux = aiChatClient.prompt()
                 .system(buildSystemPrompt())
                 .messages(history)
                 .user(userMessage)
+                .toolContext(toolContext)
                 .stream()
                 .content()
                 .doOnNext(full::append)
                 .map(chunk -> ChatStreamChunk.message(conv.getId(), chunk))
+                .doFinally(signal -> trace.tryEmitComplete());
+
+        return Flux.merge(contentFlux, trace.asFlux())
                 .concatWith(Flux.defer(() -> {
                     ChatMessage saved = saveMessage(conv, "assistant", full.toString());
                     log.info("[kxj: AI对话完成 - conversationId={}, replyLen={}, assistantMessageId={}]",
@@ -103,15 +127,21 @@ public class AgentExecutor {
 
     private ChatMessage saveMessage(ChatConversation conv, String role, String content) {
         try {
-            ChatMessage saved = messageRepository.save(ChatMessage.builder()
+            return messageRepository.save(ChatMessage.builder()
                     .conversation(conv)
                     .role(role)
                     .content(content)
                     .build());
-            return saved;
         } catch (Exception e) {
             log.warn("[kxj: AI消息落库失败 - conversationId={}, role={}, error={}]", conv.getId(), role, e.getMessage());
             return null;
         }
+    }
+
+    private String truncate(String s, int max) {
+        if (s == null) {
+            return "";
+        }
+        return s.length() <= max ? s : s.substring(0, max) + "...(截断)";
     }
 }
